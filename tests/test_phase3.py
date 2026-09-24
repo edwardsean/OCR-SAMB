@@ -1,11 +1,12 @@
 """Phase 3 acceptance: every page classified; no wrong type on pages 1–32 (unsure allowed);
 no Faktur Penjualan ever given another type; every SOR-QR page decided FP across the whole batch."""
+import os
 import hashlib
 import time
 
 import httpx
 
-UI = "http://ui:8000"
+UI = os.environ.get("UI_URL", "http://ui:8000")   # vlm-first sets its own UI
 BID = "b-" + hashlib.sha256(open("/data/sample.pdf", "rb").read()).hexdigest()[:10]
 
 

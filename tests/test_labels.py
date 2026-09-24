@@ -1,11 +1,12 @@
 """Labelling: saving works, the pile is drawn once and never changes on relabel, the queue moves past
 labelled pages, unknown types are refused. Uses a throwaway batch; never touches real labels."""
+import os
 import httpx
 import pytest
 
 from common import db
 
-UI = "http://ui:8000"
+UI = os.environ.get("UI_URL", "http://ui:8000")   # vlm-first sets its own UI
 BID = "test-labels"
 
 

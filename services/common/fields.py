@@ -140,6 +140,113 @@ def ddl():
     return "\n".join(out) + "\n"
 
 
+# ------------------------------------------------------------------------------------------------------------------
+# vlm-first: ONE combined field list. Fields that mean the same thing on different document types are merged:
+# 29 per-type header fields -> 18 stored fields, plus 2 clue fields that only help Jev classify.
+# The AI OCR reads every page against this whole list. A page's per-type fields (the Satellite columns above) are a
+# projection of it (TYPE_MAP), so the phase-5 check, the keys and table mapping keep working on per-type names.
+# The live copy of this list, with each type's context, is versioned in staging.context_version (common/context.py).
+# ------------------------------------------------------------------------------------------------------------------
+
+def CF(name, kind, meaning, printed_as=(), role="store"):
+    return {"name": name, "kind": kind, "meaning": meaning, "printed_as": list(printed_as), "role": role}
+
+
+CANON = {f["name"]: f for f in [
+    CF("sor", "id", "SAMB's sales order number: SOR followed by 11 digits (SOR26110245292). Some customers print it "
+                    "without the letters SOR (11 digits starting 26…)",
+       ["Sales Order [SO] #", "No Ref", "No. Reff", "DO#", "S/Fak"]),
+    CF("po_number", "id", "the customer's purchase order number (SAMB's invoice calls it Nomor CPO)",
+       ["Nomor CPO", "No PO", "PO No", "Purchase Order No", "Order No", "No. Pesanan", "PO# or OT#", "Receipt No (AEON)"]),
+    CF("customer_name", "text", "the customer buying from SAMB: the addressee (Kepada) on SAMB's invoice, or the company "
+                                "that issued a receipt or order", ["Kepada", "Customer"]),
+    CF("customer_code", "id", "SAMB's code for the customer, in brackets under Kepada on SAMB's invoice (14000…)",
+       ["Kepada [kode]"]),
+    CF("vendor_code", "id", "SAMB's supplier / vendor number at this customer",
+       ["No Supplier", "Vendor", "Kepada YTH", "Supplier Code", "Supplier"]),
+    CF("vendor_name", "text", "SAMB's name as the customer printed it (as the supplier)",
+       ["Nama Supplier", "Vendor Name", "Supplier Description"]),
+    CF("document_no", "id", "the customer's goods-receipt number",
+       ["No Receive", "NO GRN", "No. GR", "Document No", "REC NO", "BPB No", "Receiving#"]),
+    CF("posting_date", "date", "the date the customer received or posted the goods",
+       ["Tgl Terima", "Posting Date", "TGL KONFIRMASI GRN", "Tanggal BPB", "Date Received"]),
+    CF("dpp", "amount", "Dasar Pengenaan Pajak: the tax base amount", ["Dasar Pengenaan Pajak", "DPP"]),
+    CF("ppn", "amount", "PPN: the VAT amount", ["PPN", "PPn", "VAT", "Tax"]),
+    CF("total", "amount", "the document's total amount (never an item count)", ["TOTAL", "Total", "Total Include Tax"]),
+    CF("billing_number", "id", "billing / reference number printed on a Faktur Pajak; never the handwritten number "
+                               "written on SAMB's invoice", ["Nomor Referensi", "Billing"]),
+    CF("kode_seri", "id", "the Faktur Pajak's code and serial number", ["Kode dan Nomor Seri Faktur Pajak"]),
+    CF("npwp_pengusaha", "id", "NPWP of the seller (Pengusaha Kena Pajak) on a Faktur Pajak", ["NPWP"]),
+    CF("nitku_pengusaha", "id", "NITKU of the seller on a Faktur Pajak", ["NITKU"]),
+    CF("npwp_pembeli", "id", "NPWP of the buyer on a Faktur Pajak", ["NPWP"]),
+    CF("nitku_pembeli", "id", "NITKU of the buyer on a Faktur Pajak", ["NITKU"]),
+    CF("tanggal_transaksi", "date", "the transaction date on a Faktur Pajak", ["Tanggal"]),
+    CF("document_title", "text", "the document's printed title, exactly as printed", role="clue"),
+    CF("page_marker", "text", "a page marker if printed, e.g. 'Page 12 of 35' or 'Hal : 1 / 1'", ["Page", "Hal"],
+       role="clue"),
+]}
+
+# type -> {combined name: that type's field name (its Satellite column)}
+TYPE_MAP = {
+    "FP": {"sor": "sor", "dpp": "dpp", "ppn": "ppn", "total": "total", "po_number": "nomor_cpo",
+           "customer_name": "customer_name", "customer_code": "customer_code"},
+    "TTG": {"posting_date": "posting_date", "document_no": "document_no", "po_number": "purchase_order_no",
+            "vendor_code": "vendor_number", "sor": "no_ref", "customer_name": "customer_name"},
+    "PO": {"po_number": "purchase_order_no", "vendor_code": "vendor_code", "vendor_name": "vendor_name", "ppn": "ppn",
+           "total": "total", "customer_name": "customer_name"},
+    "FPJ": {n: n for n in ("sor", "billing_number", "kode_seri", "npwp_pengusaha", "nitku_pengusaha", "npwp_pembeli",
+                           "nitku_pembeli", "dpp", "ppn", "tanggal_transaksi")},
+}
+
+# Line items: one fixed set of columns (not learned). SAMB's "Kode" and a customer's item code are different codes.
+LINE_CANON = {f["name"]: f for f in [
+    CF("description", "text", "the item's description as printed"),
+    CF("customer_item_code", "id", "the customer's own item code (SKU / PLU / article / product code)"),
+    CF("samb_material_code", "id", "SAMB's material code (column 'Kode' on SAMB's invoice)"),
+    CF("qty", "qty", "quantity ordered or received"),
+    CF("uom", "text", "unit of measure"),
+    CF("qty_crt", "qty", "on SAMB's invoice QTY is printed 'CRT / PCS': the number BEFORE the slash"),
+    CF("qty_pcs", "qty", "on SAMB's invoice QTY is printed 'CRT / PCS': the number AFTER the slash"),
+    CF("kemasan", "text", "packaging (Kemasan) on SAMB's invoice"),
+    CF("unit_price", "amount", "unit price"),
+    CF("discount", "text", "discount(s) as printed, e.g. '3.00% / 3.50%'"),
+]}
+LINE_MAP = {
+    "FP": {"samb_material_code": "kode_material", "description": "nama_produk", "kemasan": "kemasan",
+           "qty_crt": "qty_crt", "qty_pcs": "qty_pcs"},
+    "TTG": {"customer_item_code": "item_code", "description": "material_description", "qty": "qty", "uom": "uom"},
+    "PO": {"customer_item_code": "product_code", "description": "product_description", "qty": "qty", "uom": "uom",
+           "unit_price": "unit_price", "discount": "discount"},
+}
+
+
+def project(fields_all, doc_type):
+    """The combined reading, named the way the page's type names it (per-type fields + that type's line columns).
+    This is also the table mapping: a projected page is what its satellite.doc_* row would hold."""
+    fields_all = fields_all or {}
+    out = {}
+    for canon, name in TYPE_MAP.get(doc_type, {}).items():
+        f = fields_all.get(canon)
+        out[name] = {"value": f.get("value"), "source_text": f.get("source_text")} if f else None
+    if DOCS.get(doc_type, {}).get("lines"):
+        cols = LINE_MAP[doc_type]
+        out["lines"] = [{**{name: row.get(canon) for canon, name in cols.items()}, "row_text": row.get("row_text")}
+                        for row in fields_all.get("lines") or []]
+    return out
+
+
+def lift(fields, doc_type):
+    """The inverse of project: a per-type reading, renamed to the combined list."""
+    fields = fields or {}
+    out = {canon: (dict(fields[name]) if fields[name] else None)
+           for canon, name in TYPE_MAP.get(doc_type, {}).items() if name in fields}
+    if "lines" in fields:
+        cols = LINE_MAP[doc_type]
+        out["lines"] = [{**{canon: row.get(name) for canon, name in cols.items()}, "row_text": row.get("row_text")}
+                        for row in fields["lines"]]
+    return out
+
+
 if __name__ == "__main__":
     import sys
     if sys.argv[1:] == ["ddl"]:

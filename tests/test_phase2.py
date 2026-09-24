@@ -1,10 +1,11 @@
 """Phase 2 acceptance: every page enhanced and read by Tesseract; golden checks on pages 1–32; bell rung at N of N."""
+import os
 import hashlib
 import time
 
 import httpx
 
-UI = "http://ui:8000"
+UI = os.environ.get("UI_URL", "http://ui:8000")   # vlm-first sets its own UI
 BID = "b-" + hashlib.sha256(open("/data/sample.pdf", "rb").read()).hexdigest()[:10]
 
 

@@ -35,6 +35,8 @@ def static_v(name):
 templates.env.globals["static_v"] = static_v
 
 PHASE_BUILT = 5
+# vlm-first experiment (branch vlm-first): same UI code, its own database / vhost / MinIO prefix, pages cloned from v1
+VF = os.environ.get("PIPELINE") == "vlm-first"
 N8N_WEBHOOK = "http://n8n:5678/webhook/intake"
 WIB = timezone(timedelta(hours=7))
 TABS = [  # (phase, path, label)
@@ -49,9 +51,17 @@ TABS = [  # (phase, path, label)
 ]
 
 EXPECTED_TABLES = 20      # 19 from the base schema + staging.type_label (006)
+if VF:
+    EXPECTED_TABLES += 3  # + context_version, lesson, model_call (schema/010, vlm-first only)
 
 # (name, role, how to probe, console link on the host)
 SERVICES = [
+    ("postgres",  "Shared with v1 · database ocr_vf", "probe", None),
+    ("rabbitmq",  "Shared with v1 · vhost vf",        "probe", "http://localhost:15672"),
+    ("minio",     "Shared with v1 · reads v1's page renders, writes vf/", "probe", "http://localhost:9001"),
+    ("vf-worker", "vlm-first page worker",            "http://vf-worker:8080/health", None),
+    ("vf-ui",     "This UI",                          "self",  None),
+] if VF else [
     ("postgres",  "Staging + Satellite schema",   "probe",  None),
     ("rabbitmq",  "q.pages · q.group",            "probe",  "http://localhost:15672"),
     ("minio",     "Temp repository (OSS stand-in)", "probe", "http://localhost:9001"),
@@ -105,7 +115,7 @@ def status():
         "GEMINI_API_KEY (VLM, phase 4)": bool(os.environ.get("GEMINI_API_KEY")),
     }
     checks = [
-        ("All 9 services healthy", all(r["ok"] for r in rows), f"{sum(r['ok'] for r in rows)} / {len(rows)}"),
+        (f"All {len(SERVICES)} services healthy", all(r["ok"] for r in rows), f"{sum(r['ok'] for r in rows)} / {len(rows)}"),
         (f"{EXPECTED_TABLES} tables in satellite + staging", len(tables) == EXPECTED_TABLES, f"{len(tables)} found"),
     ]
     return {"services": rows, "tables": tables, "model_keys": keys, "checks": checks,
@@ -139,13 +149,20 @@ def _recent_batches(limit=20):
                             FROM staging.scan_batch ORDER BY received_at DESC LIMIT %s""", (limit,)).fetchall()
 
 
+VF_NO_INTAKE = ("Upload is switched off in the vlm-first experiment: its pages are cloned from v1 "
+                "(python -m worker.clone), and n8n's intake belongs to v1.")
+
+
 @app.get("/upload", response_class=HTMLResponse)
 def page_upload(request: Request):
-    return templates.TemplateResponse("upload.html", ctx(request, batches=_recent_batches(), error=None, dup=None))
+    return templates.TemplateResponse("upload.html", ctx(request, batches=_recent_batches(),
+                                                         error=VF_NO_INTAKE if VF else None, dup=None))
 
 
 @app.post("/upload", response_class=HTMLResponse)
 async def do_upload(request: Request, file: UploadFile = File(...)):
+    if VF:
+        return JSONResponse({"error": VF_NO_INTAKE}, status_code=403)
     data = await file.read()
     if not data.startswith(b"%PDF"):
         return templates.TemplateResponse("upload.html", ctx(request, batches=_recent_batches(),
@@ -175,11 +192,15 @@ async def do_upload(request: Request, file: UploadFile = File(...)):
 
 @app.post("/internal/intake/split")
 def internal_split(body: dict):
+    if VF:
+        return JSONResponse({"error": VF_NO_INTAKE}, status_code=403)
     return intake.split(body["batch_id"], body["object_key"], body["file_name"], body["sha256"], body["scanned_day"])
 
 
 @app.post("/internal/intake/enqueue")
 def internal_enqueue(body: dict):
+    if VF:
+        return JSONResponse({"error": VF_NO_INTAKE}, status_code=403)
     return intake.enqueue(body["batch_id"])
 
 
@@ -756,7 +777,7 @@ def _png_size(key):
 
 @app.get("/img/{key:path}")
 def image(key: str):
-    if not key.startswith("pages/"):
+    if not (key.startswith("pages/") or key.startswith("vf/pages/")):
         return Response(status_code=404)
     try:
         obj = storage.client().get_object(storage.bucket(), key)

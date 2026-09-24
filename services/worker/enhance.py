@@ -227,8 +227,9 @@ def qr(a):
 
 # ------------------------------------------------------------------ the whole page
 
-def process(original):
-    """original: 2-D uint8 array, 0 = ink. Returns (upright image, cleaned image, result dict)."""
+def prepare(original):
+    """Image preparation only: dark bands, upright, straighten, QR. Tesseract is used here only for the quick
+    orientation check (90° vs 270°), never as a reading. Returns (upright image, work image for reading, result)."""
     t0 = time.time()
     black_ratio, band_ratio, band_rows, band_cols = measure(original)
     work = mask_bands(original, band_rows, band_cols)
@@ -240,24 +241,38 @@ def process(original):
         m = cv2.getRotationMatrix2D((up_img.shape[1] / 2, up_img.shape[0] / 2), skew, 1.0)
         up_img = cv2.warpAffine(up_img, m, (up_img.shape[1], up_img.shape[0]), borderValue=255)
 
-    speckle = speckle_ratio(work)
-    best, scores, r = read_page(work)
-    clean, words, conf, chars = r["clean"], r["words"], r["conf"], r["chars"]
-    text = text_from_words(r["d"])
-
     flags = []
     if rotation: flags.append("rotated")
     if abs(skew) >= SKEW_FLAG: flags.append("skewed")
     if band_ratio >= DARK_BAND_FLAG: flags.append("dark_band")
-    if conf < FAINT_CONF: flags.append("faint")
-    if conf < POOR_CONF or chars < POOR_CHARS: flags.append("poor_quality")
-
     result = {
         "rotation": rotation, "osd_conf": round(osd_conf, 2), "skew_angle": round(skew, 2),
         "black_ratio": round(black_ratio, 3), "dark_band_ratio": round(band_ratio, 3),
-        "speckle_ratio": round(speckle, 3), "ocr_variant": best, "variant_scores": scores,
-        "ocr_conf": round(conf, 2), "confident_chars": chars, "ocr_words": words,
-        "classical_text": text, "quality_flags": flags, "qr_text": qr(work),
-        "ms_enhance_ocr": int((time.time() - t0) * 1000),
+        "speckle_ratio": round(speckle_ratio(work), 3), "qr_text": qr(work), "quality_flags": flags,
+        "ms_prepare": int((time.time() - t0) * 1000),
     }
+    return up_img, work, result
+
+
+def read(work):
+    """The Tesseract reading of a prepared page. Returns (cleaned image, result)."""
+    t0 = time.time()
+    best, scores, r = read_page(work)
+    conf, chars = r["conf"], r["chars"]
+    flags = []
+    if conf < FAINT_CONF: flags.append("faint")
+    if conf < POOR_CONF or chars < POOR_CHARS: flags.append("poor_quality")
+    return r["clean"], {"ocr_variant": best, "variant_scores": scores, "ocr_conf": round(conf, 2),
+                        "confident_chars": chars, "ocr_words": r["words"], "classical_text": text_from_words(r["d"]),
+                        "quality_flags": flags, "ms_read": int((time.time() - t0) * 1000)}
+
+
+def process(original):
+    """v1: prepare + read in one step. original: 2-D uint8 array, 0 = ink. Returns (upright image, cleaned image, result)."""
+    t0 = time.time()
+    up_img, work, prep = prepare(original)
+    clean, rd = read(work)
+    result = {k: v for k, v in {**prep, **rd}.items() if k not in ("ms_prepare", "ms_read")}
+    result["quality_flags"] = prep["quality_flags"] + rd["quality_flags"]
+    result["ms_enhance_ocr"] = int((time.time() - t0) * 1000)
     return up_img, clean, result

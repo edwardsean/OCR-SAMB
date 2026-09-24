@@ -1,10 +1,11 @@
 """Phase 1 acceptance: upload → MinIO → n8n → 288 page rows → 288 tickets; same file twice rejected."""
+import os
 import hashlib
 import time
 
 import httpx
 
-UI = "http://ui:8000"
+UI = os.environ.get("UI_URL", "http://ui:8000")   # vlm-first sets its own UI
 SAMPLE = "/data/sample.pdf"
 NAME = "7000356304 - 7000356499.pdf"
 

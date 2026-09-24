@@ -1,109 +1,45 @@
-name: samb-ocr
+# vlm-first experiment (git branch vlm-first). Shares v1's postgres / rabbitmq / minio SERVERS on network
+# samb-ocr_default, never its data: database ocr_vf, RabbitMQ vhost vf, MinIO keys under vf/ (v1's page renders are
+# only read). Start v1 first. Stop vf before `docker compose down` in v1: the network can't go while vf is attached.
+#
+# Service names must not be ui / worker: n8n calls http://ui:8000, and a second "ui" on this network would receive
+# half of v1's uploads.
+name: samb-ocr-vf
 
 x-py: &py
-  build: { context: ./services }
-  env_file: .env
-  volumes: [./services:/app]   # dev: code changes apply on restart, no rebuild
+  env_file: .env                 # symlink to v1's .env: keys live in one place
+  volumes: [./services:/app]
   environment: &pyenv
-    DATABASE_URL: postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}
-    AMQP_URL: amqp://${RABBITMQ_USER}:${RABBITMQ_PASSWORD}@rabbitmq:5672/
+    DATABASE_URL: postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/ocr_vf
+    MAIN_DATABASE_URL: postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}?options=-c%20default_transaction_read_only%3Don
+    AMQP_URL: amqp://${RABBITMQ_USER}:${RABBITMQ_PASSWORD}@rabbitmq:5672/vf
     MINIO_ENDPOINT: minio:9000
-  depends_on:
-    postgres: { condition: service_healthy }
-    rabbitmq: { condition: service_healthy }
-    minio:    { condition: service_healthy }
+    STORAGE_PREFIX: vf/
+    PIPELINE: vlm-first
   restart: unless-stopped
 
 services:
-  postgres:
-    image: postgres:17
-    environment:
-      POSTGRES_USER: ${POSTGRES_USER}
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
-      POSTGRES_DB: ${POSTGRES_DB}
-    volumes:
-      - pgdata:/var/lib/postgresql/data
-      - ./schema/satellite-documents.sql:/docker-entrypoint-initdb.d/01-schema.sql:ro
-      - ./schema/002-page-images.sql:/docker-entrypoint-initdb.d/02-page-images.sql:ro
-      - ./schema/003-page-quality.sql:/docker-entrypoint-initdb.d/03-page-quality.sql:ro
-      - ./schema/004-batch-run.sql:/docker-entrypoint-initdb.d/04-batch-run.sql:ro
-      - ./schema/005-page-type.sql:/docker-entrypoint-initdb.d/05-page-type.sql:ro
-      - ./schema/006-type-label.sql:/docker-entrypoint-initdb.d/06-type-label.sql:ro
-      - ./schema/007-extraction.sql:/docker-entrypoint-initdb.d/07-extraction.sql:ro
-      - ./schema/008-document-fields.sql:/docker-entrypoint-initdb.d/08-document-fields.sql:ro
-      - ./schema/009-verify.sql:/docker-entrypoint-initdb.d/09-verify.sql:ro
-    ports: ["55432:5432"]
-    healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB}"]
-      interval: 5s
-      retries: 20
-
-  rabbitmq:
-    image: rabbitmq:3.13-management
-    environment:
-      RABBITMQ_DEFAULT_USER: ${RABBITMQ_USER}
-      RABBITMQ_DEFAULT_PASS: ${RABBITMQ_PASSWORD}
-    ports: ["5672:5672", "15672:15672"]
-    volumes: [rabbitdata:/var/lib/rabbitmq]
-    healthcheck:
-      test: ["CMD", "rabbitmq-diagnostics", "-q", "check_port_connectivity"]
-      interval: 10s
-      retries: 20
-
-  minio:
-    image: quay.io/minio/minio:latest
-    command: server /data --console-address ":9001"
-    environment:
-      MINIO_ROOT_USER: ${MINIO_ROOT_USER}
-      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD}
-    ports: ["9000:9000", "9001:9001"]
-    volumes: [miniodata:/data]
-    healthcheck:
-      test: ["CMD", "curl", "-fsS", "http://localhost:9000/minio/health/live"]
-      interval: 5s
-      retries: 20
-
-  n8n:
-    image: n8nio/n8n:latest
-    environment:
-      N8N_SECURE_COOKIE: "false"
-      N8N_DIAGNOSTICS_ENABLED: "false"
-      GENERIC_TIMEZONE: Asia/Jakarta
-    ports: ["5678:5678"]
-    volumes: [n8ndata:/home/node/.n8n, ./n8n:/workflows:ro]
-    restart: unless-stopped
-
-  ollama:
-    image: ollama/ollama:latest
-    ports: ["11434:11434"]
-    volumes: [ollamadata:/root/.ollama]
-    restart: unless-stopped
-
-  worker:
+  vf-worker:
     <<: *py
+    image: samb-ocr-worker:latest   # built by v1; same requirements
     command: python -m worker.main
-    deploy: { replicas: 6 }        # 6 pages at a time; Docker's 4 GB memory is the limit
+    deploy: { replicas: 1 }         # model-bound, and the daily call cap can't race with one worker
     environment:
       <<: *pyenv
-      OMP_THREAD_LIMIT: "1"        # one thread per Tesseract; parallelism comes from replicas
+      OMP_THREAD_LIMIT: "1"
 
-  grouper:
+  vf-ui:
     <<: *py
-    command: python -m grouper.main
-
-  publisher:
-    <<: *py
-    command: python -m publisher.main
-
-  ui:
-    <<: *py
+    image: samb-ocr-ui:latest
     command: uvicorn ui.app:app --host 0.0.0.0 --port 8000
-    ports: ["8000:8000"]
-    volumes: [./services:/app, ./tests:/app/tests:ro, ./testdata:/app/testdata:ro, "./7000356304 - 7000356499.pdf:/data/sample.pdf:ro"]
+    ports: ["8001:8000"]
+    volumes: [./services:/app, ./tests:/app/tests:ro, ./testdata:/app/testdata:ro,
+              "../../../7000356304 - 7000356499.pdf:/data/sample.pdf:ro"]
+    environment:
+      <<: *pyenv
+      UI_URL: http://localhost:8000   # tests inside this container grade this UI, not v1's
 
-volumes:
-  pgdata: {}
-  rabbitdata: {}
-  miniodata: {}
-  n8ndata: {}
-  ollamadata: {}
+networks:
+  default:
+    name: samb-ocr_default
+    external: true

@@ -1,5 +1,6 @@
 """Every screen renders (HTTP 200), including page views in every state the pipeline can leave a page in:
 extracted, extraction failed, unsure, faint, rotated. Catches template errors that API tests can't see."""
+import os
 import hashlib
 
 import httpx
@@ -7,7 +8,7 @@ import pytest
 
 from common import db
 
-UI = "http://ui:8000"
+UI = os.environ.get("UI_URL", "http://ui:8000")   # vlm-first sets its own UI
 BID = "b-" + hashlib.sha256(open("/data/sample.pdf", "rb").read()).hexdigest()[:10]
 
 
