@@ -35,7 +35,7 @@ def _models():
     return [first] + [m for m in rest if m != first]
 
 
-def _call(parts, schema, retries=4):
+def _call(parts, schema, retries=4, timeout=180):
     key = os.environ.get("GEMINI_API_KEY")
     if not key:
         raise RuntimeError("no GEMINI_API_KEY")
@@ -50,7 +50,7 @@ def _call(parts, schema, retries=4):
         if _EXHAUSTED.get(model) == today:
             tried.append(f"{model}:daily-quota"); continue
         for attempt in range(retries):
-            r = httpx.post(URL.format(model=model), headers={"x-goog-api-key": key}, json=body, timeout=180)
+            r = httpx.post(URL.format(model=model), headers={"x-goog-api-key": key}, json=body, timeout=timeout)
             if r.status_code == 429 and "PerDay" in r.text:  # daily quota gone: stop asking this model today
                 _EXHAUSTED[model] = today
                 tried.append(f"{model}:daily-quota"); break
@@ -95,3 +95,43 @@ def read(png_bytes):
     prompt = RULES + "\n\nDo NOT decide what kind of document this is. Report what the page shows: its title (if printed), " \
                      "who issued it (the letterhead company), transcript, and every identifier you can see."
     return _call([{"text": prompt}, _image_part(png_bytes)], schemas.READ)
+
+
+# ---------------------------------------------------------------------------------------------- vlm-first
+READ_ALL = """
+This page could be any of SAMB's paperwork: SAMB's own sales invoice (Faktur Penjualan), a customer's goods receipt
+(Tanda Terima, Goods Receive Note, Receiving Slip…), a customer's purchase order, a delivery note, a tax invoice
+(Faktur Pajak), a payment document, or a later page of a multi-page document. You are NOT asked what kind it is.
+Fill every field of the schema that is printed on THIS page. Most fields will be null on any one page. One printed
+value goes to one field. For each value, also give box = [ymin, xmin, ymax, xmax] on a 0-1000 scale: where the value
+itself is printed."""
+
+SECOND_LOOK = """
+You read this page before. Another reader does not agree with your reading of the fields listed below, or you found
+nothing for them. Look again at the page and at the zoomed crops (each crop is labelled with its field). Read each
+value character by character, exactly as printed. If a value is not printed, give null. If you cannot read it with
+certainty, set unsure = true. Do not guess, and do not fill a value from other fields.
+Fields to look at again:
+"""
+
+
+def extract_all(png_bytes, schema):
+    """vlm-first: read the page against the WHOLE combined field list (common/context.vlm_schema)."""
+    return _call([{"text": RULES + READ_ALL}, _image_part(png_bytes)], schema, timeout=240)
+
+
+def second_look(png_bytes, asks, crops):
+    """vlm-first, blind: asks = [(field name, meaning)]; crops = [(field name, png bytes)] of where it said the value is.
+    The request never contains the other reader's text or this model's first answer."""
+    one = {"type": "OBJECT", "nullable": True,
+           "properties": {"value": {"type": "STRING", "nullable": True},
+                          "source_text": {"type": "STRING", "nullable": True},
+                          "box": {"type": "ARRAY", "nullable": True, "items": {"type": "INTEGER"}},
+                          "unsure": {"type": "BOOLEAN"}},
+           "required": ["value", "source_text", "unsure"]}
+    schema = {"type": "OBJECT", "properties": {name: one for name, _ in asks}, "required": [n for n, _ in asks]}
+    text = RULES + SECOND_LOOK + "\n".join(f"- {name}: {meaning}" for name, meaning in asks)
+    parts = [{"text": text}, _image_part(png_bytes)]
+    for name, png in crops:
+        parts += [{"text": f"Zoomed crop for {name}:"}, _image_part(png)]
+    return _call(parts, schema, timeout=240)

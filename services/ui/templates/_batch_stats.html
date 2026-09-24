@@ -35,6 +35,7 @@
   {% endif %}
 </div>
 
+{% if vf %}{% include "_vf.html" %}{% endif %}
 {% if p5 %}{% include "_phase5.html" %}{% endif %}
 {% if p4 %}<details class="phasebox"><summary>Phase 4 acceptance — {{ 'all pass' if p4.all_ok else 'FAILING' }}</summary>{% include "_phase4.html" %}</details>{% endif %}
 {% if p3 %}<details class="phasebox"><summary>Phase 3 acceptance — {{ 'all pass' if p3.all_ok else 'FAILING' }}</summary>{% include "_phase3.html" %}</details>{% endif %}

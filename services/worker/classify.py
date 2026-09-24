@@ -121,11 +121,11 @@ def jev_vote(words, height, text, footer):
     return jev_ask(state)
 
 
-def jev_ask(state):
+def jev_ask(state, questions=None):
     key = os.environ.get("TYPESAFE_API_KEY")
     if not key:
         return {"skipped": "no TYPESAFE_API_KEY"}
-    body = {"model": JEV_MODEL, "state": state, "questions": JEV_QUESTION}
+    body = {"model": JEV_MODEL, "state": state, "questions": questions or JEV_QUESTION}   # vlm-first passes its own
     for attempt in range(5):
         r = httpx.post(JEV_URL, headers={"Authorization": f"Bearer {key}"}, json=body, timeout=60)
         if r.status_code in (429, 529, 502, 503):

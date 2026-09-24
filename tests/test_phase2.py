@@ -1,9 +1,13 @@
 """Phase 2 acceptance: every page enhanced and read by Tesseract; golden checks on pages 1–32; bell rung at N of N."""
 import os
+
+import pytest
 import hashlib
 import time
 
 import httpx
+
+pytestmark = pytest.mark.skipif(os.environ.get("PIPELINE") == "vlm-first", reason="v1 acceptance; vlm-first has its own")
 
 UI = os.environ.get("UI_URL", "http://ui:8000")   # vlm-first sets its own UI
 BID = "b-" + hashlib.sha256(open("/data/sample.pdf", "rb").read()).hexdigest()[:10]

@@ -49,6 +49,8 @@ TABS = [  # (phase, path, label)
     (7, "/review", "Review"),
     (8, "/sor", "SOR search"),
 ]
+if VF:
+    TABS[4:4] = [(5, "/context", "Jev context"), (5, "/compare", "Compare v1")]
 
 EXPECTED_TABLES = 20      # 19 from the base schema + staging.type_label (006)
 if VF:
@@ -459,15 +461,19 @@ def save_label(batch: str = Form(...), page: int = Form(...), label: str = Form(
                note: str = Form(""), labelled_by: str = Form(""), then: str = Form("next")):
     if label not in {t[0] for t in LABEL_TYPES}:
         return JSONResponse({"error": "unknown label"}, status_code=400)
+    v1_pile = _v1_pile(batch, page) if VF else None
     with db.connect() as c:
         # The pile is drawn once, on first save; relabelling never moves a page between practice and exam.
+        # vlm-first: a page v1 already put in a pile keeps that pile, so a page is never practice in one and exam in the other.
         c.execute("""INSERT INTO staging.type_label (batch_id, page_no, label, customer, note, labelled_by, pile)
                      VALUES (%s, %s, %s, NULLIF(%s,''), NULLIF(%s,''), NULLIF(%s,''),
-                             CASE WHEN random() < %s THEN 'exam' ELSE 'practice' END)
+                             COALESCE(%s, CASE WHEN random() < %s THEN 'exam' ELSE 'practice' END))
                      ON CONFLICT (batch_id, page_no) DO UPDATE SET
                        label=EXCLUDED.label, customer=EXCLUDED.customer, note=EXCLUDED.note,
                        labelled_by=EXCLUDED.labelled_by, labelled_at=now()""",
-                  (batch, page, label, customer.strip(), note.strip(), labelled_by.strip(), EXAM_SHARE))
+                  (batch, page, label, customer.strip(), note.strip(), labelled_by.strip(), v1_pile, EXAM_SHARE))
+    if VF:
+        vf_after_label(batch, page, label)
     nxt = f"/label?batch={batch}&saved={page}" if then == "next" else f"/label?batch={batch}&page={page}&saved={page}"
     return RedirectResponse(nxt, status_code=303)
 
@@ -500,6 +506,10 @@ def page_batches(request: Request):
 @app.get("/batches/{batch_id}", response_class=HTMLResponse)
 def page_batch(request: Request, batch_id: str):
     b, pages = _batch(batch_id)
+    if VF:
+        return templates.TemplateResponse("batch.html", ctx(request, batch_id=batch_id, b=b, pages=pages, depth=None,
+                                          depths=_depths(), vf=vf_checks(batch_id),
+                                          flt=request.query_params.get("flag"), fc=_flag_counts(pages)))
     return templates.TemplateResponse("batch.html", ctx(request, batch_id=batch_id, b=b, pages=pages, depth=None,
                                       depths=_depths(), p2=phase2_checks(batch_id), p3=phase3_checks(batch_id),
                                       p4=phase4_checks(batch_id), p5=phase5_checks(batch_id),
@@ -509,6 +519,9 @@ def page_batch(request: Request, batch_id: str):
 @app.get("/partials/batch/{batch_id}/stats", response_class=HTMLResponse)
 def partial_batch_stats(request: Request, batch_id: str):
     b, pages = _batch(batch_id)
+    if VF:
+        return templates.TemplateResponse("_batch_stats.html", ctx(request, batch_id=batch_id, b=b, pages=pages,
+                                          depth=None, depths=_depths(), vf=vf_checks(batch_id)))
     return templates.TemplateResponse("_batch_stats.html", ctx(request, batch_id=batch_id, b=b, pages=pages, depth=None,
                                       depths=_depths(), p2=phase2_checks(batch_id), p3=phase3_checks(batch_id),
                                       p4=phase4_checks(batch_id), p5=phase5_checks(batch_id)))
@@ -755,6 +768,7 @@ def page_page(request: Request, batch_id: str, page_no: int):
                       (batch_id,)).fetchone()
         p = c.execute("SELECT * FROM staging.page WHERE batch_id=%s AND page_no=%s", (batch_id, page_no)).fetchone()
         pc = verify.load(c, batch_id, page_no) if p else None
+        vfp = _vf_page(c, p) if VF and p else None
     ticket = None
     if b and p:
         ticket = json.dumps({"batch_id": batch_id, "page_no": page_no, "image_key": p["image_path"],
@@ -762,7 +776,7 @@ def page_page(request: Request, batch_id: str, page_no: int):
     words = p["ocr_words"] if p and p["ocr_words"] else []
     size = _png_size(p["upright_path"]) if p and p["upright_path"] else None
     return templates.TemplateResponse("page.html", ctx(request, batch_id=batch_id, b=b, p=p, page_no=page_no,
-                                      ticket=ticket, words=words, size=size, pc=pc))
+                                      ticket=ticket, words=words, size=size, pc=pc, vfp=vfp))
 
 
 def _png_size(key):
@@ -798,6 +812,321 @@ def api_batch(batch_id: str):
         by_status[p["status"]] = by_status.get(p["status"], 0) + 1
     return {"batch": {k: (str(v) if not isinstance(v, (int, str, type(None))) else v) for k, v in b.items()},
             "page_rows": len(pages), "pages_by_status": by_status, "q_pages_depth": _depths()["pages"], "depths": _depths()}
+
+
+
+# ================================================================================================= vlm-first
+# Only used when PIPELINE=vlm-first (branch vlm-first). Grading uses the answer key here in the UI only.
+
+def _main_db():
+    import psycopg
+    from psycopg.rows import dict_row
+    return psycopg.connect(os.environ["MAIN_DATABASE_URL"], row_factory=dict_row)      # read-only
+
+
+def _v1_pile(batch, page):
+    try:
+        with _main_db() as m:
+            r = m.execute("SELECT pile FROM staging.type_label WHERE batch_id=%s AND page_no=%s", (batch, page)).fetchone()
+        return r and r["pile"]
+    except Exception:
+        return None
+
+
+def vf_after_label(batch, page, label):
+    """A person's label decides the page's type. If the AI OCR already read the page, it resumes at the Tesseract
+    check. A practice-pile label on a page the machine was unsure or wrong about becomes a lesson for the teacher."""
+    with db.connect() as c:
+        p = c.execute("""SELECT p.page_no, p.image_path, p.original_path, p.fields_all IS NOT NULL AS read,
+                                p.type_votes->'machine' AS machine, b.run, l.pile
+                           FROM staging.page p JOIN staging.scan_batch b ON b.id = p.batch_id
+                           JOIN staging.type_label l USING (batch_id, page_no)
+                          WHERE p.batch_id=%s AND p.page_no=%s""", (batch, page)).fetchone()
+        if not p:
+            return
+        m = p["machine"] or {}
+        if p["pile"] == "practice" and (m.get("status") != "decided" or m.get("doc_type") != label) and p["read"]:
+            c.execute("""INSERT INTO staging.lesson (batch_id, page_no, label) VALUES (%s, %s, %s)
+                         ON CONFLICT (batch_id, page_no) DO UPDATE SET label=EXCLUDED.label, status='waiting',
+                           answer=NULL, proposal=NULL, error=NULL""", (batch, page, label))
+        if not p["read"] or not (p["original_path"] or p["image_path"] or "").startswith("pages/"):
+            return                          # only pages with a real image are resumed
+        c.execute("UPDATE staging.page SET status='queued' WHERE batch_id=%s AND page_no=%s", (batch, page))
+    import pika
+    mq = q.connect()
+    try:
+        ch = mq.channel(); q.declare(ch)
+        ch.basic_publish("", q.Q_PAGES, json.dumps({"batch_id": batch, "page_no": page, "run": p["run"],
+                                                    "image_key": p["original_path"] or p["image_path"]}).encode(),
+                         pika.BasicProperties(delivery_mode=2, content_type="application/json"))
+    finally:
+        mq.close()
+
+
+def _vf_page(c, p):
+    from common.fields import CANON, TYPE_MAP
+    cv = c.execute("SELECT content FROM staging.context_version WHERE version=%s", (p.get("context_version"),)).fetchone()
+    fields = (cv or {}).get("content", {}).get("fields") or {n: f for n, f in CANON.items()}
+    lesson = c.execute("SELECT * FROM staging.lesson WHERE batch_id=%s AND page_no=%s",
+                       (p["batch_id"], p["page_no"])).fetchone()
+    label = c.execute("SELECT label::text AS label, pile FROM staging.type_label WHERE batch_id=%s AND page_no=%s",
+                      (p["batch_id"], p["page_no"])).fetchone()
+    calls = c.execute("""SELECT provider, purpose, ok, ms, model FROM staging.model_call WHERE batch_id=%s AND page_no=%s
+                         ORDER BY at""", (p["batch_id"], p["page_no"])).fetchall()
+    mapping = None
+    if p["doc_type"] in DOCS and p["fields"]:
+        t = DOCS[p["doc_type"]]
+        mapping = {"table": f"satellite.{t['table']}",
+                   "row": {f["name"]: ((p["fields"].get(f["name"]) or {}).get("value")) for f in t["header"]}}
+    filled = sum(1 for n, f in (p.get("fields_all") or {}).items()
+                 if n != "lines" and isinstance(f, dict) and f.get("value") not in (None, ""))
+    return {"fields": fields, "lesson": lesson, "label": label, "calls": calls, "mapping": mapping, "filled": filled,
+            "type_names": {v: k for k, v in TYPE_MAP.get(p["doc_type"], {}).items()}}
+
+
+def _vf_bent_passes(r, name, kind, f):
+    """Would the value, changed by one digit, still be backed by print somewhere in the chain?"""
+    from worker import zoom
+    val, src = _one_digit_off(kind, f["value"], f["source_text"])
+    bent = {**(r["fields"] or {}), name: {"value": val, "source_text": src}}
+    if verify.header(r["doc_type"], bent, r["classical_text"], r["qr_text"])[name]["verdict"] == "ok":
+        return True
+    z = (r["zoom"] or {}).get(name) or {}
+    return bool(z.get("texts")) and zoom.confirm(src, z["texts"], z.get("band") or [])[0]
+
+
+def vf_checks(batch_id):
+    """vlm-first acceptance on pages 1–31. Gates: nothing wrong is ever confident. "Don't know" always passes."""
+    from common import context
+    b, _ = _batch(batch_id)
+    if not b:
+        return None
+    with db.connect() as c:
+        rows = {r["page_no"]: r for r in c.execute("""
+            SELECT page_no, status::text AS status, doc_type::text AS doc_type, type_status, type_votes, fields,
+                   extract_status, extract_error, qr_text, classical_text, zoom, second_look, outcome
+              FROM staging.page WHERE batch_id=%s""", (batch_id,))}
+        for n, r in rows.items():
+            r["checks"] = verify.load(c, batch_id, n)
+        ctxs = c.execute("SELECT version, status, content FROM staging.context_version ORDER BY version").fetchall()
+        exam_lessons = [r["page_no"] for r in c.execute("""SELECT l.page_no FROM staging.lesson l
+            JOIN staging.type_label t USING (batch_id, page_no) WHERE l.batch_id=%s AND t.pile='exam'""", (batch_id,))]
+        calls = c.execute("""SELECT provider, purpose, count(*) AS n, count(*) FILTER (WHERE ok) AS ok,
+                                    round(avg(ms)) AS avg_ms FROM staging.model_call WHERE batch_id=%s
+                             GROUP BY 1, 2 ORDER BY 1, 2""", (batch_id,)).fetchall()
+    scope = [n for n in SCOPE if n in rows]
+    done = [n for n in scope if rows[n]["status"] == "read"]
+    failed = [n for n in done if rows[n]["extract_status"] == "failed"]
+    machine = {n: ((rows[n]["type_votes"] or {}).get("machine") or {}) for n in done}
+    checks = [("Every page 1–31 processed (or failed with a reason)", len(done) == len(scope),
+               f"{len(done)} of {len(scope)} processed" +
+               (f" · AI OCR failed on {failed}: {(rows[failed[0]]['extract_error'] or '')[:90]}" if failed else ""))]
+    qr_not_fp = [n for n in done if rows[n]["qr_text"] and SOR_RE.fullmatch(rows[n]["qr_text"])
+                 and machine[n].get("status") == "decided" and machine[n].get("doc_type") != "FP"]
+    checks.append(("Every page with an SOR QR code that the machine decided is FP", not qr_not_fp,
+                   f"{sum(1 for n in done if rows[n]['qr_text'])} QR pages" + (f" · NOT FP: {qr_not_fp}" if qr_not_fp else "")))
+    tally = {"decided": 0, "unsure": 0, "labelled": sum(1 for n in done if rows[n]["type_status"] == "labelled")}
+    for n in done:
+        tally["decided" if machine[n].get("status") == "decided" else "unsure"] += 1
+    table = []
+    golden = _golden() if b["file_name"] == GOLDEN_FILE else None
+    if golden:
+        alts = golden.get("type_alternatives", {})
+        wrong_types = []
+        for n in done:
+            key = golden["page_types"].get(str(n))
+            ok_types = set(alts.get(str(n), [key]))
+            m = machine[n]
+            if m.get("status") == "decided" and m.get("doc_type") not in ok_types:
+                wrong_types.append(f"p{n} {m.get('doc_type')} (key {key})")
+            table.append({"page": n, "key": "/".join(sorted(ok_types)), "machine": m.get("doc_type") if
+                          m.get("status") == "decided" else None, "guess": m.get("guess"), "reason": m.get("reason"),
+                          "labelled": rows[n]["doc_type"] if rows[n]["type_status"] == "labelled" else None,
+                          "outcome": rows[n]["outcome"]})
+        checks.append(("No page given a wrong type by the machine (unsure is allowed)", not wrong_types,
+                       f"{tally['decided']} decided · {tally['unsure']} unsure · {tally['labelled']} labelled by a person"
+                       + (f" · WRONG: {wrong_types}" if wrong_types else "")))
+        wrong_ok, right_ok, right_check = [], 0, 0
+        for pg, t, fname, expected in _answer_key_values(golden):
+            r = rows.get(pg)
+            if not r or r["doc_type"] != t or not r["checks"]:
+                continue
+            got = ((r["fields"] or {}).get(fname) or {}).get("value")
+            v = r["checks"]["header"].get(fname, {})
+            if not got:
+                continue
+            if _same(expected, got):
+                right_ok += v.get("verdict") == "ok"
+                right_check += v.get("verdict") == "check"
+            elif v.get("verdict") == "ok":
+                wrong_ok.append(f"p{pg} {fname}={got} (key {expected}, by {v.get('by')})")
+        checks.append(("No wrong value gets ✅ (answer key), whatever confirmed it", not wrong_ok,
+                       f"right values: {right_ok} ✅ · {right_check} to a person" +
+                       (f" · WRONG ✅: {wrong_ok}" if wrong_ok else "")))
+    changed, missed = 0, []
+    for n in done:
+        r = rows[n]
+        if not r["checks"] or r["doc_type"] not in DOCS:
+            continue
+        kinds = {f["name"]: f["kind"] for f in DOCS[r["doc_type"]]["header"]}
+        for name, v in r["checks"]["header"].items():
+            f = (r["fields"] or {}).get(name)
+            if v["verdict"] == "ok" and f and f.get("value") is not None:
+                changed += 1
+                if _vf_bent_passes(r, name, kinds[name], f):
+                    missed.append(f"p{n} {name}")
+    checks.append(("A ✅ value changed by one digit never passes (whole page → zoomed spot → second look)", not missed,
+                   f"{changed - len(missed)} of {changed} caught" + (f" · passed anyway: {missed}" if missed else "")))
+    bad = [c_["version"] for c_ in ctxs if context.validate(c_["content"])]
+    active = [c_["version"] for c_ in ctxs if c_["status"] == "active"]
+    checks.append(("Every Jev context is valid (combined list = union of the types' fields), exactly one active",
+                   not bad and len(active) == 1,
+                   f"{len(ctxs)} versions · active v{active[0] if active else '-'}" + (f" · INVALID: {bad}" if bad else "")))
+    checks.append(("No lesson from an exam-pile page (the teacher never sees exam labels)", not exam_lessons,
+                   "none" if not exam_lessons else f"exam pages with lessons: {exam_lessons}"))
+    vals = {}
+    for n in done:
+        for v in ((rows[n]["checks"] or {}).get("header") or {}).values():
+            k = v["verdict"] + (f" · {v['by']}" if v.get("by") else "")
+            vals[k] = vals.get(k, 0) + 1
+    outcomes = {}
+    for n in done:
+        outcomes[rows[n]["outcome"] or "not read"] = outcomes.get(rows[n]["outcome"] or "not read", 0) + 1
+    return {"checks": checks, "all_ok": all(ok for _, ok, _ in checks), "table": table, "values": vals,
+            "outcomes": outcomes, "calls": calls, "pages": len(done), "golden": bool(golden)}
+
+
+@app.get("/api/batches/{batch_id}/vf")
+def api_vf(batch_id: str):
+    r = vf_checks(batch_id) if VF else None
+    return r if r else JSONResponse({"error": "not found"}, status_code=404)
+
+
+@app.get("/context", response_class=HTMLResponse)
+def page_context(request: Request):
+    from common import context
+    with db.connect() as c:
+        versions = c.execute("SELECT * FROM staging.context_version ORDER BY version DESC").fetchall()
+        lessons = c.execute("SELECT * FROM staging.lesson ORDER BY created_at DESC").fetchall()
+    active = next((v for v in versions if v["status"] == "active"), None)
+    by_v = {v["version"]: v for v in versions}
+    for v in versions:
+        v["problems"] = context.validate(v["content"])
+        v["union_ok"] = context.union_equals_list(v["content"])
+        parent = by_v.get(v["parent"]) if v["parent"] else None
+        v["diff"] = _context_diff(parent["content"], v["content"]) if parent else None
+        v["lesson"] = next((l for l in lessons if l["proposal"] == v["version"]), None)
+    return templates.TemplateResponse("context.html", ctx(request, versions=versions, active=active, lessons=lessons))
+
+
+def _context_diff(a, b):
+    out = []
+    for name in sorted(set(b["fields"]) - set(a["fields"])):
+        out.append(f"new field on the combined list: {name} ({b['fields'][name]['meaning']})")
+    for code, t in b["types"].items():
+        ta = a["types"][code]
+        old = {f["name"]: f for f in ta["fields"]}
+        for f in t["fields"]:
+            if f["name"] not in old:
+                out.append(f"{code} now has {f['name']} ({f['how_often']}){': ' + f['note'] if f['note'] else ''}")
+            elif (old[f["name"]]["how_often"], old[f["name"]]["note"]) != (f["how_often"], f["note"]):
+                out.append(f"{code}.{f['name']}: {old[f['name']]['how_often']} → {f['how_often']}"
+                           f"{': ' + f['note'] if f['note'] else ''}")
+        for k in ("what", "not_for"):
+            if ta.get(k) != t.get(k):
+                out.append(f"{code} {k}: {t.get(k)!r}")
+        added = [x for x in t["titles"] if x not in ta["titles"]]
+        if added:
+            out.append(f"{code} titles + {added}")
+    return out
+
+
+@app.post("/context/{version}/approve")
+def approve_context(version: int, by: str = Form(...)):
+    from common import context
+    if not by.strip():
+        return JSONResponse({"error": "say who approves it"}, status_code=400)
+    with db.connect() as c:
+        context.activate(c, version, by.strip())
+    try:                                   # the exam pile, which the teacher never saw: for the report only
+        from worker import lesson
+        lesson.score_exam(version)
+    except Exception as e:
+        print("exam scoring failed:", e)
+    return RedirectResponse("/context", status_code=303)
+
+
+@app.post("/context/{version}/reject")
+def reject_context(version: int, by: str = Form("")):
+    from common import context
+    with db.connect() as c:
+        context.reject(c, version, by.strip() or None)
+    return RedirectResponse("/context", status_code=303)
+
+
+@app.get("/compare", response_class=HTMLResponse)
+def page_compare(request: Request, batch: str | None = None):
+    batch = batch or _latest_batch()
+    data = vf_compare(batch) if batch else None
+    return templates.TemplateResponse("compare.html", ctx(request, batch=batch, d=data))
+
+
+def vf_compare(batch):
+    """v1 (its own database, read-only) vs vlm-first, on pages 1–31 that both read. Graded by the answer key."""
+    q_ = """SELECT page_no, status::text AS status, doc_type::text AS doc_type, type_status, type_votes, extract_status,
+                   fields, vlm_meta FROM staging.page WHERE batch_id=%s AND page_no = ANY(%s)"""
+    with db.connect() as c:
+        vf = {r["page_no"]: r for r in c.execute(q_, (batch, list(SCOPE)))}
+        for n in vf:
+            vf[n]["checks"] = verify.load(c, batch, n)
+        vf_calls = c.execute("""SELECT provider, count(*) AS n FROM staging.model_call WHERE batch_id=%s
+                                GROUP BY 1""", (batch,)).fetchall()
+    with _main_db() as m:
+        v1 = {r["page_no"]: r for r in m.execute(q_, (batch, list(SCOPE)))}
+        for n in v1:
+            v1[n]["checks"] = verify.load(m, batch, n)
+    b, _ = _batch(batch)
+    golden = _golden() if b and b["file_name"] == GOLDEN_FILE else None
+    alts = (golden or {}).get("type_alternatives", {})
+
+    def machine(r, vf_side):
+        if vf_side:
+            m = (r["type_votes"] or {}).get("machine") or {}
+            return m.get("doc_type") if m.get("status") == "decided" else None
+        return r["doc_type"] if r["type_status"] == "decided" else None
+
+    def values(r):
+        out = {"ok": 0, "check": 0, "empty": 0}
+        for v in ((r.get("checks") or {}).get("header") or {}).values():
+            out[v["verdict"]] += 1
+        return out
+
+    rows, sums = [], {"v1": {"right": 0, "unsure": 0, "wrong": 0, "ok": 0, "check": 0},
+                      "vf": {"right": 0, "unsure": 0, "wrong": 0, "ok": 0, "check": 0}}
+    for n in sorted(set(vf) & set(v1)):
+        if vf[n]["status"] != "read":        # not processed by vlm-first yet: nothing to compare
+            continue
+        key = (golden or {}).get("page_types", {}).get(str(n))
+        ok_types = set(alts.get(str(n), [key]))
+        row = {"page": n, "key": "/".join(sorted(ok_types)) if key else "?"}
+        for side, r in (("v1", v1[n]), ("vf", vf[n])):
+            t = machine(r, side == "vf")
+            verdict = "unsure" if t is None else ("right" if t in ok_types else "wrong") if key else "?"
+            vals = values(r)
+            row[side] = {"type": t, "verdict": verdict, "read": r["extract_status"] == "done", **vals}
+            if verdict in ("right", "unsure", "wrong"):
+                sums[side][verdict] += 1
+            sums[side]["ok"] += vals["ok"]
+            sums[side]["check"] += vals["check"]
+        rows.append(row)
+    v1_calls = {"gemini (stored readings)": sum(len(r["vlm_meta"] or {}) for r in v1.values())}
+    read_by = {}
+    for r in vf.values():
+        if r["status"] == "read":
+            model = ((r["vlm_meta"] or {}).get("read") or {}).get("model") or "not read by the AI OCR"
+            read_by[model] = read_by.get(model, 0) + 1
+    return {"rows": rows, "sums": sums, "vf_calls": vf_calls, "v1_calls": v1_calls, "pages": len(rows),
+            "read_by": read_by}
 
 
 @app.get("/{rest:path}", response_class=HTMLResponse)

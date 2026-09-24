@@ -12,6 +12,69 @@ The user is an intern building this with two mentors (a human mentor and an "AI 
 - **`Infrastructure OCR.jpeg`**: the human mentor's original sketch.
 - Phase plan: [docs/phase-plan.md](docs/phase-plan.md) (summary below). The **vlm-first** experiment lives on git branch `vlm-first`, checked out at `.claude/worktrees/vlm-first` (its own CLAUDE.md section describes it).
 
+## THIS CHECKOUT: the vlm-first experiment (branch `vlm-first`)
+
+The user's alternative design, built to compare with v1 on pages 1–31 **without touching v1**. Per page:
+1. **Prepare the image** (`enhance.prepare`: dark bands, upright, straighten, QR). No Tesseract reading.
+2. **AI OCR reads every field on ONE combined list** (`vlm.extract_all`), plus where each value is (`box`).
+3. **Jev classifies from that reading only** (`vf.jev_state`), with a context generated from the registry.
+4. **Decide:** Jev ≥ 0.85. An SOR QR means FP; an FP also needs the QR or the FP layout (image-only witnesses). Otherwise unsure → Label screen.
+5. **Tesseract reads the page only now**, after classification.
+6. **Check** (`verify.run` on the projected per-type fields), then Tesseract re-reads each unbacked value's spot zoomed in (`worker/zoom.py`).
+7. **Look again** (`vlm.second_look`): blind, field names and crops only, never Tesseract's reading or Gemini's first answer. A new answer counts only if print backs it.
+8. **Outcome:** `clear` (every §6.1 field ✅), `needs_person`, or `held_unsure`.
+
+**Decided with the user (2026-09-24):**
+- Teacher = GLM-4.6V-Flash (Z.ai, needs `ZAI_API_KEY`).
+- The look-again is blind.
+- Context changes are replayed on practice labels + anchors, then **a person approves** (Context screen).
+
+**Two kinds of "new field":**
+- **New for a type:** the field is already on the combined list. The type's list gains it as `sometimes` + a note; the combined list doesn't change.
+- **Genuinely new:** the field joins the list and the type as a `clue`. Its example must be printed (Tesseract), it must not repeat another field's value, and a person confirms it.
+
+**Pieces:**
+
+| Piece | Where |
+|---|---|
+| Combined list | `common/fields.py` `CANON` (29 per-type fields → 18 stored + 2 clue), `TYPE_MAP`, `project()`/`lift()` |
+| Jev context | `common/context.py` (versioned in `staging.context_version`; invariant: union of types' fields == list, checked by `validate()`) |
+| Page flow | `worker/vf.py` |
+| Teacher | `common/models/teacher.py` |
+| Lessons and replay gate | `worker/lesson.py` |
+| Clone | `worker/clone.py` |
+| Schema | `schema/010-vlm-first.sql` (vf database only) |
+| Screens | vf UI http://localhost:8001: batch box, page view section, `/context`, `/compare` |
+
+**Runtime** (`docker-compose.yml` here):
+- Project `samb-ocr-vf`: `vf-worker` ×1 and `vf-ui` on :8001, on v1's network `samb-ocr_default`.
+- Database `ocr_vf`, RabbitMQ vhost `vf`, MinIO keys under `vf/`. It reads v1's page renders and, read-only, v1's DB (`MAIN_DATABASE_URL`).
+- **Service names must never be `ui`/`worker`**: n8n calls `http://ui:8000`.
+- Start v1 first; stop vf before `docker compose down` in v1.
+
+**Commands (from this folder):**
+```bash
+docker compose up -d                                                     # vf-worker + vf-ui
+docker compose exec vf-worker python -m worker.clone b-4bab9b736d 1-31,48,52,57   # identities + labels only
+docker compose exec vf-worker python -m worker.vf once b-4bab9b736d 1,4,15 [--v1-reading]  # run pages now (dry run: v1's reading instead of Gemini)
+docker compose exec vf-worker python -m worker.zoom report b-4bab9b736d 1-31      # the zoomed check on v1's values, read-only
+docker compose exec vf-worker python -m worker.lesson backfill|run|exam …       # lessons → teacher → proposals
+docker compose exec -e PYTHONPATH=/app vf-ui pytest -q tests/                   # 71 pass; test_vf_acceptance waits for the Gemini run; v1's phase tests skip
+```
+
+**Budget:**
+- Gemini free tier is 20 calls/model/day, shared with v1; it resets at 14:00 WIB.
+- vf caps itself at `VF_GEMINI_DAILY_CAP` (40) and counts every call in `staging.model_call`.
+- About 1 read plus ≤ 1 look-again per page.
+
+**Measured so far (2026-09-24):**
+- **The zoomed check exposed a shared mistake.** Page 22 prints S10232; Gemini read `510232` and the zoomed Tesseract read also said `510232`. So a zoomed ✅ is refused when any Tesseract reading of that spot disagrees (`$10232` on the whole page).
+- **Zoomed reads misread too.** p1 `3190721`, p9 `214436`: they never cancel a whole-page ✅. On v1's 26 values for a person, the zoom confirms 2.
+- **Dry run with v1's readings** (19 pages; no document title in them):
+  - all 7 FPs decided right; every TTG/PO unsure;
+  - no wrong type, no wrong ✅, 38 of 38 one-digit changes caught.
+  - The real run needs Gemini; it waits for the quota.
+
 ## Domain in one minute
 
 - One **SOR** has one **Faktur Penjualan (FP)**, SAMB's own invoice, which prints the SOR. The customer returns supporting documents for it: **TTG** (Tanda Terima), **PO**, and sometimes **SJ** (Surat Jalan). Later a **Faktur Pajak (FPj)** arrives, and later still **Pelunasan** (payment) documents.

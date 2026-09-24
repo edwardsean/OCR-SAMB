@@ -5,6 +5,7 @@ After a page is done: tick the batch scoreboard; the worker that ticks it to N o
 """
 import io
 import json
+import os
 import time
 import traceback
 
@@ -199,10 +200,17 @@ def ring_bell(ch, bid, run):
                      pika.BasicProperties(delivery_mode=2, content_type="application/json"))
 
 
+PIPELINE = os.environ.get("PIPELINE", "v1")
+
+
 def on_message(ch, method, props, body):
     ticket = json.loads(body)
     try:
-        score = handle(ticket)
+        if PIPELINE == "vlm-first":            # the experiment on branch vlm-first (worker/vf.py)
+            from worker import vf
+            score = vf.handle(ticket)
+        else:
+            score = handle(ticket)
         if score == "stale":
             ch.basic_ack(method.delivery_tag); return
         if score and score["ring"]:
@@ -237,5 +245,6 @@ def run():
 
 
 if __name__ == "__main__":
-    health.serve("worker", role="per page: enhance (2) → classify (3) → AI OCR (4) → check values (5)")
+    health.serve("worker", role="vlm-first: prepare → AI OCR all fields → Jev → Tesseract → check → look again"
+                 if PIPELINE == "vlm-first" else "per page: enhance (2) → classify (3) → AI OCR (4) → check values (5)")
     run()
