@@ -1,4 +1,5 @@
 """Build diagrams/db-flow.html: every pipeline phase, every table it touches, every column.
+Two pipelines on one page, with a switch: vlm-first (branch vlm-first, database ocr_vf) and v1 (database ocr).
 
     python3 scripts/build_db_flow.py
 
@@ -31,9 +32,9 @@ def _cols_in_parens(s):
     return [c.strip() for c in m.group(1).split(",")] if m else []
 
 
-def parse_schema():
+def parse_schema(files=None):
     tables, enums, comments = OrderedDict(), OrderedDict(), {}
-    for fname in SCHEMA_FILES:
+    for fname in files or SCHEMA_FILES:
         tag = "base" if fname.startswith("satellite") else fname[:3]
         lines = open(os.path.join(ROOT, "schema", fname)).read().split("\n")
         i = 0
@@ -493,14 +494,249 @@ GAPS = [
      "generated from the SQL, so it is the complete list."),
 ]
 
+
+# ---------------------------------------------------------------------------
+# 2b. vlm-first (branch vlm-first, database ocr_vf): the same tables plus migration 010
+# ---------------------------------------------------------------------------
+SRC_VF, SRC_CLONE, SRC_CTX = "services/worker/vf.py", "services/worker/clone.py", "services/common/context.py"
+SRC_VERIFY, SRC_LESSON = "services/common/verify.py", "services/worker/lesson.py"
+CALL_COLS = ["pacific_day", "provider", "model", "purpose", "batch_id", "page_no", "ok", "ms", "tokens", "error"]
+PREP_COLS = ["rotation", "osd_conf", "skew_angle", "black_ratio", "dark_band_ratio", "speckle_ratio", "qr_text",
+             "layout_score"]
+PHASES_VF = [
+    {"key": "F0", "label": "Setup", "title": "vlm-first database", "status": "built",
+     "who": "By hand, once", "when": "Before the experiment runs",
+     "does": "On v1's Postgres server, a separate database ocr_vf gets schema/*.sql 001 to 009 plus 010, which adds "
+             "context_version, lesson and model_call and seven page columns. RabbitMQ gets a vhost vf. v1's database "
+             "and queues are never written.",
+     "story": "Two databases on one server: ocr (v1) and ocr_vf (vlm-first). Same table names, separate rows.",
+     "fx": ["createdb ocr_vf + 10 schema files", "rabbitmqctl add_vhost vf"], "next": "Pages are cloned",
+     "ops": []},
+    {"key": "F1", "label": "Step 1", "title": "Clone pages from v1", "status": "built",
+     "who": "python -m worker.clone", "when": "Once per batch",
+     "does": "Copies only the batch row, each page's identity and original render key, and people's labels with "
+             "their pile. Nothing v1 computed (rotation, text, type, fields) is copied: vlm-first does all of it itself.",
+     "story": "Pages 3 to 5 arrive in ocr_vf as bare rows pointing at the same page images v1 rendered.",
+     "fx": ["v1's database, read-only (MAIN_DATABASE_URL)"], "next": "Each page gets a ticket on vhost vf",
+     "ops": [
+         op("v1's batch (read-only)", "staging.scan_batch", "SELECT in v1's db",
+            r=["id", "file_name", "file_path", "sha256", "scanned_day", "page_total"], src=SRC_CLONE),
+         op("v1's pages (read-only)", "staging.page", "SELECT in v1's db",
+            r=["page_no", "image_path", "original_path", "thumb_path"], src=SRC_CLONE),
+         op("v1's labels (read-only)", "staging.type_label", "SELECT in v1's db",
+            r=["page_no", "label", "customer", "note", "labelled_by", "labelled_at", "pile"], src=SRC_CLONE),
+         op("the batch", "staging.scan_batch", "INSERT",
+            w=["id", "file_name", "file_path", "sha256", "scanned_day", "page_total", "status", "run",
+               "pages_rendered"], note="status 'split', run 1", src=SRC_CLONE),
+         op("bare pages", "staging.page", "INSERT",
+            w=["batch_id", "page_no", "image_path", "original_path", "thumb_path", "status"],
+            note="status 'rendered': nothing v1 computed", src=SRC_CLONE),
+         op("labels, same pile", "staging.type_label", "INSERT",
+            w=["batch_id", "page_no", "label", "customer", "note", "labelled_by", "labelled_at", "pile"],
+            note="after the pages: a label references its page", src=SRC_CLONE),
+     ]},
+    {"key": "F2", "label": "Step 2", "title": "Prepare the image", "status": "built",
+     "who": "vf-worker", "when": "It takes a ticket from q.pages on vhost vf",
+     "does": "Dark bands, upright, straighten, QR. No Tesseract reading: only a quick orientation check picks 90° or "
+             "270°. The upright image is written under vf/ in MinIO; v1's keys are never written.",
+     "story": "Page 3 is already upright; its QR decodes to SOR26110255837 and its layout looks like SAMB's invoice.",
+     "fx": ["MinIO vf/pages/<batch>/upright", "Tesseract: orientation check only"], "next": "The AI OCR reads it",
+     "ops": [
+         op("stale ticket?", "staging.scan_batch", "SELECT", r=["run"], src=SRC_WORKER),
+         op("already prepared?", "staging.page", "SELECT",
+            r=["prep_version", "upright_path", "thumb_upright_path", "quality_flags"] + PREP_COLS, src=SRC_VF),
+         op("save · prepared", "staging.page", "UPDATE (one per page)",
+            w=["upright_path", "thumb_upright_path", "prep_version", "quality_flags"] + PREP_COLS, src=SRC_VF),
+     ]},
+    {"key": "F3", "label": "Step 3", "title": "AI OCR reads every field", "status": "built",
+     "who": "vf-worker + Gemini", "when": "Same ticket",
+     "does": "Gemini gets the page image and the WHOLE combined field list from the active context (20 fields, plus "
+             "line items) and returns each value as printed, with where it is. Most fields are empty on any one page.",
+     "story": "Page 4: po_number 4505832724, total 1.126.006, document_title Purchase Order; FP-only fields stay empty.",
+     "fx": ["Gemini gemini-3.8-flash (+ fallbacks), cap 40 calls a day"], "next": "Jev classifies from the reading",
+     "ops": [
+         op("active context", "staging.context_version", "SELECT", r=["version", "content", "status"], src=SRC_CTX),
+         op("seed v1 if none", "staging.context_version", "INSERT",
+            w=["version", "status", "content", "created_by", "note"], auto=["created_at"], src=SRC_CTX),
+         op("reuse the reading?", "staging.page", "SELECT", r=["fields_all", "fields_version", "vlm_meta"], src=SRC_VF),
+         op("count the call", "staging.model_call", "INSERT", w=CALL_COLS, auto=["id", "at"],
+            note="provider gemini, purpose read_all", src=SRC_VF),
+         op("save · the reading", "staging.page", "same UPDATE",
+            w=["fields_all", "fields_version", "extract_status", "extract_error", "vlm_meta", "model_vlm"], src=SRC_VF),
+     ]},
+    {"key": "F4", "label": "Step 4", "title": "Jev classifies from the reading", "status": "built",
+     "who": "vf-worker + Jev", "when": "Same ticket",
+     "does": "Jev sees only the AI OCR's reading (never Tesseract) and a question built from the context: each type's "
+             "description, titles and fields. Decided at 0.85; an SOR QR means FP and an FP also needs the QR or the FP "
+             "layout. Otherwise unsure: the page waits for a person. A label, when there is one, decides.",
+     "story": "Page 3: Jev FP 0.95 plus the QR code: decided FP. Page 5 without a readable title: unsure, held.",
+     "fx": ["Jev (TypeSafe) Choice over 8 types"], "next": "Tesseract reads the page",
+     "ops": [
+         op("reuse Jev's answer?", "staging.page", "SELECT", r=["type_votes"], src=SRC_VF),
+         op("a person's label?", "staging.type_label", "SELECT", r=["label"], src=SRC_VF),
+         op("count the call", "staging.model_call", "INSERT", w=CALL_COLS, auto=["id", "at"],
+            note="provider jev, purpose classify", src=SRC_VF),
+         op("save · the type", "staging.page", "same UPDATE",
+            w=["type_status", "doc_type", "type_guess", "doc_type_conf", "type_votes", "context_version"],
+            note="type_votes.machine keeps the machine's answer when a person labels", src=SRC_VF),
+     ]},
+    {"key": "F5", "label": "Step 5", "title": "Tesseract reads, after classification", "status": "built",
+     "who": "vf-worker (local)", "when": "Only decided or labelled pages",
+     "does": "The Tesseract reading happens only now, to check the AI OCR's values. Unsure pages get none until a "
+             "person labels them.",
+     "story": "Page 3 is decided FP, so Tesseract reads it: TOTAL 1.126.911 (it misread one digit).",
+     "fx": ["Tesseract ind+eng, 'close' at 2×"], "next": "Every value is checked",
+     "ops": [
+         op("save · Tesseract", "staging.page", "same UPDATE",
+            w=["ocr_variant", "variant_scores", "ocr_conf", "confident_chars", "ocr_words", "classical_text"],
+            src=SRC_VF),
+     ]},
+    {"key": "F6", "label": "Step 6", "title": "Check every value", "status": "built",
+     "who": "vf-worker, plain code", "when": "Same ticket",
+     "does": "The reading is projected onto the page's type (per-type names = Satellite columns). Each value is ✅ when "
+             "printed in Tesseract's text, equal to the QR, or the FP sums add up; else Tesseract re-reads its spot zoomed "
+             "in, and that counts only if no reading of the spot disagrees.",
+     "story": "Page 3's total 1.126.011 isn't in Tesseract's text, but DPP + PPN = Total: ✅ adds_up.",
+     "fx": ["common/verify.py", "worker/zoom.py"], "next": "Unbacked values get a second look",
+     "ops": [
+         op("save · checks", "staging.page", "same UPDATE", w=["fields", "keys", "zoom", "verify_version"],
+            note="fields = the combined reading, projected onto the type", src=SRC_VF),
+         op("one row per value", "staging.field_check", "DELETE + INSERT",
+            w=["batch_id", "page_no", "field_path", "vlm_value", "source_text", "classical_match", "status",
+               "confirmed_by", "reason"], note="confirmed_by text · qr · adds_up · zoom · second_look",
+            src=SRC_VERIFY),
+     ]},
+    {"key": "F7", "label": "Step 7", "title": "Look again, blind", "status": "built",
+     "who": "vf-worker + Gemini", "when": "Header values still ⚠, or required ones empty",
+     "does": "One Gemini call per page with the field names, their meanings and zoomed crops. Never Tesseract's "
+             "reading, never its own first answer. A new answer replaces the old one only if print backs it.",
+     "story": "Page 22's vendor number: asked again, Gemini reads 510232 again; Tesseract doesn't back it, so ⚠.",
+     "fx": ["Gemini, purpose second_look"], "next": "The page's outcome",
+     "ops": [
+         op("count the call", "staging.model_call", "INSERT", w=CALL_COLS, auto=["id", "at"],
+            note="provider gemini, purpose second_look", src=SRC_VF),
+         op("save · second look", "staging.page", "same UPDATE", w=["second_look", "fields_all"],
+            note="evidence kept, so the one-digit test re-runs the whole chain", src=SRC_VF),
+     ]},
+    {"key": "F8", "label": "Step 8", "title": "Outcome and scoreboard", "status": "built",
+     "who": "vf-worker", "when": "End of the ticket",
+     "does": "clear (every §6.1 field ✅), needs_person, or held_unsure. The page is saved only if it isn't read yet and "
+             "the run is current; the scoreboard is recounted as in v1.",
+     "story": "Pages 1 and 3: clear. Page 8 (faint): needs_person, its SOR goes to a person.",
+     "fx": ["outcome: clear · needs_person · held_unsure"], "next": "Unsure pages wait for a person",
+     "ops": [
+         op("save · outcome", "staging.page", "same UPDATE", w=["outcome", "status", "error", "read_at"],
+            note="guarded: not read yet, run still current", src=SRC_VF),
+         op("scoreboard", "staging.scan_batch", "UPDATE … RETURNING", w=["page_done", "status"],
+            r=["page_total", "run"], src=SRC_WORKER),
+     ]},
+    {"key": "F9", "label": "Step 9", "title": "A person labels", "status": "built",
+     "who": "Label screen (vf UI :8001)", "when": "A page is held unsure",
+     "does": "The label decides the page's type and the page resumes at Tesseract. A page v1 already put in a pile keeps "
+             "that pile. A practice-pile label on a page the machine was unsure or wrong about becomes a lesson.",
+     "story": "Page 57 labelled TTG (practice pile): the page resumes, and a lesson waits for the teacher.",
+     "fx": ["vhost vf: a resume ticket"], "next": "The teacher, on demand",
+     "ops": [
+         op("v1's pile (read-only)", "staging.type_label", "SELECT in v1's db", r=["pile"], src=SRC_UI),
+         op("the label", "staging.type_label", "UPSERT",
+            w=["batch_id", "page_no", "label", "customer", "note", "labelled_by", "labelled_at", "pile"],
+            note="the pile is drawn once and never moves", src=SRC_UI),
+         op("a lesson", "staging.lesson", "INSERT or reset",
+            w=["batch_id", "page_no", "label", "status", "answer", "proposal", "error"], auto=["id", "created_at"],
+            note="practice pile and the machine missed", src=SRC_UI),
+         op("resume the page", "staging.page", "UPDATE", r=["fields_all", "type_votes", "image_path", "original_path"],
+            w=["status"], src=SRC_UI),
+     ]},
+    {"key": "F10", "label": "Step 10", "title": "Teacher, proposal, replay", "status": "built",
+     "who": "python -m worker.lesson run + GLM-4.6V-Flash", "when": "On demand (needs ZAI_API_KEY)",
+     "does": "GLM sees the page, the label, the AI OCR's reading, Jev's answer and the whole context, and proposes ONE "
+             "change. Code checks it is allowed; Jev is replayed with the old and the new context on practice labels and "
+             "anchors. Exam labels are refused before any call.",
+     "story": "Page 57: 'TTG sometimes has po_number (AEON prints it as RECEIPT NO)'. Replay: no new wrong answer.",
+     "fx": ["GLM-4.6V-Flash (Z.ai)", "Jev, purpose replay"], "next": "A person approves or rejects",
+     "ops": [
+         op("waiting lessons", "staging.lesson", "SELECT", r=["id", "batch_id", "page_no", "label", "status"],
+            src=SRC_LESSON),
+         op("the page", "staging.page", "SELECT",
+            r=["fields_all", "type_votes", "upright_path", "classical_text", "qr_text", "layout_score"],
+            src=SRC_LESSON),
+         op("pile and note", "staging.type_label", "SELECT", r=["pile", "note", "label"],
+            note="exam pile → refused, no call", src=SRC_LESSON),
+         op("count the calls", "staging.model_call", "INSERT", w=CALL_COLS, auto=["id", "at"],
+            note="zai teach · jev replay", src=SRC_VF),
+         op("the proposal", "staging.context_version", "INSERT",
+            w=["version", "parent", "status", "content", "created_by", "note"], auto=["created_at"], src=SRC_CTX),
+         op("the replay result", "staging.context_version", "UPDATE", w=["gate"], src=SRC_LESSON),
+         op("the lesson's result", "staging.lesson", "UPDATE",
+            w=["status", "answer", "proposal", "error", "teacher_model", "asked_at"], src=SRC_LESSON),
+     ]},
+    {"key": "F11", "label": "Step 11", "title": "A person approves", "status": "built",
+     "who": "Context screen (vf UI :8001)", "when": "A proposal passed its replay",
+     "does": "Approve makes the proposal the one active context (the old one is retired): the AI OCR reads its field list "
+             "and Jev uses its descriptions from the next page. Then the exam pile is scored, for the report only.",
+     "story": "Approved by the user: version 2 is active; the next page's reading and question use it.",
+     "fx": ["the next page uses the new context"], "next": "",
+     "ops": [
+         op("approve or reject", "staging.context_version", "UPDATE", w=["status", "approved_by", "approved_at"],
+            src=SRC_CTX),
+         op("exam labels", "staging.type_label", "SELECT", r=["label", "pile"], note="scored after approval, never before",
+            src=SRC_LESSON),
+         op("exam score", "staging.context_version", "UPDATE", w=["gate"], src=SRC_LESSON),
+     ]},
+]
+
+# After "clear", vlm-first goes on to grouping and table mapping: v1's planned phases 6–8, under their own keys.
+import copy as _copy
+for _ph in list(PHASES):
+    if _ph["key"] in ("6", "7", "8", "L"):
+        _c = _copy.deepcopy(_ph)
+        _c["key"] = "P" + _ph["key"]
+        _c["label"] = "Later stages" if _ph["key"] == "L" else "Next: phase " + _ph["key"]
+        PHASES_VF.append(_c)
+
+VF_PAGE_GROUP = ("vlm-first", ["fields_all", "fields_version", "context_version", "zoom", "second_look", "prep_version",
+                               "outcome"])
+
+BLURB.update({
+    "staging.context_version": "vlm-first: Jev's context, versioned. The combined field list and each type's "
+                               "description; one active. Only a person makes a proposal active.",
+    "staging.lesson": "vlm-first: a person's practice-pile label on a page the machine missed, for the teacher.",
+    "staging.model_call": "vlm-first: every Gemini, Jev and GLM call, counted per Google's day (midnight Pacific).",
+})
+EX.update({
+    ("staging.page", "fields_all"): '{"po_number": {"value": "4505832724", "box": [95, 610, 118, 760]}, …}',
+    ("staging.page", "outcome"): "clear", ("staging.page", "context_version"): "1", ("staging.page", "prep_version"): "1",
+    ("staging.context_version", "version"): "1", ("staging.context_version", "status"): "active",
+    ("staging.context_version", "created_by"): "seed",
+    ("staging.lesson", "label"): "TTG", ("staging.lesson", "status"): "waiting",
+    ("staging.model_call", "provider"): "gemini", ("staging.model_call", "purpose"): "read_all",
+})
+
+GAPS_VF = [
+    ("Jev's threshold was measured on Tesseract text",
+     "vlm-first decides at Jev ≥ 0.85, the number v1 measured when Jev read Tesseract's text. Jev now reads the AI OCR's "
+     "reading, so the threshold needs re-measuring after the real run."),
+    ("A context can't be rolled back in the UI",
+     "Approving retires the old version. Going back means proposing the old content again; there is no rollback button."),
+    ("Corrected values still have no way back",
+     "Same as v1: a person's correction (phase 7) has no column the pipeline prefers over the AI OCR's value yet."),
+    ("Lessons need the page read first",
+     "A label on a page the AI OCR hasn't read makes no lesson until the page is read; run worker.lesson backfill then."),
+    ("Most v1 page columns are unused here",
+     "enhance_version, classify_version, extract_version, clean_path, vlm_read and others stay empty in ocr_vf: vlm-first "
+     "uses prep_version, fields_version and context_version instead. They are listed under 'No step touches these'."),
+]
+
+
 # ---------------------------------------------------------------------------
 # 3. Resolve, check, derive
 # ---------------------------------------------------------------------------
 
-def resolve(tables):
+def resolve(tables, phases=None, groups=None, counts=(20, 47, 12)):
+    phases, groups = phases or PHASES, groups or PAGE_GROUPS
     errors = []
     src_text = {}
-    for ph in PHASES:
+    for ph in phases:
         for o in ph["ops"]:
             t = tables.get(o["table"])
             if not t:
@@ -517,29 +753,31 @@ def resolve(tables):
                 for c in o["r"] + o["w"]:
                     if c not in o["auto"] and c not in src_text[o["src"]]:
                         errors.append("phase %s %s: column %s not found in %s" % (ph["key"], o["label"], c, o["src"]))
-    if len(tables) != 20:
-        errors.append("expected 20 tables, parsed %d" % len(tables))
-    if len(tables["staging.page"]["cols"]) != 47:
-        errors.append("expected 47 page columns, parsed %d" % len(tables["staging.page"]["cols"]))
-    if len(tables["staging.scan_batch"]["cols"]) != 12:
-        errors.append("expected 12 scan_batch columns, parsed %d" % len(tables["staging.scan_batch"]["cols"]))
-    grouped = sum(len(g[1]) for g in PAGE_GROUPS)
-    if grouped != 47 or set(c for g in PAGE_GROUPS for c in g[1]) != set(tables["staging.page"]["cols"]):
+    n_tables, n_page, n_batch = counts
+    if len(tables) != n_tables:
+        errors.append("expected %d tables, parsed %d" % (n_tables, len(tables)))
+    if len(tables["staging.page"]["cols"]) != n_page:
+        errors.append("expected %d page columns, parsed %d" % (n_page, len(tables["staging.page"]["cols"])))
+    if len(tables["staging.scan_batch"]["cols"]) != n_batch:
+        errors.append("expected %d scan_batch columns, parsed %d" % (n_batch, len(tables["staging.scan_batch"]["cols"])))
+    grouped = sum(len(g[1]) for g in groups)
+    if grouped != n_page or set(c for g in groups for c in g[1]) != set(tables["staging.page"]["cols"]):
         errors.append("PAGE_GROUPS does not cover staging.page exactly")
     if errors:
         sys.exit("build_db_flow: FAILED\n  " + "\n  ".join(errors))
 
 
-def derive(tables):
+def derive(tables, phases=None):
+    phases = phases or PHASES
     trace = {}      # (table, col) -> OrderedDict(phase_key -> set('R','W'))
     cover = {}      # table -> OrderedDict(phase_key -> set)
-    for ph in PHASES:
+    for ph in phases:
         for o in ph["ops"]:
             for kind, cols in (("R", o["r"]), ("W", o["w"])):
                 for c in cols:
                     trace.setdefault((o["table"], c), OrderedDict()).setdefault(ph["key"], set()).add(kind)
                     cover.setdefault(o["table"], OrderedDict()).setdefault(ph["key"], set()).add(kind)
-    order = [p["key"] for p in PHASES]
+    order = [p["key"] for p in phases]
     never, read_only, write_only = [], [], []
     for tn, t in tables.items():
         for cn in t["cols"]:
@@ -616,7 +854,7 @@ def col_row(tables, trace, tn, cn, uid, here=None, rset=(), wset=(), dim=False):
         vd_html(tn, cn, uid), note_row(tn, cn, uid))
 
 
-def card_html(tables, trace, ph, tn, ops, n):
+def card_html(tables, trace, ph, tn, ops, n, groups=None):
     t = tables[tn]
     rset = set(c for o in ops for c in o["r"])
     wset = set(c for o in ops for c in o["w"])
@@ -633,7 +871,7 @@ def card_html(tables, trace, ph, tn, ops, n):
     stub = ('<div class="stub d-%s"><ul>%s</ul><div class="arrow" aria-hidden="true"><i class="l"></i>'
             '<i class="line"></i><i class="r"></i></div></div>') % (direction, opl)
     rows = []
-    groups = PAGE_GROUPS if tn == "staging.page" else [("", list(t["cols"].keys()))]
+    groups = (groups or PAGE_GROUPS) if tn == "staging.page" else [("", list(t["cols"].keys()))]
     for gname, cols in groups:
         if gname:
             rows.append('<div class="grp">%s</div>' % e(gname))
@@ -653,20 +891,20 @@ def card_html(tables, trace, ph, tn, ops, n):
         note_row(tn, "", uid0 + "-t"), "".join(rows))
 
 
-def phase_html(tables, trace, ph):
+def phase_html(tables, trace, ph, groups=None):
     by_table = OrderedDict()
     for o in ph["ops"]:
         by_table.setdefault(o["table"], []).append(o)
     chip = {"built": "built", "planned": "planned · no code", "later": "later stage"}[ph["status"]]
-    label = "Phase " + ph["key"] if ph["key"] != "L" else "After phase 8"
-    cards = "".join(card_html(tables, trace, ph, tn, ops, i) for i, (tn, ops) in enumerate(by_table.items()))
+    label = ph.get("label") or ("Phase " + ph["key"] if ph["key"] != "L" else "After phase 8")
+    cards = "".join(card_html(tables, trace, ph, tn, ops, i, groups) for i, (tn, ops) in enumerate(by_table.items()))
     if not cards:
         cards = '<p class="nocards">No rows are read or written. This phase creates the tables.</p>'
     spine = ('<aside class="spine"><div class="node %s"><div class="eyebrow">%s <span class="chip %s">%s</span></div>'
              '<h3>%s</h3><dl><dt>Who</dt><dd>%s</dd><dt>Starts when</dt><dd>%s</dd></dl><p class="does">%s</p>'
-             '<p class="story"><span class="tag">The Boots SOR</span>%s</p><ul class="fx">%s</ul></div></aside>') % (
+             '<p class="story"><span class="tag">%s</span>%s</p><ul class="fx">%s</ul></div></aside>') % (
         ph["status"], label, ph["status"], chip, e(ph["title"]), e(ph["who"]), e(ph["when"]), e(ph["does"]),
-        e(ph["story"]), "".join("<li>%s</li>" % e(x) for x in ph["fx"]))
+        e(ph.get("tag", "The Boots SOR")), e(ph["story"]), "".join("<li>%s</li>" % e(x) for x in ph["fx"]))
     nxt = ('<div class="handoff"><span>%s</span></div>' % e(ph["next"])) if ph["next"] else ""
     return '<section class="phase" id="phase-%s">%s<div class="links">%s</div></section>%s' % (
         ph["key"], spine, cards, nxt)
@@ -744,10 +982,72 @@ def overview_svg():
     return "".join(p)
 
 
-def matrix_html(tables, cover, order):
-    head = "".join('<th scope="col">%s</th>' % ("P" + k if k != "L" else "Later") for k in order[1:])
+def overview_svg_vf():
+    """vlm-first: steps 1–11 in a row; v1's database, MinIO and the hosted models above, ocr_vf's staging below."""
+    W, x0, pitch, nw, nh, ny = 1200, 16, 106, 92, 58, 118
+    cx = lambda i: x0 + i * pitch + nw / 2
+    steps = [ph for ph in PHASES_VF if ph["key"].startswith("F")][1:]     # its own 11 steps, not the planned phases
+    short = {"F1": "Clone", "F2": "Prepare", "F3": "AI OCR", "F4": "Jev", "F5": "Tesseract", "F6": "Check",
+             "F7": "Look again", "F8": "Outcome", "F9": "Label", "F10": "Teacher", "F11": "Approve"}
+    p = ['<svg class="ov" viewBox="0 0 %d 336" role="img" aria-label="vlm-first steps 1 to 11 in order. Step 1 reads '
+         'v1\'s database; steps 3, 4, 7 and 10 call Gemini, Jev and GLM; every step writes ocr_vf\'s staging tables; '
+         'step 11 changes the context the next page uses.">' % W]
+    p.append('<defs><marker id="ahv" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" '
+             'orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="currentColor"/></marker></defs>')
+    boxes = [("v1's DB", "read-only", cx(0) - 46, 92), ("MinIO vf/", "upright images", cx(1) - 46, 92),
+             ("Gemini · Jev · GLM (hosted)", "read · classify · look again · teach",
+              cx(2) - 46, cx(9) + 46 - (cx(2) - 46))]
+    for name, sub, x, w in boxes:
+        p.append('<rect class="fxb" x="%d" y="14" width="%d" height="44" rx="6"/>' % (x, w))
+        p.append('<text class="bx" x="%d" y="33" text-anchor="middle">%s</text>' % (x + w / 2, e(name)))
+        p.append('<text class="bs" x="%d" y="49" text-anchor="middle">%s</text>' % (x + w / 2, e(sub)))
+    p.append('<rect class="stgb" x="%d" y="226" width="%d" height="44" rx="6"/>' % (x0, 10 * pitch + nw))
+    p.append('<text class="bx" x="%d" y="245" text-anchor="middle">staging in ocr_vf</text>' % (x0 + (10 * pitch + nw) / 2))
+    p.append('<text class="bs" x="%d" y="261" text-anchor="middle">scan_batch · page · field_check · type_label · '
+             'lesson · model_call · context_version</text>' % (x0 + (10 * pitch + nw) / 2))
+    for i, ph in enumerate(steps):
+        x = x0 + i * pitch
+        p.append('<a href="#phase-%s"><rect class="pn built" x="%d" y="%d" width="%d" height="%d" rx="6"/>'
+                 '<text class="pk" x="%d" y="%d" text-anchor="middle">STEP %s</text>'
+                 '<text class="pt" x="%d" y="%d" text-anchor="middle">%s</text></a>' % (
+                     ph["key"], x, ny, nw, nh, x + nw / 2, ny + 22, ph["key"][1:], x + nw / 2, ny + 41,
+                     e(short[ph["key"]])))
+        if i < len(steps) - 1:
+            p.append('<line class="ar" x1="%d" y1="%d" x2="%d" y2="%d" marker-end="url(#ahv)"/>' % (
+                x + nw, ny + nh / 2, x + pitch - 2, ny + nh / 2))
+    stg = {"F1": "W", "F2": "RW", "F3": "RW", "F4": "RW", "F5": "W", "F6": "W", "F7": "W", "F8": "RW", "F9": "RW",
+           "F10": "RW", "F11": "RW"}
+    for i, ph in enumerate(steps):
+        x = cx(i)
+        v = stg[ph["key"]]
+        p.append('<line class="ln stg" x1="%d" y1="%d" x2="%d" y2="226" marker-end="url(#ahv)"%s/>' % (
+            x, ny + nh, x, ' marker-start="url(#ahv)"' if "R" in v else ""))
+        p.append('<text class="vl" x="%d" y="%d">%s</text>' % (x + 6, ny + nh + 30, v))
+    p.append('<line class="ln fx" x1="%d" y1="58" x2="%d" y2="%d" marker-end="url(#ahv)"/>' % (cx(0), cx(0), ny - 2))
+    p.append('<text class="vl" x="%d" y="92">reads</text>' % (cx(0) + 5))
+    p.append('<line class="ln fx" x1="%d" y1="%d" x2="%d" y2="60" marker-end="url(#ahv)"/>' % (cx(1), ny, cx(1)))
+    p.append('<text class="vl" x="%d" y="92">writes</text>' % (cx(1) + 5))
+    for i, label in ((2, "Gemini"), (3, "Jev"), (6, "Gemini"), (9, "GLM · Jev")):
+        p.append('<line class="ln fx" x1="%d" y1="%d" x2="%d" y2="60" marker-end="url(#ahv)" marker-start="url(#ahv)"/>'
+                 % (cx(i), ny, cx(i)))
+        p.append('<text class="vl" x="%d" y="92">%s</text>' % (cx(i) + 5, e(label)))
+    p.append('<path class="ln sat dash" d="M%d 270 V300 H%d V270" marker-end="url(#ahv)"/>' % (cx(10) + 30, cx(2) + 30))
+    p.append('<text class="vl" x="%d" y="322">an approved context: the next page reads and classifies with it</text>'
+             % (cx(4)))
+    p.append("</svg>")
+    return "".join(p)
+
+
+def key_label(k):
+    """F3 (a vlm-first step), P6 (a planned phase), 6 → P6, L / PL → Later."""
+    return "Later" if k in ("L", "PL") else ("P" + k if k[0].isdigit() else k)
+
+
+def matrix_html(tables, cover, order, phases=None):
+    phases = phases or PHASES
+    head = "".join('<th scope="col">%s</th>' % key_label(k) for k in order[1:])
     body = []
-    status = {p["key"]: p["status"] for p in PHASES}
+    status = {p["key"]: p["status"] for p in phases}
     for tn, t in tables.items():
         cells, n = [], 0
         for k in order[1:]:
@@ -818,6 +1118,14 @@ button{font:inherit;color:inherit}
 .bar nav a.planned,.bar nav a.later{border-style:dashed;color:var(--muted)}
 .bar nav a:hover{border-color:var(--ink)}
 .sum{font:12px/1.3 var(--mono);color:var(--muted);display:flex;gap:10px;flex-wrap:wrap;align-items:center}
+#app[data-pipe="vf"] [data-pipe-show="v1"],#app[data-pipe="v1"] [data-pipe-show="vf"]{display:none!important}
+.pipes{display:flex;gap:10px;flex-wrap:wrap;margin:14px 0 6px}
+.pipe-btn{font:600 14px/1.25 var(--sans);color:var(--ink);background:var(--surface);border:1px solid var(--line);
+  border-radius:8px;padding:9px 14px;cursor:pointer;text-align:left;min-width:220px}
+.pipe-btn small{display:block;font:400 12px/1.3 var(--mono);color:var(--muted);margin-top:2px}
+.pipe-btn:hover{border-color:var(--ink)}
+.pipe-btn[aria-pressed="true"]{border-color:var(--stg);box-shadow:0 0 0 2px var(--stg-soft);background:var(--stg-soft)}
+.pipe-btn:focus-visible{outline:2px solid var(--fx);outline-offset:2px}
 .sum b{color:var(--ink);font-weight:600}
 .sum .k{color:var(--ok)}.sum .d{color:var(--flag)}.sum .a{color:var(--fx)}
 .save{font:12px var(--mono);padding:3px 8px;border-radius:99px;background:var(--surface-2);color:var(--muted)}
@@ -1085,9 +1393,10 @@ JS = r"""
       document.querySelectorAll('.crow.hl').forEach(function(r){ r.classList.remove('hl'); });
       var msg = document.getElementById('msg');
       if (on){
-        var rows = document.querySelectorAll('.crow[data-key="' + CSS.escape(key) + '"]');
+        var part = document.querySelector('.pipe-part[data-pipe-show="' + pipe() + '"]') || document;
+        var rows = part.querySelectorAll('.crow[data-key="' + CSS.escape(key) + '"]');
         rows.forEach(function(r){ r.classList.add('hl'); });
-        var tr = META.trace[key] || 'never touched';
+        var tr = (META.trace[pipe()] || {})[key] || 'never touched';
         msg.textContent = key + ' · ' + tr + ' · highlighted in ' + rows.length + ' places'; msg.hidden = false;
       } else msg.hidden = true;
     }
@@ -1097,6 +1406,18 @@ JS = r"""
     var t = inp.getAttribute('data-t'), c = inp.getAttribute('data-c');
     cell(t, c).note = inp.value; changed(t, 600);
   });
+  var app = document.getElementById('app');
+  function pipe(){ return app.getAttribute('data-pipe'); }
+  function setPipe(p){
+    app.setAttribute('data-pipe', p);
+    document.querySelectorAll('.pipe-btn').forEach(function(b){ b.setAttribute('aria-pressed', String(b.getAttribute('data-p') === p)); });
+    document.querySelectorAll('.crow.hl').forEach(function(r){ r.classList.remove('hl'); });
+    document.getElementById('msg').hidden = true;
+    try { localStorage.setItem('dbflow-pipe', p); } catch (e) {}
+  }
+  document.querySelectorAll('.pipe-btn').forEach(function(b){ b.addEventListener('click', function(){ setPipe(b.getAttribute('data-p')); }); });
+  var saved = null; try { saved = localStorage.getItem('dbflow-pipe'); } catch (e) {}
+  setPipe(saved === 'v1' || saved === 'vf' ? saved : 'vf');
   var only = document.getElementById('only');
   only.addEventListener('change', function(){ document.body.classList.toggle('only', only.checked); });
 
@@ -1120,84 +1441,131 @@ JS = r"""
 """
 
 
-def build():
-    tables, enums = parse_schema()
-    resolve(tables)
-    trace, cover, order, never, read_only, write_only = derive(tables)
+PIPES = [
+    {"id": "vf", "name": "vlm-first", "sub": "branch vlm-first · database ocr_vf",
+     "files": SCHEMA_FILES + ["010-vlm-first.sql"], "phases": PHASES_VF, "groups": PAGE_GROUPS + [VF_PAGE_GROUP],
+     "counts": (23, 54, 12), "overview": overview_svg_vf, "gaps": GAPS_VF,
+     "lede": "The experiment: the AI OCR reads every page against one combined field list, Jev classifies from that "
+             "reading, Tesseract checks afterwards, and a teacher model proposes changes to Jev's context that a person "
+             "approves. Same server as v1, its own database (ocr_vf): v1's rows are only ever read.",
+     "caption": "The vlm-first map. Steps 1 to 8 run for every page; 9 to 11 are the learning loop. After a page is "
+                "clear, grouping and publishing (phases 6 to 8, planned) follow as in v1. Click a step to jump to its tables.",
+     "sources": "services/worker/vf.py, clone.py, lesson.py, services/common/context.py, verify.py and services/ui/app.py"},
+    {"id": "v1", "name": "v1", "sub": "branch main · database ocr",
+     "files": SCHEMA_FILES, "phases": PHASES, "groups": PAGE_GROUPS, "counts": (20, 47, 12), "overview": overview_svg,
+     "gaps": GAPS,
+     "lede": "The pipeline as built through phase 5: Tesseract first, Jev classifies from Tesseract's text, the AI OCR "
+             "reads that type's fields, and code checks each value. Following the Boots SOR26110255837 (pages 3 to 5 of "
+             "the sample) from upload to Satellite.",
+     "caption": "The v1 map. Phases 1 to 5 are built; 6 to 8 exist only in the schema and the plan. Click a phase to jump "
+                "to its tables.",
+     "sources": "services/common/intake.py, services/worker/main.py and services/ui/app.py"},
+]
 
-    nav = "".join('<a class="%s" href="#phase-%s">%s</a>' % (p["status"], p["key"], p["key"] if p["key"] != "L" else "Later")
-                  for p in PHASES)
-    nav += '<a href="#matrix">Matrix</a><a href="#findings">Findings</a>'
-    meta = {"tables": {tn: list(t["cols"].keys()) for tn, t in tables.items()},
-            "trace": {"%s.%s" % k: " ".join(p + "".join(x for x in ("R", "W") if x in s) for p, s in v.items())
-                      for k, v in trace.items()}}
+
+def pipe_part(pipe):
+    """Everything for one pipeline: its map, its steps, its matrix, its findings and its gaps."""
+    tables, enums = parse_schema(pipe["files"])
+    resolve(tables, pipe["phases"], pipe["groups"], pipe["counts"])
+    trace, cover, order, never, read_only, write_only = derive(tables, pipe["phases"])
+    pid = pipe["id"]
+    nav = "".join('<a class="%s" href="#phase-%s">%s</a>' % (p["status"], p["key"], key_label(p["key"]) if pid == "vf"
+                                                               else (p["key"] if p["key"] != "L" else "Later"))
+                  for p in pipe["phases"])
+    nav += '<a href="#matrix-%s">Matrix</a><a href="#findings-%s">Findings</a>' % (pid, pid)
     ncols = sum(len(t["cols"]) for t in tables.values())
-    ledger = "".join(phase_html(tables, trace, p) for p in PHASES)
+    ledger = "".join(phase_html(tables, trace, p, pipe["groups"]) for p in pipe["phases"])
     enum_rows = "".join("<li><code>%s</code> %s</li>" % (e(k), e(" · ".join(v))) for k, v in enums.items())
+    word = "steps" if pid == "vf" else "phases"
+    d = []
+    d.append('<p class="lede">%s</p>' % e(pipe["lede"]))
+    d.append('<figure class="ovf">%s<figcaption>%s</figcaption></figure>' % (pipe["overview"](), e(pipe["caption"])))
+    d.append('<h2 class="sec" id="steps-%s">Step by step</h2><p class="sec-lede">%d tables, %d columns, parsed from '
+             '<code>schema/*.sql</code>%s. Only what a step touches is listed under it; the matrix below shows the rest.</p>'
+             % (pid, len(tables), ncols, " (001 to 010)" if pid == "vf" else " (001 to 009)"))
+    d.append(ledger)
+    d.append('<h2 class="sec" id="matrix-%s">Which %s touch which table</h2><p class="sec-lede">Click a cell to jump '
+             'to that table in that step. Dashed cells are planned. A table with few cells is the first place to ask '
+             '"do we need this yet?".</p>' % (pid, word))
+    d.append(matrix_html(tables, cover, order, pipe["phases"]))
+    d.append('<h2 class="sec" id="findings-%s">Findings: what to decide</h2><p class="sec-lede">Computed from the map above. '
+             'Each column has the same Keep, Drop and Ask controls as in the ledger.</p><div class="find">' % pid)
+    d.append('<div class="fbox"><h3>No %s reads or writes these (%d)</h3><p>Candidates to drop, or a step is '
+             'missing.</p>%s</div>' % ("step" if pid == "vf" else "phase", len(never),
+                                       finding_rows(tables, trace, never, pid + "nv")))
+    d.append('<div class="fbox"><h3>Read, but nothing in the pipeline writes them (%d)</h3><p>A step depends on a value '
+             'nobody sets. Tables owned outside the pipeline (satellite.sor, customer_profile, product_code_map) are '
+             'left out.</p>%s</div>' % (len(read_only), finding_rows(tables, trace, read_only, pid + "ro")))
+    d.append('<div class="fbox"><h3>Staging columns written, never read by a later step (%d)</h3><p>Diagnostics and '
+             'provenance. The inspection UI shows most of them to people; no pipeline step uses them. Keep them if a '
+             'person needs to see them, otherwise drop.</p>%s</div>' % (len(write_only),
+                                                                        finding_rows(tables, trace, write_only, pid + "wo")))
+    d.append('</div><h2 class="sec" id="gaps-%s">Where the design and the schema disagree</h2>'
+             '<p class="sec-lede">Found while building this page. Each needs a decision.</p>'
+             '<ul class="gaps">%s</ul>' % (pid, "".join("<li><b>%s</b><span>%s</span></li>" % (e(a), e(b))
+                                                        for a, b in pipe["gaps"])))
+    d.append('<h2 class="sec">Vocabulary</h2><ul class="how" style="padding-left:18px">%s</ul>' % enum_rows)
+    d.append('<p class="src">Built reads and writes were checked against %s.</p>' % e(pipe["sources"]))
+    trace_meta = {"%s.%s" % k: " ".join(p + "".join(x for x in ("R", "W") if x in s_) for p, s_ in v.items())
+                  for k, v in trace.items()}
+    stats = (len(tables), ncols, len(never), len(read_only), len(write_only))
+    return nav, "".join(d), {tn: list(t["cols"].keys()) for tn, t in tables.items()}, trace_meta, stats
+
+
+def build():
+    navs, parts, tables_meta, trace_meta, stats = [], [], {}, {}, {}
+    for pipe in PIPES:
+        nav, part, tmeta, trmeta, st = pipe_part(pipe)
+        navs.append('<nav aria-label="Steps" data-pipe-show="%s">%s</nav>' % (pipe["id"], nav))
+        parts.append('<div class="pipe-part" data-pipe-show="%s">%s</div>' % (pipe["id"], part))
+        for tn, cols in tmeta.items():
+            tables_meta.setdefault(tn, [])
+            tables_meta[tn] += [c for c in cols if c not in tables_meta[tn]]
+        trace_meta[pipe["id"]] = trmeta
+        stats[pipe["id"]] = st
+    meta = {"tables": tables_meta, "trace": trace_meta}
+    switch = "".join('<button type="button" class="pipe-btn" data-p="%s" aria-pressed="false">%s<small>%s</small></button>'
+                     % (p["id"], e(p["name"]), e(p["sub"])) for p in PIPES)
 
     doc = []
-    doc.append('<title>Rekonsiliasi AR Data Flow</title>\n<meta name="description" content="Every OCR pipeline phase, '
-               'every table it reads or writes, every column, with a verdict for each.">\n')
+    doc.append('<title>Rekonsiliasi AR Data Flow</title>\n<meta name="description" content="Every step of the OCR '
+               'pipeline (vlm-first and v1), every table it reads or writes, every column, with a verdict for each.">\n')
     doc.append('<link rel="preconnect" href="https://fonts.googleapis.com"><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>'
                '<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600&family=JetBrains+Mono:wght@400;500;600;700&display=swap">\n')
     doc.append("<style>" + CSS + "</style>\n")
-    doc.append('<div class="bar"><div class="bar-in"><nav aria-label="Phases">%s</nav>'
+    doc.append('<div id="app" data-pipe="vf">')
+    doc.append('<div class="bar"><div class="bar-in">%s'
                '<div class="sum" id="sum"></div><span class="save" id="save" role="status">Loading</span>'
                '<span class="msg" id="msg" hidden></span>'
-               '<label class="tog"><input type="checkbox" id="only"> Only touched columns</label></div></div>' % nav)
+               '<label class="tog"><input type="checkbox" id="only"> Only touched columns</label></div></div>' % "".join(navs))
     doc.append('<div class="wrap"><header class="top"><div class="eyebrow">SAMB · Rekonsiliasi AR · OCR ingestion</div>'
                '<h1>Rekonsiliasi AR data flow</h1>'
-               '<p class="lede">What each phase of the pipeline reads and writes, table by table and column by column, '
-               'following the Boots SOR26110255837 (pages 3 to 5 of the sample scan) from upload to Satellite.</p>'
+               '<div class="pipes" role="group" aria-label="Which pipeline">%s</div>'
                '<ul class="legend">'
                '<li><span class="sw stg"></span>staging table</li><li><span class="sw sat"></span>satellite table</li>'
                '<li><span class="sw fx"></span>queue, file store or model call</li>'
                '<li><span class="sw w"></span>W written</li><li><span class="sw r"></span>R read</li>'
                '<li><span class="sw pl"></span>planned, no code yet</li><li><span class="sw flag"></span>gap or missing column</li>'
                '</ul>'
-               '<p class="how">Each phase is a card on the left. The arrows to the right go to every table it touches, labelled '
+               '<p class="how">Each step is a card on the left. The arrows to the right go to every table it touches, labelled '
                'with the statement it runs; an arrow into a table is a write, out of it a read. Each table lists all its '
-               'columns: lit ones are touched in that phase, faded ones are not. The trace on each column '
-               '(e.g. <code>1W 6R</code>) shows every phase that touches it, so a column with one write and no read is '
-               'easy to spot. Click a column name to highlight it everywhere. Mark tables and columns Keep, Drop or '
-               'Ask; your verdicts are saved with this page.</p></header>')
-    doc.append('<figure class="ovf">%s<figcaption>The map. Phases 1 to 3 are built; 4 to 8 exist only in the schema and the '
-               'plan. Click a phase to jump to its tables. q.group is rung today, but nothing listens to it until phase 6.'
-               '</figcaption></figure>' % overview_svg())
-    doc.append('<h2 class="sec" id="steps">Step by step</h2><p class="sec-lede">%d tables, %d columns, parsed from '
-               '<code>schema/*.sql</code>. Only what a phase touches is listed under it; the matrix below shows the rest.</p>'
-               % (len(tables), ncols))
-    doc.append(ledger)
-    doc.append('<h2 class="sec" id="matrix">Which phase touches which table</h2><p class="sec-lede">Click a cell to jump '
-               'to that table in that phase. Dashed cells are planned. A table with few cells is the first place to ask '
-               '"do we need this yet?".</p>')
-    doc.append(matrix_html(tables, cover, order))
-    doc.append('<h2 class="sec" id="findings">Findings: what to decide</h2><p class="sec-lede">Computed from the map above. '
-               'Each column has the same Keep, Drop and Ask controls as in the ledger.</p><div class="find">')
-    doc.append('<div class="fbox"><h3>No phase reads or writes these (%d)</h3><p>Candidates to drop, or a phase is '
-               'missing a step.</p>%s</div>' % (len(never), finding_rows(tables, trace, never, "nv")))
-    doc.append('<div class="fbox"><h3>Read, but nothing in the pipeline writes them (%d)</h3><p>A phase depends on a value '
-               'nobody sets. Tables owned outside the pipeline (satellite.sor, customer_profile, product_code_map) are '
-               'left out.</p>%s</div>' % (len(read_only), finding_rows(tables, trace, read_only, "ro")))
-    doc.append('<div class="fbox"><h3>Staging columns written, never read by a later step (%d)</h3><p>Diagnostics and '
-               'provenance. The inspection UI shows most of them to people; no pipeline step uses them. Keep them if a '
-               'person needs to see them, otherwise drop.</p>%s</div>' % (len(write_only),
-                                                                          finding_rows(tables, trace, write_only, "wo")))
-    doc.append('</div><h2 class="sec" id="gaps">Where the design and the schema disagree</h2>'
-               '<p class="sec-lede">Found while building this page. Each needs a decision before the phase it belongs to.</p>'
-               '<ul class="gaps">%s</ul>' % "".join("<li><b>%s</b><span>%s</span></li>" % (e(a), e(b)) for a, b in GAPS))
-    doc.append('<h2 class="sec">Vocabulary</h2><ul class="how" style="padding-left:18px">%s</ul>' % enum_rows)
-    doc.append('<footer class="src">Generated %s by <code>scripts/build_db_flow.py</code> from <code>schema/satellite-documents.sql</code> '
-               'and migrations 002 to 006. Built reads and writes were checked against <code>services/common/intake.py</code>, '
-               '<code>services/worker/main.py</code> and <code>services/ui/app.py</code>. Planned phases follow '
-               '<code>docs/database.md</code>, <code>CLAUDE.md</code> and the phase plan. Examples come from '
-               '<code>testdata/golden_p1-32.json</code>.</footer></div>' % date.today().isoformat())
+               'columns: lit ones are touched in that step, faded ones are not. The trace on each column '
+               '(e.g. <code>1W 6R</code>) shows every step that touches it. Click a column name to highlight it '
+               'everywhere. Mark tables and columns Keep, Drop or Ask; your verdicts are saved with this page and shared '
+               'by both pipelines where the table is the same.</p></header>' % switch)
+    doc.append("".join(parts))
+    doc.append('<footer class="src">Generated %s by <code>scripts/build_db_flow.py</code> (branch vlm-first) from '
+               '<code>schema/*.sql</code>. Planned phases follow <code>docs/database.md</code>, <code>CLAUDE.md</code> and '
+               'the phase plan. Examples come from <code>testdata/golden_p1-32.json</code>.</footer></div>'
+               % date.today().isoformat())
+    doc.append('</div>')
     doc.append('<script type="application/json" id="meta">%s</script>' % json.dumps(meta).replace("</", "<\\/"))
     doc.append("<script>" + JS + "</script>")
     open(OUT, "w").write("".join(doc))
-    print("wrote %s: %d tables, %d columns, %d never touched, %d read-not-written, %d write-only (staging), %d KB" % (
-        os.path.relpath(OUT, ROOT), len(tables), ncols, len(never), len(read_only), len(write_only),
-        os.path.getsize(OUT) // 1024))
+    for pid, (nt, nc, nv, ro, wo) in stats.items():
+        print("%s: %d tables, %d columns, %d never touched, %d read-not-written, %d write-only (staging)" % (
+            pid, nt, nc, nv, ro, wo))
+    print("wrote %s: %d KB" % (os.path.relpath(OUT, ROOT), os.path.getsize(OUT) // 1024))
 
 
 if __name__ == "__main__":

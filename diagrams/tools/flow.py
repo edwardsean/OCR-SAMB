@@ -67,6 +67,8 @@ class Flow:
             ex = bx if right else bx + W
             mx = via if via is not None else (sx + ex) / 2
             pts = [(sx, acy + (out or 0)), (mx, acy + (out or 0)), (mx, bcy + (into or 0)), (ex, bcy + (into or 0))]
+        elif route == "right":      # leave the right side, run down/up the channel at x=via, enter the right side
+            pts = [(ax + W, acy + (out or 0)), (via, acy + (out or 0)), (via, bcy + (into or 0)), (bx + W, bcy + (into or 0))]
         else:
             raise ValueError(route)
         pts = [(round(x, 1), round(y, 1)) for x, y in pts]
@@ -105,6 +107,7 @@ class Flow:
 
     def viewbox(self):
         xs = [n[2] + W for n in self.nodes] + [f[3] + f[5] for f in self.frames]
+        xs += [float(pt.split(",")[0]) + (60 if e[3] else 10) for e in self.edges for pt in e[5].split(";")]   # routes outside the boxes
         ys = [n[3] + H for n in self.nodes] + [f[4] + f[6] for f in self.frames]
         return (int(max(xs) + MX), int(max(ys) + 50))
 
@@ -184,14 +187,14 @@ LINK_JS = """
 """
 
 
-def page(template_html, title, svg, views, cards, back=None, hint=None):
+def page(template_html, title, svg, views, cards, back=None, hint=None, back_label="← Overview"):
     s = template_html
     a = s.index('      <svg viewBox='); b = s.index('      </svg>', a) + len('      </svg>')
     s = s[:a] + svg + s[b:]
     old = re.search(r'<title>(.*?) Diagram</title>', s).group(1)
     s = s.replace(f'<title>{old} Diagram</title>', f'<title>{esc(title)} Diagram</title>', 1)
     h1 = re.search(r'<h1>.*?</h1>', s).group(0)
-    back_html = f'<a class="back-link" href="{back}">← Overview</a>' if back else ''
+    back_html = f'<a class="back-link" href="{back}">{esc(back_label)}</a>' if back else ''
     s = s.replace(h1, f'{back_html}<h1>{esc(title)}</h1>', 1)
     if hint:
         s = s.replace('    <script id="archify-guided-views-data"', f'    <p class="detail-hint">{hint}</p>\n    <script id="archify-guided-views-data"', 1)

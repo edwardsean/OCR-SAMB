@@ -40,7 +40,7 @@ results.push(['inside Classify, click "Page from step 2" → Enhance diagram', p
 
 // every detail link on every page points at a file that exists
 let missing = [];
-for (const f of ['ocr-pipeline.html','detail-classify.html','detail-intake.html','detail-enhance.html','detail-worker.html','detail-extract.html']) {
+for (const f of ['ocr-pipeline.html','detail-classify.html','detail-intake.html','detail-enhance.html','detail-worker.html','detail-extract.html','vlm-first.html','detail-vf-page.html','detail-vf-teacher.html']) {
   const s = fs.readFileSync(D + f, 'utf8');
   for (const m of s.matchAll(/data-node-detail="([^"]+)"/g)) if (!fs.existsSync(D + m[1])) missing.push(f + ' → ' + m[1]);
 }
