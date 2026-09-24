@@ -1,0 +1,30 @@
+{% extends "base.html" %}
+{% block title %}Upload{% endblock %}
+{% block main %}
+  <section class="head">
+    <h1>Phase 1 · Upload a scan</h1>
+    <p class="lede">This stands in for the feeder scanner's SCP drop. The file goes to MinIO (the temp repository), then n8n splits it into page images and puts one ticket per page on <code>q.pages</code>.</p>
+  </section>
+
+  {% if error %}<section class="alert bad">{{ error }}</section>{% endif %}
+  {% if dup %}
+    <section class="alert warn">
+      <strong>Already received.</strong> This exact file (same SHA-256) arrived as
+      <a href="/batches/{{ dup.id }}">{{ dup.id }}</a> — <span class="mono">{{ dup.file_name }}</span>
+      on {{ dup.received_at.strftime('%d %b %H:%M') }}. It was not processed again.
+    </section>
+  {% endif %}
+
+  <section>
+    <form class="upload" method="post" action="/upload" enctype="multipart/form-data">
+      <input type="file" name="file" accept="application/pdf" required>
+      <button type="submit">Upload and split</button>
+    </form>
+    <p class="note">Sample in this folder: <span class="mono">7000356304 - 7000356499.pdf</span> (288 pages). Splitting takes about a minute; the batch page fills in live.</p>
+  </section>
+
+  <section>
+    <h2>Recent batches</h2>
+    {% include "_batch_table.html" %}
+  </section>
+{% endblock %}

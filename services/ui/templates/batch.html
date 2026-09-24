@@ -1,0 +1,12 @@
+{% extends "base.html" %}
+{% block title %}{{ batch_id }}{% endblock %}
+{% block main %}
+  <section class="head">
+    <p class="crumbs"><a href="/batches">Batches</a> / <span class="mono">{{ batch_id }}</span></p>
+    <h1>{{ b.file_name if b else batch_id }}</h1>
+  </section>
+  <div hx-get="/partials/batch/{{ batch_id }}/stats" hx-trigger="every 4s" hx-swap="innerHTML">
+    {% include "_batch_stats.html" %}
+  </div>
+  {% include "_batch_grid.html" %}
+{% endblock %}

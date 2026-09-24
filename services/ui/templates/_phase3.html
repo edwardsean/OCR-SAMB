@@ -1,0 +1,56 @@
+<section class="checks {{ 'pass' if p3.all_ok else 'fail' }}">
+  <h2>Phase 3 acceptance · what kind of document is each page? {% if not p3.golden %}<span class="muted">(answer-key checks apply to the 288-page sample only)</span>{% endif %}</h2>
+  <ul>
+  {% for label, ok, detail in p3.checks %}
+    <li class="{{ 'ok' if ok else 'bad' }}"><span class="dot"></span>{{ label }} <em>{{ detail }}</em></li>
+  {% endfor %}
+  </ul>
+
+  <div class="two" style="margin-top:12px">
+    <div>
+      <h2>Whole batch <span class="muted">({{ p3.unsure|length }} unsure)</span></h2>
+      <div class="typebars">
+        {% set mx = (p3.dist.values()|list + [p3.unsure|length, 1])|max %}
+        {% for t, n in p3.dist.items() %}
+          <div><span class="tchip t-{{ t }}">{{ t }}</span><i style="width: {{ (100 * n / mx)|round|int }}%" class="t-{{ t }}"></i><b>{{ n }}</b></div>
+        {% endfor %}
+        <div><span class="tchip t-unsure">unsure</span><i style="width: {{ (100 * (p3.unsure|length) / mx)|round|int }}%" class="t-unsure"></i><b>{{ p3.unsure|length }}</b></div>
+      </div>
+    </div>
+    {% if p3.cmp %}
+    <div>
+      <h2>Each method on pages 1–32 <span class="muted">vs the answer key</span></h2>
+      <table class="grid small">
+        <thead><tr><th>Method</th><th>Right</th><th>Didn't answer</th><th>Wrong</th></tr></thead>
+        <tbody>
+          <tr><td>Title keywords (no AI)</td><td>{{ p3.cmp.keyword.right }}</td><td>{{ p3.cmp.keyword.abstain }}</td><td>{{ p3.cmp.keyword.wrong }}</td></tr>
+          <tr><td>Jev alone</td><td>{{ p3.cmp.jev.right }}</td><td>{{ p3.cmp.jev.abstain }}</td><td>{{ p3.cmp.jev.wrong }}</td></tr>
+          <tr class="ok"><td><strong>Final decision</strong> (votes combined)</td><td>{{ p3.cmp.final.right }}</td><td>{{ p3.cmp.final.abstain }} unsure</td><td>{{ p3.cmp.final.wrong }}</td></tr>
+        </tbody>
+      </table>
+    </div>
+    {% endif %}
+  </div>
+
+  {% if p3.table %}
+  <details><summary>Every vote, pages 1–32</summary>
+  <table class="grid small">
+    <thead><tr><th>Page</th><th>Answer key</th><th>Keywords</th><th>Jev</th><th>Layout</th><th>QR</th><th>Decision</th><th>Why</th></tr></thead>
+    <tbody>
+    {% for t in p3.table %}
+      <tr class="{{ 'bad' if t.right == false else ('ok' if t.right else 'warn') }}">
+        <td><a href="/batches/{{ batch_id }}/pages/{{ t.page }}">{{ t.page }}</a>{% for f in t.flags if f in ('faint','dark_band','rotated') %} <span class="badge {{ f }}">{{ f|replace('_',' ') }}</span>{% endfor %}</td>
+        <td class="muted">{{ t.key }}</td>
+        <td>{{ t.keyword or '—' }}</td>
+        <td>{% if t.jev %}{{ t.jev }} <span class="muted">{{ t.jev_conf }}</span>{% else %}—{% endif %}</td>
+        <td>{{ t.layout }}</td>
+        <td>{{ '▦' if t.qr else '' }}</td>
+        <td>{% if t.final %}<span class="tchip t-{{ t.final }}">{{ t.final }}</span>{% else %}<span class="tchip t-unsure">unsure</span> <span class="muted">guess {{ t.guess }}</span>{% endif %}</td>
+        <td class="muted">{{ t.reason }}</td>
+      </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  </details>
+  {% endif %}
+</section>

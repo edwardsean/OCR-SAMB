@@ -1,0 +1,11 @@
+{
+  "version": 1,
+  "skills": {
+    "database-visualization": {
+      "source": "majiayu000/claude-skill-registry",
+      "sourceType": "github",
+      "skillPath": "skills/data/database-visualization/SKILL.md",
+      "computedHash": "42739223f9faf89edb9c8edeaa62bbce668c8ee6077e0be51a2b618b3f162b1c"
+    }
+  }
+}

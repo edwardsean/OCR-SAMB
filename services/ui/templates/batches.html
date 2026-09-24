@@ -1,0 +1,9 @@
+{% extends "base.html" %}
+{% block title %}Batches{% endblock %}
+{% block main %}
+  <section class="head">
+    <h1>Batches</h1>
+    <p class="lede">One batch = one uploaded PDF = one feeder run. <a href="/upload">Upload another</a>.</p>
+  </section>
+  <section>{% include "_batch_table.html" %}</section>
+{% endblock %}

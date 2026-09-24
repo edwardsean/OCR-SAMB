@@ -1,0 +1,324 @@
+{
+  "source": "7000356304 - 7000356499.pdf",
+  "read_by": "hand, from page renders, 2026-09-23",
+  "notes": [
+    "Only what was legible by eye is recorded. Fields left out were not read, not absent.",
+    "Pages 14 and 15 are both rotated customer pages in bundle 356309; one may be a CONTINUATION of the other.",
+    "dark_pages lists pages seen with a solid black lower half; page 9 is unconfirmed and is measured in phase 2.",
+    "type_alternatives: pages 14 and 15 are both rotated Hero pages of one Surat Pesanan; either label is correct (recorded before phase 3 results, per the earlier note).",
+    "2026-09-24: every field value re-read at full resolution (upright 300 dpi crops), not the preview. Corrected: p10 nomor_cpo and p12 purchase_order_no 58423525 -> 58423526 (page 16's PO is 58423525; two Hero bundles had been mixed up). Removed: p2 no_receive, first two characters illegible. Added verified: p9 PO, p16 PO, NO GRN on p19/22/25/28/31. The corrections were prompted by an AI OCR disagreement but decided only from the pixels.",
+    "2026-09-24: 'billing_no_handwritten' (was 'handwritten_no') is the SAP billing number that Invoicing writes on the FP after posting (Problem Statement P7), not a bundle counter. The filename 7000356304 - 7000356499 is a billing-number range. It is not extracted: SAP already has it."
+  ],
+  "rotated_pages": [
+    11,
+    14,
+    15,
+    18,
+    21,
+    24,
+    27,
+    30
+  ],
+  "dark_pages": [
+    2,
+    7
+  ],
+  "dark_pages_unconfirmed": [
+    9
+  ],
+  "page_types": {
+    "1": "FP",
+    "2": "TTG",
+    "3": "FP",
+    "4": "PO",
+    "5": "TTG",
+    "6": "FP",
+    "7": "TTG",
+    "8": "FP",
+    "9": "TTG",
+    "10": "FP",
+    "11": "PO",
+    "12": "TTG",
+    "13": "FP",
+    "14": "PO",
+    "15": "PO",
+    "16": "TTG",
+    "17": "FP",
+    "18": "PO",
+    "19": "TTG",
+    "20": "FP",
+    "21": "PO",
+    "22": "TTG",
+    "23": "FP",
+    "24": "PO",
+    "25": "TTG",
+    "26": "FP",
+    "27": "PO",
+    "28": "TTG",
+    "29": "FP",
+    "30": "PO",
+    "31": "TTG",
+    "32": "FP"
+  },
+  "customer_doc_names": {
+    "2": "Receiving Slip Order",
+    "5": "Good Receipt",
+    "7": "Receiving Slip Order",
+    "9": "Receiving Slip Order",
+    "12": "Goods Receive Note",
+    "16": "Goods Receive Note",
+    "19": "Goods Receive Note",
+    "22": "Goods Receive Note",
+    "25": "Goods Receive Note",
+    "28": "Goods Receive Note",
+    "31": "Goods Receive Note",
+    "4": "Purchase Order",
+    "11": "Surat Pesanan"
+  },
+  "bundles": [
+    {
+      "sor": "SOR26110245292",
+      "pages": [
+        1,
+        2
+      ],
+      "customer": "HARI HARI BINTARO TANGSEL",
+      "links": {
+        "2": "sor"
+      },
+      "fields": {
+        "2": {
+          "no_ref": "SOR26110245292"
+        }
+      },
+      "billing_no_handwritten": "356304"
+    },
+    {
+      "sor": "SOR26110255837",
+      "pages": [
+        3,
+        4,
+        5
+      ],
+      "customer": "BOOTS HARAPAN INDAH AVENUE",
+      "links": {
+        "4": "po_no",
+        "5": "po_no"
+      },
+      "fields": {
+        "3": {
+          "nomor_cpo": "4505832724"
+        },
+        "4": {
+          "purchase_order_no": "4505832724",
+          "total": "1126006"
+        },
+        "5": {
+          "document_no": "5043773365",
+          "purchase_order_no": "4505832724"
+        }
+      },
+      "billing_no_handwritten": "356305"
+    },
+    {
+      "sor": "SOR26110256585",
+      "pages": [
+        6,
+        7
+      ],
+      "customer": "HARI HARI BINTARO TANGSEL",
+      "links": {
+        "7": "sor"
+      },
+      "fields": {
+        "7": {
+          "no_ref": "SOR26110256585",
+          "no_receive": "6155063",
+          "purchase_order_no": "5213310",
+          "total": "1488163.68"
+        }
+      },
+      "billing_no_handwritten": "356306"
+    },
+    {
+      "sor": "SOR26110256810",
+      "pages": [
+        8,
+        9
+      ],
+      "customer": "HARI HARI BINTARO TANGSEL",
+      "links": {
+        "9": "sor"
+      },
+      "fields": {
+        "9": {
+          "no_ref": "SOR26110256810",
+          "no_receive": "6155059",
+          "purchase_order_no": "5213349"
+        }
+      },
+      "billing_no_handwritten": "356307"
+    },
+    {
+      "sor": "SOR26110257250",
+      "pages": [
+        10,
+        11,
+        12
+      ],
+      "customer": "HERO DC PBF [320] CIBITUNG BEKASI",
+      "links": {
+        "12": "po_no"
+      },
+      "fields": {
+        "10": {
+          "nomor_cpo": "58423526"
+        },
+        "11": {
+          "total_net_purchase": "971468"
+        },
+        "12": {
+          "document_no": "5002054248",
+          "purchase_order_no": "58423526"
+        }
+      },
+      "billing_no_handwritten": "356308"
+    },
+    {
+      "sor": "SOR26110257253",
+      "pages": [
+        13,
+        14,
+        15,
+        16
+      ],
+      "customer": "HERO DC PBF [320] CIBITUNG BEKASI",
+      "fields": {
+        "16": {
+          "document_no": "5002054244",
+          "purchase_order_no": "58423525"
+        }
+      },
+      "billing_no_handwritten": "356309"
+    },
+    {
+      "sor": "SOR26110257255",
+      "pages": [
+        17,
+        18,
+        19
+      ],
+      "customer": "HERO DC PBF [320] CIBITUNG BEKASI",
+      "fields": {
+        "19": {
+          "purchase_order_no": "58415558",
+          "document_no": "5002054401"
+        }
+      },
+      "billing_no_handwritten": "356310"
+    },
+    {
+      "sor": "SOR26110257256",
+      "pages": [
+        20,
+        21,
+        22
+      ],
+      "customer": "HERO DC PBF [320] CIBITUNG BEKASI",
+      "fields": {
+        "22": {
+          "purchase_order_no": "58424054",
+          "document_no": "5002054323"
+        }
+      },
+      "billing_no_handwritten": "356311"
+    },
+    {
+      "sor": "SOR26110257257",
+      "pages": [
+        23,
+        24,
+        25
+      ],
+      "customer": "HERO DC PBF [320] CIBITUNG BEKASI",
+      "fields": {
+        "25": {
+          "purchase_order_no": "58415552",
+          "document_no": "5002054355"
+        }
+      },
+      "billing_no_handwritten": "356312"
+    },
+    {
+      "sor": "SOR26110257258",
+      "pages": [
+        26,
+        27,
+        28
+      ],
+      "customer": "HERO DC PBF [320] CIBITUNG BEKASI",
+      "fields": {
+        "28": {
+          "purchase_order_no": "58415556",
+          "document_no": "5002054354"
+        }
+      },
+      "billing_no_handwritten": "356313"
+    },
+    {
+      "sor": "SOR26110257259",
+      "pages": [
+        29,
+        30,
+        31
+      ],
+      "customer": "HERO DC PBF [320] CIBITUNG BEKASI",
+      "fields": {
+        "31": {
+          "purchase_order_no": "58415554",
+          "document_no": "5002054318"
+        }
+      },
+      "billing_no_handwritten": "356314"
+    },
+    {
+      "sor": "SOR26110257260",
+      "pages": [
+        32
+      ],
+      "customer": "HERO DC PBF [320] CIBITUNG BEKASI",
+      "note": "bundle continues past page 32",
+      "billing_no_handwritten": "356315"
+    }
+  ],
+  "type_alternatives": {
+    "14": [
+      "PO",
+      "CONTINUATION"
+    ],
+    "15": [
+      "PO",
+      "CONTINUATION"
+    ]
+  },
+  "verified_at_full_resolution": "2026-09-24",
+  "orientation_verified": {
+    "as_scanned_upright": [
+      69,
+      71,
+      80,
+      81,
+      84,
+      85,
+      197,
+      204,
+      254,
+      280
+    ],
+    "as_scanned_sideways": [
+      201,
+      272
+    ],
+    "note": "Checked by eye on the original scans, 2026-09-24. Phase 2 v1 got all 12 wrong; they are the regression set for orientation."
+  }
+}

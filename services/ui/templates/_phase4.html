@@ -1,0 +1,29 @@
+<section class="checks {{ 'pass' if p4.all_ok else 'fail' }}">
+  <h2>Phase 4 acceptance · AI OCR reads the fields</h2>
+  <ul>
+  {% for label, ok, detail in p4.checks %}
+    <li class="{{ 'ok' if ok else 'bad' }}"><span class="dot"></span>{{ label }} <em>{{ detail }}</em></li>
+  {% endfor %}
+  </ul>
+  <p class="note">Status: {% for k, v in p4.status.items() %}{{ k }} {{ v }} · {% endfor %}
+    models: {% for m, v in p4.models.items() %}{{ m }} ×{{ v }} {% endfor %}· avg {{ p4.avg_s }} s per call · max thinking tokens {{ p4.max_think }}</p>
+  {% if p4["values"] %}
+  <details open><summary>Every value checked against the answer key, pages 1–31</summary>
+  <table class="grid small">
+    <thead><tr><th>Page</th><th>Field</th><th>Answer key</th><th>AI OCR value</th><th>As printed (AI OCR)</th><th>Verdict</th><th>Tesseract confirms?</th></tr></thead>
+    <tbody>
+    {% for i in p4["values"] %}
+      <tr class="{{ 'bad' if i.verdict == 'WRONG' else ('ok' if i.verdict == 'right' else 'warn') }}">
+        <td><a href="/batches/{{ batch_id }}/pages/{{ i.page }}">{{ i.page }}</a> <span class="tchip t-{{ i.type }}">{{ i.type }}</span></td>
+        <td class="mono">{{ i.field }}</td><td class="mono muted">{{ i.expected }}</td>
+        <td class="mono">{{ i.got if i.got is not none else '—' }}</td><td class="mono muted">{{ i.source or '' }}</td>
+        <td><strong>{{ i.verdict }}</strong></td>
+        <td>{% if i.got %}{{ '✓ confirmed' if i.confirmed else '✕ unconfirmed' }}{% endif %}</td>
+      </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  <p class="note">"Tesseract confirms" = the same value appears in Tesseract's independent reading. A WRONG value must never show ✓ — that is the check above. Phase 5 (above) is the formal check.</p>
+  </details>
+  {% endif %}
+</section>

@@ -1,0 +1,19 @@
+# secrets
+/.env
+
+# OS / Python
+.DS_Store
+__pycache__/
+*.pyc
+
+# worktrees are separate checkouts that live inside this folder
+/.claude/worktrees/
+
+# empty mount-point folders Docker created (anchored: testdata/golden_p1-32.json must stay tracked)
+/services/tests/
+/services/testdata/
+
+# real customer documents and results: never committed
+*.pdf
+*.xlsx
+/Screenshot*.png

@@ -1,0 +1,26 @@
+<section class="checks {{ 'pass' if p5.all_ok else 'fail' }}">
+  <h2>Phase 5 acceptance · every value checked against the page (code only, no AI) · pages 1–31</h2>
+  <ul>
+  {% for label, ok, detail in p5.checks %}
+    <li class="{{ 'ok' if ok else 'bad' }}"><span class="dot"></span>{{ label }} <em>{{ detail }}</em></li>
+  {% endfor %}
+  </ul>
+  <p class="note">✅ when the value is printed in Tesseract's text (letters and digits compared, one line at a time), equals the QR code (FP's SOR), or the FP's DPP + PPN = Total with PPN 11% of DPP. Anything else goes to a person. Never "close enough".</p>
+  {% if p5.todo %}
+  <details open><summary>{{ p5.todo|length }} main-field values for a person (Review screen, phase 7)</summary>
+  <table class="grid small">
+    <thead><tr><th>Page</th><th>Field</th><th>AI OCR value</th><th>As printed (AI OCR)</th><th>Why</th>{% if p5.golden %}<th>Answer key says</th>{% endif %}</tr></thead>
+    <tbody>
+    {% for i in p5.todo %}
+      <tr class="{{ 'bad' if i.key == 'WRONG' else 'warn' }}">
+        <td><a href="/batches/{{ batch_id }}/pages/{{ i.page }}">{{ i.page }}</a> <span class="tchip t-{{ i.type }}">{{ i.type }}</span></td>
+        <td class="mono">{{ i.field }}</td><td class="mono">{{ i.value }}</td><td class="mono muted">{{ i.source or '' }}</td>
+        <td>{{ i.why }}</td>{% if p5.golden %}<td>{% if i.key %}<strong>{{ i.key }}</strong>{% else %}<span class="muted">not in the key</span>{% endif %}</td>{% endif %}
+      </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  <p class="note">"Answer key says" is only for grading here; the pipeline never sees it. WRONG rows are the ones this phase exists to catch.</p>
+  </details>
+  {% endif %}
+</section>
