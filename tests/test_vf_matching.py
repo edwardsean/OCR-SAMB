@@ -103,3 +103,27 @@ def test_the_ais_pairs_must_survive_the_numbers():
     assert kept == [(0, 10, "ok")]
     grn = matching.rows_of("TTG", {"lines": [ttg_row("A", "2,000")]})
     assert matching.checked("TTG", grn, KAKI, [{"row": 0, "line": 10, "why": "more than ordered"}]) == []
+
+
+def test_a_po_row_pairs_by_its_printed_amount():
+    """Duta Buah's PO (7000363700-03 p6) counts 48 PCS where SAMB's line says 2, so 'numbers' can't pair them; the
+    printed amounts agree to a few rupiah. KARAMEL and STRAWBERRY both print 32,760: the name decides, and KARAMEL,
+    which SAMB's order doesn't have, stays unpaired (2026-09-28)."""
+    from grouper import matching
+    fields = {"lines": [
+        {"product_description": "ALPENLIEBE LOLY KARAMEL 10 GR", "qty": "48", "uom": "PCS", "row_text": "1 ALPENLIEBE LOLY KARAMEL 10 GR 48 PCS 682.50 32,760.00"},
+        {"product_description": "ALPENLIEBE LOLY STRAWBERRY 10 GR", "qty": "48", "uom": "PCS", "row_text": "2 ALPENLIEBE LOLY STRAWBERRY 10 GR 48 PCS 682.50 32,760.00"},
+        {"product_description": "BIGBABOL STRAWBERRY STICK 20G", "qty": "40", "uom": "PCS", "row_text": "4 BIGBABOL STRAWBERRY STICK 20G 40 PCS 2,061.44 82,457.66"},
+        {"product_description": "CHUPA CHUP GUMFILLE 15 GR", "qty": "30", "uom": "PCS", "row_text": "5 CHUPA CHUP GUMFILLE 15 GR 30 PCS 1,554.05 46,621.62"}]}
+    lines = [{"line_no": 10, "item_code": "1001", "description": "ALP LOLLY HGR 8X24X10.5G STRAWBERRY", "qty_pcs": 2,
+              "pcs_per_uom": 1, "line_amount": 32760.00, "vat": 3603.60, "price_pcs": 16380},
+             {"line_no": 30, "item_code": "1003", "description": "CHUPA CHUPS BIG BABOL STICK 20GR STRAW", "qty_pcs": 40,
+              "pcs_per_uom": 20, "line_amount": 82457.60, "vat": 9070.34, "price_pcs": 2061.44},
+             {"line_no": 40, "item_code": "1004", "description": "CHUPA CHUPS GUMFILLED", "qty_pcs": 1,
+              "pcs_per_uom": 1, "line_amount": 46616.22, "vat": 5127.78, "price_pcs": 46616.22}]
+    out = matching.match([(6, "PO", matching.rows_of("PO", fields))], lines, {}, {})
+    got = {i: (out[(6, i)]["status"], out[(6, i)]["line"]) for i in range(4)}
+    assert got == {0: ("none", None), 1: ("matched", 0), 2: ("matched", 1), 3: ("matched", 2)}
+    assert out[(6, 1)]["how"] == "amount"
+    far = {"lines": [{"product_description": "X", "qty": "1", "row_text": "X 1 PCS 46,700.00"}]}   # 0.18% off: no
+    assert matching.match([(6, "PO", matching.rows_of("PO", far))], lines[1:], {}, {})[(6, 0)]["status"] == "none"

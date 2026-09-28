@@ -45,7 +45,7 @@ ROUNDING = 5.00    # rupiah: FP and PO totals this close are the same (the user,
 LABEL = {"sor_in_satellite": "SO in Satellite", "docs_complete": "Documents complete",
          "vendor_is_samb": "PO addressed to SAMB", "fp_po_total": "FP ↔ PO total", "fp_po_lines": "FP ↔ PO lines",
          "received": "Received vs Satellite's CGR", "dates": "Dates in order", "fpj": "FP ↔ Faktur Pajak",
-         "calibration": "Customer calibration"}
+         "calibration": "Customer calibration", "store_named": "The page's store is the order's"}
 STEPS = (5, 10, 15, 20, 25, 30, 50, 100)   # allowances to suggest (rupiah); beyond Rp 100 a gap isn't rounding
 SAMB = "SARANAABADIMAKMUR"
 
@@ -402,8 +402,72 @@ def _calibration(prof, so, so_lines, ttgs, out):
                              if prof.get("receipt_shows") else ""))
 
 
+def _own_words(name, stores):
+    """The words only this store's name has among its customer's stores (Boots: HARAPAN INDAH AVENUE; BOOTS is every
+    store's)."""
+    mine = satellite.store_words(name)
+    return mine - set().union(*(satellite.store_words(s) for s in stores if s != name)) if stores else mine
+
+
+def _weight(word, df):
+    """How much a word says about which store: rare in Satellite's store names, a lot; common (INDONESIA, BEKASI, PT),
+    nothing. Measured over 4,184 names: HARAPAN 11, BINTARO 20, INDONESIA 62."""
+    n = (df or {}).get(word, 0)
+    return 1.0 if n <= 12 else 0.5 if n <= 25 else 0.0
+
+
+def _initials(name, page):
+    """The page prints a store's initials: BSD for BUMI SERPONG DAMAI (Duta Buah's 'CABANG : BSD')."""
+    w = [x for x in re.findall(r"[A-Z]+", str(name or "").upper()) if len(x) >= 2]
+    runs = {"".join(x[0] for x in w[i:j]) for i in range(len(w)) for j in range(i + 3, len(w) + 1)}
+    return bool(runs & page)
+
+
+def _score(name, own, page, df):
+    """How clearly the page names this store: its own words on the page, weighted by rarity, plus its initials."""
+    return sum(_weight(w, df) for w in own & page) + (1.0 if _initials(name, page) else 0.0)
+
+
+def _store_named(pages, docs, so, stores, df=None):
+    """A second net for a wrong-order link: the customer's paper usually names the store the goods go to. Fail when a
+    page names ANOTHER store of this customer and not this order's (Boots ships one order to ten stores: the totals
+    would all fit). Pass when it names this order's store. Info when it names none: a head-office PO.
+    A store is named at a score of 1 (_score): its own words (only it has them among the customer's stores) weighted
+    by how rare they are in all of Satellite's store names, or its initials. Never by the page's own issuer (Satellite
+    lists PT. AEON INDONESIA, the company, among AEON's ship-tos; its POs are issued by it). An address word can
+    still name a store (Duta Buah's head office is on Jl. Jalur SUTRA; ALAM SUTRA is one of its stores): a false
+    alarm sends a bundle to Review, it never links anything."""
+    name = (so or {}).get("customer_name")
+    if not name:
+        return result("n/a", "the SO has no ship-to name")
+    mine = _own_words(name, stores)
+    named, wrong = [], []
+    for n, t in docs:
+        if t not in ("PO", "TTG"):
+            continue
+        p = pages.get(n) or {}
+        text = " ".join([str(p.get("classical_text") or "")] + [str((f or {}).get("value") or "") for k, f in
+                        ((p.get("fields_all") or {}).items()) if k != "lines" and isinstance(f, dict)])
+        words = satellite.store_words(text)
+        issuer = satellite.store_words(((p.get("fields_all") or {}).get("customer_name") or {}).get("value"))
+        if _score(name, mine, words, df) >= 1:
+            named.append(n)
+            continue
+        other = next((s for s in stores if s != name for own in [_own_words(s, stores)]
+                      if own and not own <= issuer and _score(s, own, words, df) >= 1), None)
+        if other:
+            wrong.append((n, other))
+    if wrong:
+        return result("fail", "; ".join(f"page {n} names {s}, another store of this customer, not {name}"
+                                        for n, s in wrong) + ": linked to the wrong order?")
+    if named:
+        return result("pass", f"page{'s' if len(named) > 1 else ''} {', '.join(map(str, named))} name{'' if len(named) > 1 else 's'} "
+                              f"{name}")
+    return result("info", f"no page names a store of this customer (a head-office order?); {name} is kept as the SO says")
+
+
 def check_bundle(sor, docs, pages, so, so_lines, matches, expected=("FP", "TTG"), scan_day=None, spans=None,
-                 profile=None):
+                 profile=None, stores=None, df=None):
     """The checks of one bundle. docs: [(page_no, doc_type)] (first pages); pages: {page_no: {doc_type, fields,
     checks, outcome, fields_all, classical_text, second_look}}; matches: matching.match(); spans: {first page: every
     page of that document} (default: the first page alone); profile: the customer's calibration {chain, name,
@@ -514,6 +578,7 @@ def check_bundle(sor, docs, pages, so, so_lines, matches, expected=("FP", "TTG")
     out["dates"] = _dates(pages, [spans.get(n) or [n] for n in ttgs], so, scan_day) if ttgs else \
         result("n/a", "no TTG in the bundle")
     out["fpj"] = result("n/a", "no Faktur Pajak in this stage")
+    out["store_named"] = _store_named(pages, docs, so, stores or [], df)
     out["calibration"] = _calibration(prof, so, so_lines, ttgs, out) if so and not satellite.free_goods(so) else \
         result("n/a", "nothing to calibrate against: " + ("the SO isn't in Satellite" if not so else "free goods (SOF)"))
     return out
@@ -613,7 +678,10 @@ def inputs(c, bid):
         chain = satellite.chain_of(so)
         profile = c.execute("""SELECT expected_docs::text[] AS e, rounding_allowance, receipt_shows
                                  FROM satellite.customer_profile WHERE customer_code=%s""", (chain,)).fetchone()
+        stores = sorted({s["customer_name"] for s in satellite.load(c).values()
+                         if s.get("customer_name") and chain and satellite.chain_of(s) == chain})
         out.append({"id": b["id"], "sor": b["sor_no"], "status": b["status"], "fingerprint": b["fingerprint"],
+                    "stores": stores, "df": satellite.store_df(satellite.load(c)),
                     "stored": b["checks"] or {}, "docs": docs, "pages": pages, "so": so,
                     "spans": {d["page_from"]: list(range(d["page_from"], d["page_to"] + 1)) for d in ranges},
                     "profile": {"chain": chain, "name": satellite.chain_name(so),
@@ -633,7 +701,8 @@ def evaluate(x):
     rows = [(n, t, matching.rows_of(t, x["pages"][n]["fields"])) for n, t in x["docs"] if t in ("PO", "TTG")]
     m = matching.match(rows, x["lines"], x["pmap"], x["decisions"])
     checks = accept(check_bundle(x["sor"], x["docs"], x["pages"], x["so"], x["lines"], m, x["expected"],
-                                 x["scan_day"], x.get("spans"), x.get("profile")), x["accepted"])
+                                 x["scan_day"], x.get("spans"), x.get("profile"), x.get("stores"), x.get("df")),
+                    x["accepted"])
     asks = {}                    # item 11: a value only the AI read, beyond its reference: the page looks again first
     for c in checks.values():
         for n, field in (c.get("ask") or []) if c["status"] == "unknown" else []:

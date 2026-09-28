@@ -306,6 +306,20 @@ def store_words(name):
     return set(re.findall(r"[A-Z0-9]{2,}", str(name or "").upper()))
 
 
+def store_df(sos):
+    """{word: in how many distinct store names in Satellite}; cached with the process-wide SO list. INDONESIA is in
+    62 of 4,184, HARAPAN in 11, EASTVARA in 1: a common word names no store."""
+    def build():
+        import collections
+        return collections.Counter(w for n in {s["customer_name"] for s in sos.values() if s.get("customer_name")}
+                                   for w in store_words(n))
+    if sos is not _cache["sos"]:
+        return build()
+    if "df" not in _index:
+        _index["df"] = build()
+    return _index["df"]
+
+
 def store_can_tell(sor, near, sos):
     """S4: could the store printed on a page tell this SO from the SOs one character away? Only when every one of
     them ships to a store with a word this SO's store lacks. Not for one store's run of numbers (AEON EASTVARA's POs

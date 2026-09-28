@@ -94,7 +94,7 @@ docker compose exec vf-worker python -m worker.vf shadow b-4bab9b736d 1-31      
 docker compose exec vf-teacher python -m grouper.matching propose b-4bab9b736d  # AI proposals for product lines nothing else matched (vf-teacher holds the Z.ai key)
 docker compose exec vf-worker python -m grouper.crosscheck shadow b-4bab9b736d   # what a bundle-rule change would change (status, checks, items left); writes nothing
 docker exec -i samb-ocr-postgres-1 psql -U ocr -d ocr_vf -v ON_ERROR_STOP=1 < schema/017-fp-title.sql   # a migration, by hand (vf has no postgres of its own)
-docker compose exec -e PYTHONPATH=/app vf-ui pytest -q tests/                   # 227 pass; test_vf_acceptance fails while pages wait for a look-again; v1's phase tests skip
+docker compose exec -e PYTHONPATH=/app vf-ui pytest -q tests/                   # 229 pass; test_vf_acceptance fails while pages wait for a look-again; v1's phase tests skip
 ```
 
 **Which model reads: `VF_AI_OCR`** (in this folder's `docker-compose.yml`)
@@ -327,6 +327,12 @@ docker compose exec -e PYTHONPATH=/app vf-ui pytest -q tests/                   
   - **Everything else is under one closed "All values" fold, never required:** every check, every value read, row confirmations, product pairing.
   - Also: a bundle never checked (held, no checks) can't be approved; quantity suggestions carry their unit (`48 PCS`: a bare 48 on a carton row was 48 cartons); "none of these" on a row pairing takes a stated reason (`NONE_REASONS`, stored in `line_match.reason`).
   - **Measured:** forms before the fold per bundle 1–7 (the Duta Buah bundle: 73 → 7, of which 4 need a click: 2 calibration questions, 2 accepts; the other 3 are folded corrections). Tests: `tests/test_vf_review.py` (S5 section).
+- **After S5 (2026-09-28):**
+  - **Rows pair by their printed amount** (`matching.amount_fits`, rule `amount` after `numbers`): a PO row takes the only unpaired SO line whose amount (net, or with PPN) its printed amount fits to 0.03%; two rows at one amount are told apart by name, clearly, or not at all. Duta Buah's PO counts 48 PCS where SAMB's line says 2, so `numbers` couldn't pair it. On both batches: 6 new pairs, all right; ALPENLIEBE KARAMEL (the product SAMB's order lacks) stays unpaired. Pairs by amount never enter the product map.
+  - **A bundle check: the page's store is the order's** (`crosscheck._store_named`, label "The page's store is the order's"): a second net for a wrong-order link, where totals can't help (Boots' one order to ten stores).
+    - A store is named at a score of 1: its own words (only it has them among the customer's stores) weighted by how rare they are in Satellite's 4,184 store names (`satellite.store_df`: ≤ 12 names → 1, ≤ 25 → ½, more → 0; INDONESIA 62, HARAPAN 11), or its initials (Duta Buah's "CABANG : BSD").
+    - fail → Review when a page names another store of the customer and not this order's; pass when it names this one; info (never blocks) when it names none (a head-office PO). The page's own issuer is never a competing store (Satellite lists PT. AEON INDONESIA among AEON's ship-tos).
+    - Measured: Boots pages 4–5 against the ten Boots orders: the right one passes, all 9 others fail. Real bundles: 12 pass, 4 info, 0 false alarms. An address word can still name a store (Duta Buah's head office is on Jl. Jalur SUTRA; ALAM SUTRA is a store): a false alarm costs a Review click, never a link.
 - **Still open, for the mentors:** is the CGR counted from returned goods or typed from the signed TTG? What does an SOF (free goods?) order's FP print? Its as-ordered amounts are 0 on all 409 SOF orders.
 
 **Budget:**

@@ -95,3 +95,26 @@ def test_status_and_reasons():
     assert crosscheck.decide(open_, clear, "reviewed", "a", "a") == ("reviewed", ["Received vs Satellite's CGR: w"])
     status, reasons = crosscheck.decide(open_, clear, "reviewed", "a", "b")
     assert status == "needs_review" and reasons[0].startswith("it was reviewed, then")
+
+
+def test_a_page_naming_another_store_of_the_customer_goes_to_review():
+    """Boots ships one order to ten stores with the same items and total: only the store tells a wrong-order link.
+    Page 4 prints BOOTS HARAPAN INDAH BEKASI (2026-09-28)."""
+    stores = ["BOOTS AEON TANJUNG BARAT", "BOOTS BINTARO XCHANGE 2", "BOOTS HARAPAN INDAH AVENUE",
+              "BOOTS LIVING WORLD KOTA WISATA", "BOOTS LIVING WORLD GRAND WISATA", "BOOTS GRAND INDONESIA MENTENG"]
+    page = {4: {"classical_text": "PT PANEN SELARAS ADIPERKASA\\nBOOTS HARAPAN INDAH BEKASI\\nPURCHASE ORDER",
+                "fields_all": {"customer_name": {"value": "PANEN SELARAS ADIPERKASA PT"}}}}
+    df = {"BOOTS": 30, "INDONESIA": 62, "BEKASI": 86, "PT": 154, "HARAPAN": 11, "INDAH": 59}   # Satellite's counts
+    right = crosscheck._store_named(page, [(4, "PO")], {"customer_name": "BOOTS HARAPAN INDAH AVENUE"}, stores, df)
+    wrong = crosscheck._store_named(page, [(4, "PO")], {"customer_name": "BOOTS BINTARO XCHANGE 2"}, stores, df)
+    menteng = crosscheck._store_named(page, [(4, "PO")], {"customer_name": "BOOTS GRAND INDONESIA MENTENG"}, stores, df)
+    assert menteng["status"] == "fail"                                   # INDONESIA names no store: too common
+    assert right["status"] == "pass" and wrong["status"] == "fail" and "HARAPAN INDAH AVENUE" in wrong["why"]
+    head = {6: {"classical_text": "DUTA BUAH SEGAR HEAD OFFICE Jl. Jalur Sutra Kav 28 C DIKIRIM UNTUK CABANG : BSD",
+                "fields_all": {"customer_name": {"value": "DUTA BUAH SEGAR HEAD OFFICE"}}}}
+    duta = ["DUTA BUAH ALAM SUTRA", "DUTA BUAH BUMI SERPONG DAMAI", "DUTA BUAH GADING SERPONG"]
+    assert crosscheck._store_named(head, [(6, "PO")], {"customer_name": "DUTA BUAH BUMI SERPONG DAMAI"},
+                                   duta)["status"] == "pass"                     # 'CABANG : BSD', by its initials
+    aeon = {15: {"classical_text": "PT AEON INDONESIA PURCHASE ORDER", "fields_all": {"customer_name": {"value": "PT AEON INDONESIA"}}}}
+    assert crosscheck._store_named(aeon, [(15, "PO")], {"customer_name": "AEON EASTVARA TANGERANG"},
+                                   ["AEON EASTVARA TANGERANG", "PT. AEON INDONESIA", "AEON TANJUNG BARAT JAKSEL"])["status"] == "info"

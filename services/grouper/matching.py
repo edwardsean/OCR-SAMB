@@ -9,9 +9,12 @@ MASK NUTRI COLOR 20GR"). Satellite keeps no barcode, and no table maps one to th
   only_line  the SO has one line and the document one row
   numbers    a PO row: the only SO line with its quantity in pieces AND a price that fits (per piece or per carton,
              with or without PPN, up to the customer's rounding to whole rupiah), wanted by no other row
+  amount     a PO row: the only SO line whose amount (net, or with PPN) its printed amount fits, to 0.03%: money
+             doesn't depend on how each side counts pieces (Duta Buah's PO: 48 PCS; SAMB's line: 2). Two rows at one
+             amount (ALPENLIEBE KARAMEL and STRAWBERRY, both 32,760) are told apart by name, clearly, or not at all
   po_row     a TTG row takes the line of the PO row with the same code (one customer, one system)
   ai         proposed by a text model on Z.ai (propose()), checked on the numbers; a person confirms it once
-The first five decide; an AI pair is a proposal until a person confirms it (7d), and that confirmation fills the map,
+The first six decide; an AI pair is a proposal until a person confirms it (7d), and that confirmation fills the map,
 so the same product then matches with no AI and no person. Boots' three Vaseline 425ML variants share quantity and
 price: only their names tell them apart, which is exactly what an AI can get wrong confidently.
 
@@ -57,9 +60,12 @@ def rows_of(doc_type, fields):
         raw = str(r.get(code_c) or "")
         codes = {b for b in BARCODE.findall(f"{raw} {r.get('row_text') or ''}") if barcode_ok(b)}
         own = verify.flat(raw.split("(")[0])
+        amounts = [a for a in (verify.amount(x) for x in re.findall(r"\d[\d.,]*\d", str(r.get("row_text") or "")))
+                   if a is not None]
         out.append({"i": i, "code": "" if own in codes else own, "barcodes": codes, "desc": r.get(desc_c) or "",
                     "qty": r.get("qty"), "uom": r.get("uom"), "price": r.get("unit_price"),
-                    "discount": r.get("discount"), "bonus": _bonus(r)})
+                    "discount": r.get("discount"), "bonus": _bonus(r),
+                    "amount": amounts[-1] if amounts else None})       # the row's printed amount: its last one
     return out
 
 
@@ -87,6 +93,19 @@ def price_fits(price, s):
     return any(abs(p - x) <= 1 for base in (pc, uom) for x in (base, base * 1.11))
 
 
+AMOUNT_FIT = 0.0003     # per-piece price rounding: Duta Buah's rows are 0.06 to 17.45 from SAMB's lines (32K to 288K)
+
+
+def amount_fits(amount, s):
+    """Does a row's printed amount equal the SO line's amount as ordered, net or with PPN, to 0.03% (at least Rp 1)?"""
+    if not amount:
+        return False
+    net = float(s.get("line_amount") or 0)
+    if net <= 0:
+        return False
+    return any(abs(amount - x) <= max(1.0, AMOUNT_FIT * x) for x in (net, net + float(s.get("vat") or 0)))
+
+
 def load_map(c, chain):
     """{("code", customer code): SAMB item, ("barcode", barcode): SAMB item} for the SO's chain; a barcode from any."""
     out = {}
@@ -98,6 +117,14 @@ def load_map(c, chain):
         if r["customer_barcode"]:
             out[("barcode", r["customer_barcode"])] = r["samb_material_code"]
     return out
+
+
+def r_amount(rows, i):
+    return next((r["amount"] for r in rows if r["i"] == i), None)
+
+
+def amount_str(a):
+    return f"{a:,.2f}" if a is not None else "—"
 
 
 def match(docs, so_lines, pmap, decisions):
@@ -148,6 +175,25 @@ def match(docs, so_lines, pmap, decisions):
                 s = so_lines[js[0]]
                 take(page, i, js[0], "numbers", "matched",
                      f"the only SO line of {float(s['qty_pcs']):g} pieces at this price")
+    for page, dt, rows in docs:                                          # a PO row by its printed amount
+        if dt != "PO":
+            continue
+        desc = {r["i"]: r["desc"] for r in rows}
+        claims = {}
+        for r in rows:
+            if (page, r["i"]) in out or r["bonus"]:
+                continue
+            js = [j for j, s in enumerate(so_lines) if free(page, j) and amount_fits(r["amount"], s)]
+            if len(js) == 1:
+                claims.setdefault(js[0], []).append(r["i"])
+        for j, who in claims.items():
+            s = so_lines[j]
+            likes = sorted(((satellite._like(desc[i], s["description"]), i) for i in who), reverse=True)
+            if len(who) > 1 and likes[0][0] - likes[1][0] < satellite.NAME_CLEAR:
+                continue                                                 # two rows, one amount, no clear name
+            i = likes[0][1]
+            take(page, i, j, "amount", "matched", f"its printed amount {amount_str(r_amount(rows, i))} is SO line "
+                 f"{s['line_no']}'s ({float(s['line_amount']):,.2f})" + (" and the name is the closest" if len(who) > 1 else ""))
     po_line = {r["code"]: out[(page, r["i"])]["line"] for page, dt, rows in docs if dt == "PO" for r in rows
                if r["code"] and out.get((page, r["i"]), {}).get("status") == "matched"}
     for page, dt, rows in docs:                                          # a TTG row by its PO row
