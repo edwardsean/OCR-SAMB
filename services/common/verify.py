@@ -94,9 +94,39 @@ def dates(s):
     return out
 
 
+def amount(s):
+    """The number a printed amount means, by rupiah conventions. '.' groups thousands and ',' marks decimals
+    (1.126.011,00), or the English way (9,410,527.00): with both marks, the last one is the decimal mark; with one
+    kind, a mark followed by exactly 3 digits groups thousands (111.586 = 111586), otherwise it marks decimals.
+    One reading only: 111.586 is never one hundred eleven. None if there is no number."""
+    t = re.sub(r"[^0-9.,]", "", str(s or "")).strip(".,")
+    if not re.search(r"\d", t):
+        return None
+    last = max(t.rfind("."), t.rfind(","))
+    if last < 0:
+        return float(t)
+    if "." in t and "," in t:
+        whole, frac = re.sub(r"[.,]", "", t[:last]), t[last + 1:]
+    else:
+        parts = t.split(t[last])
+        if len(parts) > 2 or len(parts[-1]) == 3:
+            whole, frac = "".join(parts), ""
+        else:
+            whole, frac = parts[0], parts[1]
+    return float(f"{whole or 0}.{frac or 0}")
+
+
+CUT_OFF = re.compile(r"[.,]\d?\s*$")   # "1.014.424,5" or "1.078.330,": an amount whose last digits the scan cut off
+
+
 def agrees(kind, value, source):
     """Does the stored value say what the printed source_text says?"""
-    if kind in ("amount", "qty"):
+    if kind == "amount":
+        try:
+            return amount(source) is not None and abs(round(float(value), 2) - amount(source)) < 0.005
+        except (TypeError, ValueError):
+            return False
+    if kind == "qty":
         try:
             v = round(float(value), 2)
         except (TypeError, ValueError):
@@ -132,7 +162,9 @@ def check(why):
     return {"verdict": "check", "why": why}
 
 
-def header(doc_type, fields, text, qr_text):
+def header(doc_type, fields, text, qr_text, sums=True):
+    """sums=False leaves the FP adds-up rule out: vlm-first applies its stricter one after every witness
+    (common/gates.py)."""
     kinds = {f["name"]: f["kind"] for f in DOCS[doc_type]["header"]}
     wins = windows(text)
     qr = qr_text if qr_text and SOR.match(qr_text) else None
@@ -149,6 +181,12 @@ def header(doc_type, fields, text, qr_text):
         if not agrees(kind, value, source):
             out[name] = check(f"value {value} doesn't match what it says is printed ({source})")
             continue
+        if kind == "amount" and CUT_OFF.search(source):
+            # Measured on page 3: the scan cut off "1.014.424,3x"; Tesseract AND the AI OCR both read the half digit
+            # as 5. Two readers agreeing on a half-printed digit is not proof.
+            out[name] = {**check(f"{source!r} looks cut off at the edge of the scan (one decimal or none left)"),
+                         "cut": True}           # its missing digits aren't printed: a look-again can't find them
+            continue
         usable[name] = True
         if name == "sor" and qr:
             out[name] = ok("qr") if flat(value) == flat(qr) else check(f"QR code says {qr}")
@@ -158,7 +196,7 @@ def header(doc_type, fields, text, qr_text):
             out[name] = check("too short to find in Tesseract's text reliably")
         else:
             out[name] = check("not in Tesseract's text")
-    if doc_type == "FP" and adds_up(fields, usable):
+    if sums and doc_type == "FP" and adds_up(fields, usable):
         for name in ("dpp", "ppn", "total"):
             if out[name]["verdict"] == "check":
                 out[name] = ok("adds_up")
@@ -205,11 +243,11 @@ def lines(doc_type, rows, text):
     return out
 
 
-def run(doc_type, fields, text, qr_text):
+def run(doc_type, fields, text, qr_text, sums=True):
     """Verdicts for every header value and every line-item value of one page."""
     if doc_type not in DOCS or not fields:
         return None
-    h = header(doc_type, fields, text, qr_text)
+    h = header(doc_type, fields, text, qr_text, sums)
     ls = lines(doc_type, fields.get("lines"), text) if DOCS[doc_type]["lines"] else []
 
     def count(vs):
@@ -219,17 +257,23 @@ def run(doc_type, fields, text, qr_text):
 
 
 def rows(fields, result):
-    """One staging.field_check row per value: header.<name> and lines[i].<column>."""
+    """One staging.field_check row per value: header.<name> and lines[i].<column>. When a witness changed the value
+    (Satellite's record, a person), vlm_value keeps the AI's reading and adjudicated_value holds the new one."""
     out = []
     for name, v in result["header"].items():
         f = fields.get(name) or {}
-        out.append((f"header.{name}", f.get("value"), f.get("source_text"), v))
+        changed = "ai_value" in f
+        out.append((f"header.{name}", f["ai_value"] if changed else f.get("value"), f.get("source_text"), v,
+                    f.get("value") if changed else None))
     for i, (row, res) in enumerate(zip(fields.get("lines") or [], result["lines"])):
+        ai = row.get("ai_values") or {}                   # a cell Satellite corrected (phase 7b) keeps the AI's
         for col, v in res.items():
-            out.append((f"lines[{i}].{col}", row.get(col), None, v))
+            out.append((f"lines[{i}].{col}", ai[col] if col in ai else row.get(col), None, v,
+                        row.get(col) if col in ai else None))
     return [{"field_path": path, "vlm_value": None if val is None else str(val), "source_text": src,
              "classical_match": v.get("by") == "text", "status": v["verdict"], "confirmed_by": v.get("by"),
-             "reason": v.get("why")} for path, val, src, v in out]
+             "reason": v.get("why"), "adjudicated_value": None if adj is None else str(adj),
+             "adjudicator": v.get("by") if adj is not None else None} for path, val, src, v, adj in out]
 
 
 def store(conn, batch_id, page_no, fields, result):
@@ -239,9 +283,10 @@ def store(conn, batch_id, page_no, fields, result):
     if rs:
         with conn.cursor() as cur:
             cur.executemany("""INSERT INTO staging.field_check
-                               (batch_id, page_no, field_path, vlm_value, source_text, classical_match, status, confirmed_by, reason)
+                               (batch_id, page_no, field_path, vlm_value, source_text, classical_match, status, confirmed_by,
+                                reason, adjudicated_value, adjudicator)
                                VALUES (%(b)s, %(n)s, %(field_path)s, %(vlm_value)s, %(source_text)s, %(classical_match)s,
-                                       %(status)s, %(confirmed_by)s, %(reason)s)""",
+                                       %(status)s, %(confirmed_by)s, %(reason)s, %(adjudicated_value)s, %(adjudicator)s)""",
                             [{**r, "b": batch_id, "n": page_no} for r in rs])
     return len(rs)
 

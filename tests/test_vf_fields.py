@@ -9,9 +9,9 @@ from psycopg.rows import dict_row
 from common.fields import CANON, DOCS, LINE_CANON, LINE_MAP, TYPE_MAP, lift, project
 
 
-def test_29_per_type_fields_become_18_plus_2_clues():
+def test_31_per_type_fields_become_18_plus_2_clues():
     per_type = sum(len(d["header"]) for d in DOCS.values())
-    assert per_type == 29
+    assert per_type == 31              # 29, plus a receipt's own total and total before tax (S2: its bundle checks them)
     store = [n for n, f in CANON.items() if f["role"] == "store"]
     clue = [n for n, f in CANON.items() if f["role"] == "clue"]
     assert (len(store), len(clue)) == (18, 2)
@@ -48,4 +48,6 @@ def test_project_lift_round_trip_on_v1_readings():
     assert rows
     for r in rows:
         f = {k: v for k, v in r["fields"].items()}
-        assert project(lift(f, r["t"]), r["t"]) == f, r["page_no"]
+        back = project(lift(f, r["t"]), r["t"])
+        # a field v1 never read (a receipt's own totals, added for S2's checks) comes back empty
+        assert {k: v for k, v in back.items() if k in f or v is not None} == f, r["page_no"]

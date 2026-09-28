@@ -3,7 +3,18 @@
 {% block main %}
   <section class="head">
     <h1>Phase 1 · Upload a scan</h1>
+    {% if vf %}
+    <p class="lede">vlm-first: the file goes to MinIO under <code>vf/</code>, is split into page images here (n8n's intake
+      is v1's), and each page becomes a ticket on vlm-first's own <code>q.pages</code>. <code>vf-worker</code> then reads
+      each page: AI OCR, Jev, Tesseract, the checks, the look-again, grouping and the bundle checks.</p>
+    <p class="note"><strong>Budget:</strong> the AI OCR runs on Groq's free tier: 200K tokens a day, refilling about 8K an
+      hour. Groq counts a read as about 7K and a look-again as about 4.5K, so that's roughly 20–25 pages a day. Every page
+      is prepared right away, and it is read while the budget lasts. Once Groq refuses, the rest wait (<em>waiting for the
+      AI</em>) without asking it again, and resume with
+      <code>docker compose exec vf-worker python -m worker.vf again &lt;batch&gt;</code>, which waits for each refill.</p>
+    {% else %}
     <p class="lede">This stands in for the feeder scanner's SCP drop. The file goes to MinIO (the temp repository), then n8n splits it into page images and puts one ticket per page on <code>q.pages</code>.</p>
+    {% endif %}
   </section>
 
   {% if error %}<section class="alert bad">{{ error }}</section>{% endif %}

@@ -1,0 +1,44 @@
+<section class="checks {{ 'pass' if p7.all_ok else 'fail' }}">
+  <h2>Phase 7 acceptance · cross-checks and Review <span class="muted">(built: 7.0 grading, 7a rules, 7b Satellite for the FP, 7c bundle checks · next: 7d Review screen)</span></h2>
+  <ul>
+  {% for label, ok, detail in p7.checks %}
+    <li class="{{ 'ok' if ok else ('todo' if ok is none else 'bad') }}"><span class="dot"></span>{{ label }} <em>{{ detail }}</em></li>
+  {% endfor %}
+  </ul>
+  {% if p7.wrong %}
+  <table class="grid small">
+    <thead><tr><th>Page</th><th>Value</th><th>Stored with ✅</th><th>The truth</th><th>Graded by</th><th>✅ came from</th></tr></thead>
+    <tbody>
+    {% for g in p7.wrong %}
+      <tr class="bad">
+        <td><a href="/batches/{{ batch_id }}/pages/{{ g.page }}">{{ g.page }}</a></td>
+        <td class="mono">{{ g.path }}</td>
+        <td class="mono">{{ g.got }}</td>
+        <td class="mono">{{ g.want if g.want is not none else 'not printed on this page' }}</td>
+        <td class="muted">{{ g.key }}</td>
+        <td>{{ g.by }}</td>
+      </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  {% endif %}
+  {% if p7.bundles %}
+  <table class="grid small">
+    <thead><tr><th>SOR</th><th>Status</th><th>Checks</th><th>Why (first reasons)</th></tr></thead>
+    <tbody>
+    {% for b in p7.bundles %}
+      <tr class="{{ 'ok' if b.status == 'auto_ok' else ('warn' if b.status in ('needs_review', 'grouping') else '') }}">
+        <td class="mono">{{ b.sor }}</td>
+        <td>{{ b.status }}{% if b.hold %} <span class="muted">({{ b.hold }})</span>{% endif %}</td>
+        <td class="mono">✓{{ b.counts.pass }} ✗{{ b.counts.fail }} ?{{ b.counts.unknown }}</td>
+        <td>{% for r in b.reasons %}<div>{{ r[:180] }}{{ '…' if r|length > 180 }}</div>{% endfor %}</td>
+      </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  {% endif %}
+  <p class="note">Graded, never used by the pipeline: PO and TTG values against the answer key read by eye (header and
+    every row), FP values against Satellite's SO record (SAMB prints the FP from it). A Hero PO's total is its TOTAL
+    NETTO; pages that end before it have none. {{ p7.edge }} FP amounts on pages {{ p7.edge_pages|join(', ') }} lost
+    their last digits at the scan's right edge, so print can't back them in full.</p>
+</section>

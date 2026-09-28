@@ -16,6 +16,7 @@ x-py: &py
     MINIO_ENDPOINT: minio:9000
     STORAGE_PREFIX: vf/
     PIPELINE: vlm-first
+    VF_AI_OCR: ${VF_AI_OCR:-groq:qwen/qwen3.8-27b}     # the AI OCR: gemini, or provider:model (common/models/openai_vlm.py)
   restart: unless-stopped
 
 services:
@@ -27,6 +28,12 @@ services:
     environment:
       <<: *pyenv
       OMP_THREAD_LIMIT: "1"
+
+  vf-teacher:
+    <<: *py
+    image: samb-ocr-worker:latest
+    command: python -m worker.lesson serve   # q.lessons: a label made a lesson, or a context was approved/rejected
+    deploy: { replicas: 1 }         # one lesson at a time: each proposal is built on the active context
 
   vf-ui:
     <<: *py

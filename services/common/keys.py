@@ -4,6 +4,9 @@ The AI OCR invents plausible digits on faint pages (measured: page 8 → SOR2011
 so every key says HOW it is confirmed. Grouping may only use confirmed keys.
   confirmed_by = "qr"         the page's SOR QR code says the same
                = "ocr_text"   the value also appears in Tesseract's independent reading
+               = zoom · second_look · satellite · person   (vlm-first: from the field's final verdict)
+               = ship_to    (vlm-first, S4) only the AI read it, it names one SO in Satellite, and the store printed on
+                            the page names that SO's store and none of the SOs one character away
                = None         unconfirmed: nobody else saw it
 """
 import re
@@ -45,7 +48,27 @@ def key(value, classical_text, qr=None, kind=None):
     return k
 
 
-def derive(doc_type, fields, classical_text, qr_text):
+FIELD_OF = {"FP": {"sor": "sor", "po_no": "nomor_cpo"},
+            "TTG": {"sor": "no_ref", "po_no": "purchase_order_no", "document_no": "document_no"},
+            "PO": {"po_no": "purchase_order_no"},
+            "FPJ": {"sor": "sor", "billing_no": "billing_number"}}
+
+
+def derive(doc_type, fields, classical_text, qr_text, verdicts=None):
+    """With verdicts (vlm-first): a key is confirmed exactly when its field's final verdict is ✅, by whatever backed
+    it (print, the zoomed spot, a look-again print backs, Satellite's record, a person). The QR code always counts."""
+    out = _derive(doc_type, fields, classical_text, qr_text)
+    if verdicts is not None:
+        for k, key_ in out.items():
+            v = verdicts.get(FIELD_OF.get(doc_type, {}).get(k)) or {}
+            if v.get("verdict") == "ok":
+                key_["confirmed_by"] = {"text": "ocr_text"}.get(v.get("by"), v.get("by") or "ok")
+            elif key_["confirmed_by"] != "qr":
+                key_["confirmed_by"] = None
+    return out
+
+
+def _derive(doc_type, fields, classical_text, qr_text):
     qr = qr_text if qr_text and SOR.match(qr_text) else None
     out = {}
     if doc_type == "FP":
@@ -53,7 +76,13 @@ def derive(doc_type, fields, classical_text, qr_text):
         out["po_no"] = key(val(fields, "nomor_cpo"), classical_text)
     elif doc_type == "TTG":
         ref = val(fields, "no_ref")
-        out["sor"] = key(ref, classical_text, kind="sor") if ref and flat(ref).startswith("SOR") else None
+        f = flat(ref)
+        if ref and f.startswith("SOR"):
+            out["sor"] = key(ref, classical_text, kind="sor")
+        elif ref and re.fullmatch(r"\d{11}", f):         # DO# / S/Fak: the SOR without its letters
+            out["sor"] = key(ref, classical_text)
+            if out["sor"]:
+                out["sor"]["value"] = "SOR" + f
         out["po_no"] = key(val(fields, "purchase_order_no"), classical_text)
         out["document_no"] = key(val(fields, "document_no"), classical_text)
     elif doc_type == "PO":

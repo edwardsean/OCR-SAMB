@@ -7,7 +7,8 @@
     "dark_pages lists pages seen with a solid black lower half; page 9 is unconfirmed and is measured in phase 2.",
     "type_alternatives: pages 14 and 15 are both rotated Hero pages of one Surat Pesanan; either label is correct (recorded before phase 3 results, per the earlier note).",
     "2026-09-24: every field value re-read at full resolution (upright 300 dpi crops), not the preview. Corrected: p10 nomor_cpo and p12 purchase_order_no 58423525 -> 58423526 (page 16's PO is 58423525; two Hero bundles had been mixed up). Removed: p2 no_receive, first two characters illegible. Added verified: p9 PO, p16 PO, NO GRN on p19/22/25/28/31. The corrections were prompted by an AI OCR disagreement but decided only from the pixels.",
-    "2026-09-24: 'billing_no_handwritten' (was 'handwritten_no') is the SAP billing number that Invoicing writes on the FP after posting (Problem Statement P7), not a bundle counter. The filename 7000356304 - 7000356499 is a billing-number range. It is not extracted: SAP already has it."
+    "2026-09-24: 'billing_no_handwritten' (was 'handwritten_no') is the SAP billing number that Invoicing writes on the FP after posting (Problem Statement P7), not a bundle counter. The filename 7000356304 - 7000356499 is a billing-number range. It is not extracted: SAP already has it.",
+    "2026-09-25 (phase 7): customer documents extended by eye at full resolution. Header: TTG posting_date (the receipt date: Tgl Terima / GR Date / TGL KONFIRMASI GRN, not TGL PO) and vendor_number; PO ppn, vendor_code, purchase_order_no and total. PO total means the total INCLUDING tax (Boots 'Total Include Tax', Hero 'TOTAL NETTO'), the amount an FP total is compared with; null = checked by eye and not printed on the page (Hero pages 18, 24 and 27 end before TOTAL NETTO; 24 and 27 before PPN too), so any stored value is wrong. 'amounts': every printed amount with its label. 'lines': every row of every PO/TTG in pages 1-31. qty is the quantity column as printed (TTG: received; Hari Hari 'Diterima Case', Hero 'JUMLAH DITERIMA'), 'also' = the same quantity printed in another quantity column (a Hero PO's JUMLAH SATUAN in eaches), pack = pieces per carton, pcs = the quantity in pieces. The pack size is never a quantity, even where one carton holds as many (Hari Hari's '40.00 PC'; decided 2026-09-25). Bonus rows (price 0) are flagged; code null = illegible. FP values (header and lines) are graded against Satellite's SO record, not here: 'fp_amounts_edge' marks the FP amounts the scan's right edge cut (print can't back them in full); 'fp_amounts_faint' page 8's faint print."
   ],
   "rotated_pages": [
     11,
@@ -88,7 +89,10 @@
       },
       "fields": {
         "2": {
-          "no_ref": "SOR26110245292"
+          "no_ref": "SOR26110245292",
+          "purchase_order_no": "5201510",
+          "posting_date": "2026-08-31",
+          "vendor_number": "214460"
         }
       },
       "billing_no_handwritten": "356304"
@@ -111,11 +115,15 @@
         },
         "4": {
           "purchase_order_no": "4505832724",
-          "total": "1126006"
+          "total": "1126006",
+          "ppn": "111586",
+          "vendor_code": "8328"
         },
         "5": {
           "document_no": "5043773365",
-          "purchase_order_no": "4505832724"
+          "purchase_order_no": "4505832724",
+          "posting_date": "2026-09-10",
+          "vendor_number": "8328"
         }
       },
       "billing_no_handwritten": "356305"
@@ -135,7 +143,9 @@
           "no_ref": "SOR26110256585",
           "no_receive": "6155063",
           "purchase_order_no": "5213310",
-          "total": "1488163.68"
+          "total": "1488163.68",
+          "posting_date": "2026-09-07",
+          "vendor_number": "214415"
         }
       },
       "billing_no_handwritten": "356306"
@@ -154,7 +164,9 @@
         "9": {
           "no_ref": "SOR26110256810",
           "no_receive": "6155059",
-          "purchase_order_no": "5213349"
+          "purchase_order_no": "5213349",
+          "posting_date": "2026-09-07",
+          "vendor_number": "214438"
         }
       },
       "billing_no_handwritten": "356307"
@@ -175,11 +187,17 @@
           "nomor_cpo": "58423526"
         },
         "11": {
-          "total_net_purchase": "971468"
+          "total_net_purchase": "971468",
+          "purchase_order_no": "58423526",
+          "vendor_code": "S10232",
+          "ppn": "106861.00",
+          "total": "1078329.00"
         },
         "12": {
           "document_no": "5002054248",
-          "purchase_order_no": "58423526"
+          "purchase_order_no": "58423526",
+          "posting_date": "2026-09-09",
+          "vendor_number": "S10232"
         }
       },
       "billing_no_handwritten": "356308"
@@ -194,9 +212,17 @@
       ],
       "customer": "HERO DC PBF [320] CIBITUNG BEKASI",
       "fields": {
+        "14": {
+          "purchase_order_no": "58423525",
+          "vendor_code": "S10232",
+          "ppn": "53431.00",
+          "total": "539165.00"
+        },
         "16": {
           "document_no": "5002054244",
-          "purchase_order_no": "58423525"
+          "purchase_order_no": "58423525",
+          "posting_date": "2026-09-09",
+          "vendor_number": "S10232"
         }
       },
       "billing_no_handwritten": "356309"
@@ -210,9 +236,17 @@
       ],
       "customer": "HERO DC PBF [320] CIBITUNG BEKASI",
       "fields": {
+        "18": {
+          "purchase_order_no": "58415558",
+          "vendor_code": "S10232",
+          "ppn": "1035158.00",
+          "total": null
+        },
         "19": {
           "purchase_order_no": "58415558",
-          "document_no": "5002054401"
+          "document_no": "5002054401",
+          "posting_date": "2026-09-09",
+          "vendor_number": "S10232"
         }
       },
       "billing_no_handwritten": "356310"
@@ -226,9 +260,17 @@
       ],
       "customer": "HERO DC PBF [320] CIBITUNG BEKASI",
       "fields": {
+        "21": {
+          "purchase_order_no": "58424054",
+          "vendor_code": "S10232",
+          "ppn": "96176.00",
+          "total": "970496.00"
+        },
         "22": {
           "purchase_order_no": "58424054",
-          "document_no": "5002054323"
+          "document_no": "5002054323",
+          "posting_date": "2026-09-09",
+          "vendor_number": "S10232"
         }
       },
       "billing_no_handwritten": "356311"
@@ -242,9 +284,17 @@
       ],
       "customer": "HERO DC PBF [320] CIBITUNG BEKASI",
       "fields": {
+        "24": {
+          "purchase_order_no": "58415552",
+          "vendor_code": "S10232",
+          "ppn": null,
+          "total": null
+        },
         "25": {
           "purchase_order_no": "58415552",
-          "document_no": "5002054355"
+          "document_no": "5002054355",
+          "posting_date": "2026-09-09",
+          "vendor_number": "S10232"
         }
       },
       "billing_no_handwritten": "356312"
@@ -258,9 +308,17 @@
       ],
       "customer": "HERO DC PBF [320] CIBITUNG BEKASI",
       "fields": {
+        "27": {
+          "purchase_order_no": "58415556",
+          "vendor_code": "S10232",
+          "ppn": null,
+          "total": null
+        },
         "28": {
           "purchase_order_no": "58415556",
-          "document_no": "5002054354"
+          "document_no": "5002054354",
+          "posting_date": "2026-09-09",
+          "vendor_number": "S10232"
         }
       },
       "billing_no_handwritten": "356313"
@@ -274,9 +332,17 @@
       ],
       "customer": "HERO DC PBF [320] CIBITUNG BEKASI",
       "fields": {
+        "30": {
+          "purchase_order_no": "58415554",
+          "vendor_code": "S10232",
+          "ppn": "1021196.00",
+          "total": "10304792.00"
+        },
         "31": {
           "purchase_order_no": "58415554",
-          "document_no": "5002054318"
+          "document_no": "5002054318",
+          "posting_date": "2026-09-09",
+          "vendor_number": "S10232"
         }
       },
       "billing_no_handwritten": "356314"
@@ -320,5 +386,1469 @@
       272
     ],
     "note": "Checked by eye on the original scans, 2026-09-24. Phase 2 v1 got all 12 wrong; they are the regression set for orientation."
+  },
+  "amounts": {
+    "2": [
+      [
+        "Sub Total",
+        "4,321,212.64"
+      ],
+      [
+        "Diskon PO %",
+        "0.00"
+      ],
+      [
+        "TOTAL (Sebelum PPN)",
+        "4,321,212.64"
+      ],
+      [
+        "PPN 11 %",
+        "475,333.39"
+      ],
+      [
+        "TOTAL",
+        "4,796,546.03"
+      ]
+    ],
+    "4": [
+      [
+        "Total Quantity",
+        "24.000"
+      ],
+      [
+        "Total",
+        "1.014.420"
+      ],
+      [
+        "PPN-BM",
+        "0"
+      ],
+      [
+        "PPN",
+        "111.586"
+      ],
+      [
+        "Planned Delv. Cost",
+        "0"
+      ],
+      [
+        "Total Include Tax",
+        "1.126.006"
+      ]
+    ],
+    "5": [
+      [
+        "Total Quantity",
+        "24.000"
+      ],
+      [
+        "Tax Based Value",
+        "1.014.420"
+      ],
+      [
+        "PPN-BM",
+        "0"
+      ],
+      [
+        "PPN",
+        "111.586"
+      ],
+      [
+        "Planned Delv. Cost",
+        "0"
+      ],
+      [
+        "Total",
+        "1.126.006"
+      ]
+    ],
+    "7": [
+      [
+        "Sub Total",
+        "1,340,688.00"
+      ],
+      [
+        "Diskon PO %",
+        "0.00"
+      ],
+      [
+        "TOTAL (Sebelum PPN)",
+        "1,340,688.00"
+      ],
+      [
+        "PPN 11 %",
+        "147,475.68"
+      ],
+      [
+        "TOTAL",
+        "1,488,163.68"
+      ]
+    ],
+    "9": [
+      [
+        "Sub Total",
+        "679,286.88"
+      ],
+      [
+        "Diskon PO %",
+        "0.00"
+      ],
+      [
+        "TOTAL (Sebelum PPN)",
+        "679,286.88"
+      ],
+      [
+        "PPN 11 %",
+        "74,721.56"
+      ],
+      [
+        "TOTAL",
+        "754,008.44"
+      ]
+    ],
+    "11": [
+      [
+        "PURCHASE",
+        "1,037,838.00"
+      ],
+      [
+        "PURCHASE DISCOUNT",
+        "31,135.00"
+      ],
+      [
+        "TOTAL PURCHASE",
+        "1,006,703.00"
+      ],
+      [
+        "DISTRIBUTION DISCOUNT",
+        "35,235.00"
+      ],
+      [
+        "NON-RETURNABLE DISCOUNT",
+        "0.00"
+      ],
+      [
+        "TOTAL NET PURCHASE",
+        "971,468.00"
+      ],
+      [
+        "DPP",
+        "890,512.33"
+      ],
+      [
+        "PPN",
+        "106,861.00"
+      ],
+      [
+        "PPNBM",
+        "0.00"
+      ],
+      [
+        "TOTAL NETTO",
+        "1,078,329.00"
+      ]
+    ],
+    "14": [
+      [
+        "PURCHASE",
+        "518,919.00"
+      ],
+      [
+        "PURCHASE DISCOUNT",
+        "15,568.00"
+      ],
+      [
+        "TOTAL PURCHASE",
+        "503,351.00"
+      ],
+      [
+        "DISTRIBUTION DISCOUNT",
+        "17,617.00"
+      ],
+      [
+        "NON-RETURNABLE DISCOUNT",
+        "0.00"
+      ],
+      [
+        "TOTAL NET PURCHASE",
+        "485,734.00"
+      ],
+      [
+        "DPP",
+        "445,256.17"
+      ],
+      [
+        "PPN",
+        "53,431.00"
+      ],
+      [
+        "PPNBM",
+        "0.00"
+      ],
+      [
+        "TOTAL NETTO",
+        "539,165.00"
+      ]
+    ],
+    "18": [
+      [
+        "PURCHASE",
+        "10,053,445.00"
+      ],
+      [
+        "PURCHASE DISCOUNT",
+        "301,603.00"
+      ],
+      [
+        "TOTAL PURCHASE",
+        "9,751,842.00"
+      ],
+      [
+        "DISTRIBUTION DISCOUNT",
+        "341,315.00"
+      ],
+      [
+        "NON-RETURNABLE DISCOUNT",
+        "0.00"
+      ],
+      [
+        "TOTAL NET PURCHASE",
+        "9,410,527.00"
+      ],
+      [
+        "DPP",
+        "8,626,316.42"
+      ],
+      [
+        "PPN",
+        "1,035,158.00"
+      ],
+      [
+        "PPNBM",
+        "0.00"
+      ]
+    ],
+    "21": [
+      [
+        "PURCHASE",
+        "934,054.00"
+      ],
+      [
+        "PURCHASE DISCOUNT",
+        "28,022.00"
+      ],
+      [
+        "TOTAL PURCHASE",
+        "906,032.00"
+      ],
+      [
+        "DISTRIBUTION DISCOUNT",
+        "31,712.00"
+      ],
+      [
+        "NON-RETURNABLE DISCOUNT",
+        "0.00"
+      ],
+      [
+        "TOTAL NET PURCHASE",
+        "874,320.00"
+      ],
+      [
+        "DPP",
+        "801,460.00"
+      ],
+      [
+        "PPN",
+        "96,176.00"
+      ],
+      [
+        "PPNBM",
+        "0.00"
+      ],
+      [
+        "TOTAL NETTO",
+        "970,496.00"
+      ]
+    ],
+    "24": [
+      [
+        "PURCHASE",
+        "38,935,155.00"
+      ],
+      [
+        "PURCHASE DISCOUNT",
+        "1,168,056.00"
+      ],
+      [
+        "TOTAL PURCHASE",
+        "37,767,099.00"
+      ],
+      [
+        "DISTRIBUTION DISCOUNT",
+        "1,321,848.00"
+      ],
+      [
+        "NON-RETURNABLE DISCOUNT",
+        "0.00"
+      ],
+      [
+        "TOTAL NET PURCHASE",
+        "36,445,251.00"
+      ]
+    ],
+    "27": [
+      [
+        "PURCHASE",
+        "12,724,865.00"
+      ],
+      [
+        "PURCHASE DISCOUNT",
+        "381,747.00"
+      ],
+      [
+        "TOTAL PURCHASE",
+        "12,343,118.00"
+      ],
+      [
+        "DISTRIBUTION DISCOUNT",
+        "432,010.00"
+      ],
+      [
+        "NON-RETURNABLE DISCOUNT",
+        "0.00"
+      ],
+      [
+        "TOTAL NET PURCHASE",
+        "11,911,108.00"
+      ]
+    ],
+    "30": [
+      [
+        "PURCHASE",
+        "9,917,842.00"
+      ],
+      [
+        "PURCHASE DISCOUNT",
+        "297,535.00"
+      ],
+      [
+        "TOTAL PURCHASE",
+        "9,620,307.00"
+      ],
+      [
+        "DISTRIBUTION DISCOUNT",
+        "336,711.00"
+      ],
+      [
+        "NON-RETURNABLE DISCOUNT",
+        "0.00"
+      ],
+      [
+        "TOTAL NET PURCHASE",
+        "9,283,596.00"
+      ],
+      [
+        "DPP",
+        "8,509,963.00"
+      ],
+      [
+        "PPN",
+        "1,021,196.00"
+      ],
+      [
+        "PPNBM",
+        "0.00"
+      ],
+      [
+        "TOTAL NETTO",
+        "10,304,792.00"
+      ]
+    ]
+  },
+  "lines": {
+    "2": [
+      {
+        "code": "81244362",
+        "ean": "8852021647342",
+        "description": "PRODIET 85G OCEAN FISH",
+        "qty": "3 KTN",
+        "uom": "KTN",
+        "pack": 48,
+        "pack_unit": "PC",
+        "pcs": 144,
+        "prices": [
+          "5,630.63"
+        ],
+        "discounts": [
+          "5.00%"
+        ],
+        "line_total": "770,270.18"
+      },
+      {
+        "code": "81244362",
+        "ean": "8852021647342",
+        "description": "PRODIET 85G OCEAN FISH",
+        "qty": "1 KTN",
+        "uom": "KTN",
+        "pack": 48,
+        "pack_unit": "PC",
+        "pcs": 48,
+        "prices": [
+          "0"
+        ],
+        "discounts": [],
+        "line_total": "0",
+        "bonus": true
+      },
+      {
+        "code": "81244379",
+        "ean": "8852021647335",
+        "description": "PRODIET 85G TUNA",
+        "qty": "3 KTN",
+        "uom": "KTN",
+        "pack": 48,
+        "pack_unit": "PC",
+        "pcs": 144,
+        "prices": [
+          "5,630.63"
+        ],
+        "discounts": [
+          "5.00%"
+        ],
+        "line_total": "770,270.18"
+      },
+      {
+        "code": "81244379",
+        "ean": "8852021647335",
+        "description": "PRODIET 85G TUNA",
+        "qty": "1 KTN",
+        "uom": "KTN",
+        "pack": 48,
+        "pack_unit": "PC",
+        "pcs": 48,
+        "prices": [
+          "0"
+        ],
+        "discounts": [],
+        "line_total": "0",
+        "bonus": true
+      },
+      {
+        "code": "81244355",
+        "ean": "9555544200108",
+        "description": "PRODIET 85G KITTEN MACKEREL",
+        "qty": "3 KTN",
+        "uom": "KTN",
+        "pack": 48,
+        "pack_unit": "PC",
+        "pcs": 144,
+        "prices": [
+          "5,630.63"
+        ],
+        "discounts": [
+          "5.00%"
+        ],
+        "line_total": "770,270.18"
+      },
+      {
+        "code": "81244355",
+        "ean": "9555544200108",
+        "description": "PRODIET 85G KITTEN MACKEREL",
+        "qty": "1 KTN",
+        "uom": "KTN",
+        "pack": 48,
+        "pack_unit": "PC",
+        "pcs": 48,
+        "prices": [
+          "0"
+        ],
+        "discounts": [],
+        "line_total": "0",
+        "bonus": true
+      },
+      {
+        "code": null,
+        "ean": "8852021647359",
+        "description": "PRODIET 85G KITTEN TUNA",
+        "qty": "3 KTN",
+        "uom": "KTN",
+        "pack": 48,
+        "pack_unit": "PC",
+        "pcs": 144,
+        "prices": [
+          "5,630.63"
+        ],
+        "discounts": [
+          "5.00%"
+        ],
+        "line_total": "770,270.18"
+      },
+      {
+        "code": null,
+        "ean": "8852021647359",
+        "description": "PRODIET 85G KITTEN TUNA",
+        "qty": "1 KTN",
+        "uom": "KTN",
+        "pack": 48,
+        "pack_unit": "PC",
+        "pcs": 48,
+        "prices": [
+          "0"
+        ],
+        "discounts": [],
+        "line_total": "0",
+        "bonus": true
+      },
+      {
+        "code": "81244317",
+        "ean": "9555544200030",
+        "description": "PRODIET 1.1KG KITTEN OCEAN FISH_MILK",
+        "qty": "3 KTN",
+        "uom": "KTN",
+        "pack": 7,
+        "pack_unit": "PC",
+        "pcs": 21,
+        "prices": [
+          "62,162"
+        ],
+        "discounts": [
+          "5.00%"
+        ],
+        "line_total": "1,240,131.90"
+      },
+      {
+        "code": "81244317",
+        "ean": "9555544200030",
+        "description": "PRODIET 1.1KG KITTEN OCEAN FISI",
+        "qty": "1 KTN",
+        "uom": "KTN",
+        "pack": 7,
+        "pack_unit": "PC",
+        "pcs": 7,
+        "prices": [
+          "0"
+        ],
+        "discounts": [],
+        "line_total": "0",
+        "bonus": true
+      }
+    ],
+    "4": [
+      {
+        "no": "00010",
+        "code": "K6N302030561",
+        "ean": "8851932459747",
+        "description": "VASELINE B/WASH G/G LUMINOUS PUMP 425ML",
+        "qty": "4",
+        "uom": "EA",
+        "pcs": 4,
+        "prices": [
+          "63,361",
+          "57,082"
+        ],
+        "discounts": [],
+        "line_total": "253,444"
+      },
+      {
+        "no": "00020",
+        "code": "K6N302030562",
+        "ean": "8851932459754",
+        "description": "VASELINE B/WASH G/G SMOTH GLOW PUMP425ML",
+        "qty": "4",
+        "uom": "EA",
+        "pcs": 4,
+        "prices": [
+          "63,361",
+          "57,082"
+        ],
+        "discounts": [],
+        "line_total": "253,444"
+      },
+      {
+        "no": "00030",
+        "code": "K6N302030563",
+        "ean": "8851932459761",
+        "description": "VASELINE B/WASH G/G YOUTHFUL PUMP 425ML",
+        "qty": "4",
+        "uom": "EA",
+        "pcs": 4,
+        "prices": [
+          "63,361",
+          "57,082"
+        ],
+        "discounts": [],
+        "line_total": "253,445"
+      },
+      {
+        "no": "00040",
+        "code": "K6N304050047",
+        "ean": "8888086785903",
+        "description": "VASELINE G/G DEO ROL ON BRGHT RENEW 45ML",
+        "qty": "4",
+        "uom": "EA",
+        "pcs": 4,
+        "prices": [
+          "30,473",
+          "27,453"
+        ],
+        "discounts": [],
+        "line_total": "121,891"
+      },
+      {
+        "no": "00050",
+        "code": "K6N304050048",
+        "ean": "8888086785927",
+        "description": "VASELINE G/G DEO ROL ON BRGHT SMOTH 45ML",
+        "qty": "4",
+        "uom": "EA",
+        "pcs": 4,
+        "prices": [
+          "30,473",
+          "27,453"
+        ],
+        "discounts": [],
+        "line_total": "121,891"
+      },
+      {
+        "no": "00060",
+        "code": "K6N304050049",
+        "ean": "8888086785934",
+        "description": "VASELINE G/G DEO ROL ON ULTRA BRGHT 45ML",
+        "qty": "4",
+        "uom": "EA",
+        "pcs": 4,
+        "prices": [
+          "30,473",
+          "27,453"
+        ],
+        "discounts": [],
+        "line_total": "121,891"
+      }
+    ],
+    "5": [
+      {
+        "no": "0001",
+        "code": "K6N302030561",
+        "ean": "8851932459747",
+        "description": "VASELINE B/WASH G/G LUMINOUS PUMP 425ML",
+        "qty": "4",
+        "uom": "EA",
+        "pcs": 4,
+        "prices": [
+          "63,361"
+        ],
+        "discounts": [],
+        "line_total": "253,444"
+      },
+      {
+        "no": "0002",
+        "code": "K6N302030562",
+        "ean": "8851932459754",
+        "description": "VASELINE B/WASH G/G SMOTH GLOW PUMP425ML",
+        "qty": "4",
+        "uom": "EA",
+        "pcs": 4,
+        "prices": [
+          "63,361"
+        ],
+        "discounts": [],
+        "line_total": "253,444"
+      },
+      {
+        "no": "0003",
+        "code": "K6N302030563",
+        "ean": "8851932459761",
+        "description": "VASELINE B/WASH G/G YOUTHFUL PUMP 425ML",
+        "qty": "4",
+        "uom": "EA",
+        "pcs": 4,
+        "prices": [
+          "63,361"
+        ],
+        "discounts": [],
+        "line_total": "253,445"
+      },
+      {
+        "no": "0004",
+        "code": "K6N304050047",
+        "ean": "8888086785903",
+        "description": "VASELINE G/G DEO ROL ON BRGHT RENEW 45ML",
+        "qty": "4",
+        "uom": "EA",
+        "pcs": 4,
+        "prices": [
+          "30,473"
+        ],
+        "discounts": [],
+        "line_total": "121,891"
+      },
+      {
+        "no": "0005",
+        "code": "K6N304050048",
+        "ean": "8888086785927",
+        "description": "VASELINE G/G DEO ROL ON BRGHT SMOTH 45ML",
+        "qty": "4",
+        "uom": "EA",
+        "pcs": 4,
+        "prices": [
+          "30,473"
+        ],
+        "discounts": [],
+        "line_total": "121,891"
+      },
+      {
+        "no": "0006",
+        "code": "K6N304050049",
+        "ean": "8888086785934",
+        "description": "VASELINE G/G DEO ROL ON ULTRA BRGHT 45ML",
+        "qty": "4",
+        "uom": "EA",
+        "pcs": 4,
+        "prices": [
+          "30,473"
+        ],
+        "discounts": [],
+        "line_total": "121,891"
+      }
+    ],
+    "7": [
+      {
+        "code": "80368663",
+        "ean": "8992950341833",
+        "description": "SENNA KRUPUKKU 250G IKAN",
+        "qty": "1 KTN",
+        "uom": "KTN",
+        "pack": 40,
+        "pack_unit": "PC",
+        "pcs": 40,
+        "prices": [
+          "8,500"
+        ],
+        "discounts": [
+          "7.00%"
+        ],
+        "line_total": "316,200.00"
+      },
+      {
+        "code": "81060832",
+        "ean": "8992950342038",
+        "description": "SENNA KRUPUKKU 500G UDANG",
+        "qty": "3 KTN",
+        "uom": "KTN",
+        "pack": 24,
+        "pack_unit": "PC",
+        "pcs": 72,
+        "prices": [
+          "15,300"
+        ],
+        "discounts": [
+          "7.00%"
+        ],
+        "line_total": "1,024,488.00"
+      }
+    ],
+    "9": [
+      {
+        "code": "80219620",
+        "ean": "711844120150",
+        "description": "ABC SAMBAL AYAM GORENG 335 #",
+        "qty": "1 KTN",
+        "uom": "KTN",
+        "pack": 24,
+        "pack_unit": "PC",
+        "pcs": 24,
+        "prices": [
+          "15,217"
+        ],
+        "discounts": [
+          "7.00%"
+        ],
+        "line_total": "339,643.44"
+      },
+      {
+        "code": "07040412",
+        "ean": "711844120099",
+        "description": "ABC SAMBAL MANIS PEDAS 335 #",
+        "qty": "1 KTN",
+        "uom": "KTN",
+        "pack": 24,
+        "pack_unit": "PC",
+        "pcs": 24,
+        "prices": [
+          "15,217"
+        ],
+        "discounts": [
+          "7.00%"
+        ],
+        "line_total": "339,643.44"
+      }
+    ],
+    "11": [
+      {
+        "code": "3078035",
+        "ean": "8993417489938",
+        "description": "ELLIPS HAIR MASK NUTRI COLOR 20GR",
+        "qty": "2 CT",
+        "uom": "CT",
+        "pack": 72,
+        "pack_unit": "EA",
+        "pcs": 144,
+        "also": [
+          "144 EA"
+        ],
+        "prices": [
+          "518,919.00"
+        ],
+        "discounts": [
+          "3.00%",
+          "3.50%"
+        ],
+        "line_total": "1,037,838.00",
+        "line_net": "1,006,703.00"
+      }
+    ],
+    "12": [
+      {
+        "code": "3078035",
+        "ean": "8993417489938",
+        "description": "ELLIPS HAIR MASK NUTRI COLOR 20GR",
+        "qty": "144",
+        "uom": "EA",
+        "pack": 72,
+        "pack_unit": "EA",
+        "pcs": 144,
+        "ordered": "2",
+        "prices": [
+          "518,919.00"
+        ],
+        "line_total": "971,468.00"
+      }
+    ],
+    "14": [
+      {
+        "code": "3005226",
+        "ean": "8993417489921",
+        "description": "ELLIPS H/M SMOOTH&SHINY SCH 20G",
+        "qty": "1 CT",
+        "uom": "CT",
+        "pack": 72,
+        "pack_unit": "EA",
+        "pcs": 72,
+        "also": [
+          "72 EA"
+        ],
+        "prices": [
+          "518,919.00"
+        ],
+        "discounts": [
+          "3.00%",
+          "3.50%"
+        ],
+        "line_total": "518,919.00",
+        "line_net": "503,351.00",
+        "stamped": true
+      }
+    ],
+    "16": [
+      {
+        "code": "3005226",
+        "ean": "8993417489921",
+        "description": "ELLIPS H/M SMOOTH&SHINY SCH 20G",
+        "qty": "72",
+        "uom": "EA",
+        "pack": 72,
+        "pack_unit": "EA",
+        "pcs": 72,
+        "ordered": "1",
+        "prices": [
+          "518,919.00"
+        ],
+        "line_total": "485,734.00"
+      }
+    ],
+    "18": [
+      {
+        "code": "3015138",
+        "ean": "8995227501015",
+        "description": "KAKI TIGA ANAK STRWB CAN 238ML",
+        "qty": "52 CT",
+        "uom": "CT",
+        "pack": 24,
+        "pack_unit": "EA",
+        "pcs": 1248,
+        "also": [
+          "1,248 EA"
+        ],
+        "prices": [
+          "129,578.00"
+        ],
+        "discounts": [
+          "3.00%",
+          "3.50%"
+        ],
+        "line_total": "6,738,056.00",
+        "line_net": "6,535,914.00"
+      },
+      {
+        "code": "2950381",
+        "ean": "8995227500124",
+        "description": "KAKI TIGA LARUTAN PENYEGAR 200ML",
+        "qty": "11 CT",
+        "uom": "CT",
+        "pack": 48,
+        "pack_unit": "EA",
+        "pcs": 528,
+        "also": [
+          "528 EA"
+        ],
+        "prices": [
+          "163,777.00"
+        ],
+        "discounts": [
+          "3.00%",
+          "3.50%"
+        ],
+        "line_total": "1,801,547.00",
+        "line_net": "1,747,501.00"
+      },
+      {
+        "code": "2950327",
+        "ean": "8995227500247",
+        "description": "KAKI TIGA LARUTAN RS JAMBU BIJI CAN 320M",
+        "qty": "11 CT",
+        "uom": "CT",
+        "pack": 24,
+        "pack_unit": "EA",
+        "pcs": 264,
+        "also": [
+          "264 EA"
+        ],
+        "prices": [
+          "137,622.00"
+        ],
+        "discounts": [
+          "3.00%",
+          "3.50%"
+        ],
+        "line_total": "1,513,842.00",
+        "line_net": "1,468,427.00"
+      }
+    ],
+    "19": [
+      {
+        "code": "3015138",
+        "ean": "8995227501015",
+        "description": "KAKI TIGA ANAK STRWB CAN 238ML",
+        "qty": "1248",
+        "uom": "EA",
+        "pack": 24,
+        "pack_unit": "EA",
+        "pcs": 1248,
+        "ordered": "52",
+        "prices": [
+          "129,578.00"
+        ],
+        "line_total": "6,307,157.00"
+      },
+      {
+        "code": "2950381",
+        "ean": "8995227500124",
+        "description": "KAKI TIGA LARUTAN PENYEGAR 200ML",
+        "qty": "528",
+        "uom": "EA",
+        "pack": 48,
+        "pack_unit": "EA",
+        "pcs": 528,
+        "ordered": "11",
+        "prices": [
+          "163,777.00"
+        ],
+        "line_total": "1,686,338.00"
+      },
+      {
+        "code": "2950327",
+        "ean": "8995227500247",
+        "description": "KAKI TIGA LARUTAN RS JAMBU BIJI CAN 320M",
+        "qty": "264",
+        "uom": "EA",
+        "pack": 24,
+        "pack_unit": "EA",
+        "pcs": 264,
+        "ordered": "11",
+        "prices": [
+          "137,622.00"
+        ],
+        "line_total": "1,417,032.00"
+      }
+    ],
+    "21": [
+      {
+        "code": "2461042",
+        "ean": "8993417420429",
+        "description": "MASTER KIDS H/STYLING GEL SOFT SPRMAN60G",
+        "qty": "1 CT",
+        "uom": "CT",
+        "pack": 48,
+        "pack_unit": "EA",
+        "pcs": 48,
+        "also": [
+          "48 EA"
+        ],
+        "prices": [
+          "467,027.00"
+        ],
+        "discounts": [
+          "3.00%",
+          "3.50%"
+        ],
+        "line_total": "467,027.00",
+        "line_net": "453,016.00"
+      },
+      {
+        "code": "2461015",
+        "ean": "8993417312229",
+        "description": "MASTER KIDS SPRAY COLOGNE SUPERMAN 100ML",
+        "qty": "1 CT",
+        "uom": "CT",
+        "pack": 36,
+        "pack_unit": "EA",
+        "pcs": 36,
+        "also": [
+          "36 EA"
+        ],
+        "prices": [
+          "467,027.00"
+        ],
+        "discounts": [
+          "3.00%",
+          "3.50%"
+        ],
+        "line_total": "467,027.00",
+        "line_net": "453,016.00"
+      }
+    ],
+    "22": [
+      {
+        "code": "2461042",
+        "ean": "8993417420429",
+        "description": "MASTER KIDS H/STYLING GEL SOFT SPRMAN60G",
+        "qty": "48",
+        "uom": "EA",
+        "pack": 48,
+        "pack_unit": "EA",
+        "pcs": 48,
+        "ordered": "1",
+        "prices": [
+          "467,027.00"
+        ],
+        "line_total": "437,160.00"
+      },
+      {
+        "code": "2461015",
+        "ean": "8993417312229",
+        "description": "MASTER KIDS SPRAY COLOGNE SUPERMAN 100ML",
+        "qty": "36",
+        "uom": "EA",
+        "pack": 36,
+        "pack_unit": "EA",
+        "pcs": 36,
+        "ordered": "1",
+        "prices": [
+          "467,027.00"
+        ],
+        "line_total": "437,160.00"
+      }
+    ],
+    "24": [
+      {
+        "code": "3126220",
+        "ean": "8993417111143",
+        "description": "ESKULIN EDP TWILIGHT AMOUR 30ML",
+        "qty": "23 CT",
+        "uom": "CT",
+        "pack": 36,
+        "pack_unit": "EA",
+        "pcs": 828,
+        "also": [
+          "828 EA"
+        ],
+        "prices": [
+          "794,595.00"
+        ],
+        "discounts": [
+          "3.00%",
+          "3.50%"
+        ],
+        "line_total": "18,275,685.00",
+        "line_net": "17,727,414.00"
+      },
+      {
+        "code": "3126351",
+        "ean": "8993417111150",
+        "description": "ESKULIN EDP ENCHANTED PETALS 30ML",
+        "qty": "8 CT",
+        "uom": "CT",
+        "pack": 36,
+        "pack_unit": "EA",
+        "pcs": 288,
+        "also": [
+          "288 EA"
+        ],
+        "prices": [
+          "794,595.00"
+        ],
+        "discounts": [
+          "3.00%",
+          "3.50%"
+        ],
+        "line_total": "6,356,760.00",
+        "line_net": "6,166,057.00"
+      },
+      {
+        "code": "3129330",
+        "ean": "8993417111181",
+        "description": "ESKULIN EDP AURORA BLUSH 30ML",
+        "qty": "8 CT",
+        "uom": "CT",
+        "pack": 36,
+        "pack_unit": "EA",
+        "pcs": 288,
+        "also": [
+          "288 EA"
+        ],
+        "prices": [
+          "794,595.00"
+        ],
+        "discounts": [
+          "3.00%",
+          "3.50%"
+        ],
+        "line_total": "6,356,760.00",
+        "line_net": "6,166,057.00"
+      },
+      {
+        "code": "3129391",
+        "ean": "8993417111174",
+        "description": "ESKULIN EDP SUMMER RHAPSODY 30ML",
+        "qty": "10 CT",
+        "uom": "CT",
+        "pack": 36,
+        "pack_unit": "EA",
+        "pcs": 360,
+        "also": [
+          "360 EA"
+        ],
+        "prices": [
+          "794,595.00"
+        ],
+        "discounts": [
+          "3.00%",
+          "3.50%"
+        ],
+        "line_total": "7,945,950.00",
+        "line_net": "7,707,571.00"
+      }
+    ],
+    "25": [
+      {
+        "code": "3126220",
+        "ean": "8993417111143",
+        "description": "ESKULIN EDP TWILIGHT AMOUR 30ML",
+        "qty": "828",
+        "uom": "EA",
+        "pack": 36,
+        "pack_unit": "EA",
+        "pcs": 828,
+        "ordered": "23",
+        "prices": [
+          "794,595.00"
+        ],
+        "line_total": "17,106,955.00"
+      },
+      {
+        "code": "3126351",
+        "ean": "8993417111150",
+        "description": "ESKULIN EDP ENCHANTED PETALS 30ML",
+        "qty": "288",
+        "uom": "EA",
+        "pack": 36,
+        "pack_unit": "EA",
+        "pcs": 288,
+        "ordered": "8",
+        "prices": [
+          "794,595.00"
+        ],
+        "line_total": "5,950,245.00"
+      },
+      {
+        "code": "3129330",
+        "ean": "8993417111181",
+        "description": "ESKULIN EDP AURORA BLUSH 30ML",
+        "qty": "288",
+        "uom": "EA",
+        "pack": 36,
+        "pack_unit": "EA",
+        "pcs": 288,
+        "ordered": "8",
+        "prices": [
+          "794,595.00"
+        ],
+        "line_total": "5,950,245.00"
+      },
+      {
+        "code": "3129391",
+        "ean": "8993417111174",
+        "description": "ESKULIN EDP SUMMER RHAPSODY 30ML",
+        "qty": "360",
+        "uom": "EA",
+        "pack": 36,
+        "pack_unit": "EA",
+        "pcs": 360,
+        "ordered": "10",
+        "prices": [
+          "794,595.00"
+        ],
+        "line_total": "7,437,806.00"
+      }
+    ],
+    "27": [
+      {
+        "code": "3124262",
+        "ean": "8993417591426",
+        "description": "SASHA HAIR COLORANT CHOCOLATE BROWN 25G",
+        "qty": "4 CT",
+        "uom": "CT",
+        "pack": 72,
+        "pack_unit": "EA",
+        "pcs": 288,
+        "also": [
+          "288 EA"
+        ],
+        "prices": [
+          "784,865.00"
+        ],
+        "discounts": [
+          "3.00%",
+          "3.50%"
+        ],
+        "line_total": "3,139,460.00",
+        "line_net": "3,045,276.00"
+      },
+      {
+        "code": "3124263",
+        "ean": "8993417591457",
+        "description": "SASHA HAIR COLORANT COPPER G/BLONDE 25G",
+        "qty": "4 CT",
+        "uom": "CT",
+        "pack": 72,
+        "pack_unit": "EA",
+        "pcs": 288,
+        "also": [
+          "288 EA"
+        ],
+        "prices": [
+          "784,865.00"
+        ],
+        "discounts": [
+          "3.00%",
+          "3.50%"
+        ],
+        "line_total": "3,139,460.00",
+        "line_net": "3,045,276.00",
+        "stamped": true
+      },
+      {
+        "code": "3124180",
+        "ean": "8993417591419",
+        "description": "SASHA HAIR COLORANT NATURAL BLACK 25G",
+        "qty": "5 CT",
+        "uom": "CT",
+        "pack": 72,
+        "pack_unit": "EA",
+        "pcs": 360,
+        "also": [
+          "360 EA"
+        ],
+        "prices": [
+          "784,865.00"
+        ],
+        "discounts": [
+          "3.00%",
+          "3.50%"
+        ],
+        "line_total": "3,924,325.00",
+        "line_net": "3,806,595.00",
+        "stamped": true
+      },
+      {
+        "code": "3079011",
+        "ean": "8993417105517",
+        "description": "SASHA T/PASTE HERBAL ANTIBACTERIAL 150GR",
+        "qty": "5 CT",
+        "uom": "CT",
+        "pack": 36,
+        "pack_unit": "EA",
+        "pcs": 180,
+        "also": [
+          "180 EA"
+        ],
+        "prices": [
+          "504,324.00"
+        ],
+        "discounts": [
+          "3.00%",
+          "3.50%"
+        ],
+        "line_total": "2,521,620.00",
+        "line_net": "2,445,971.00"
+      }
+    ],
+    "28": [
+      {
+        "code": "3124262",
+        "ean": "8993417591426",
+        "description": "SASHA HAIR COLORANT CHOCOLATE BROWN 25G",
+        "qty": "288",
+        "uom": "EA",
+        "pack": 72,
+        "pack_unit": "EA",
+        "pcs": 288,
+        "ordered": "4",
+        "prices": [
+          "784,865.00"
+        ],
+        "line_total": "2,938,691.00"
+      },
+      {
+        "code": "3124263",
+        "ean": "8993417591457",
+        "description": "SASHA HAIR COLORANT COPPER G/BLONDE 25G",
+        "qty": "288",
+        "uom": "EA",
+        "pack": 72,
+        "pack_unit": "EA",
+        "pcs": 288,
+        "ordered": "4",
+        "prices": [
+          "784,865.00"
+        ],
+        "line_total": "2,938,691.00"
+      },
+      {
+        "code": "3124180",
+        "ean": "8993417591419",
+        "description": "SASHA HAIR COLORANT NATURAL BLACK 25G",
+        "qty": "360",
+        "uom": "EA",
+        "pack": 72,
+        "pack_unit": "EA",
+        "pcs": 360,
+        "ordered": "5",
+        "prices": [
+          "784,865.00"
+        ],
+        "line_total": "3,673,364.00"
+      },
+      {
+        "code": "3079011",
+        "ean": "8993417105517",
+        "description": "SASHA T/PASTE HERBAL ANTIBACTERIAL 150GR",
+        "qty": "180",
+        "uom": "EA",
+        "pack": 36,
+        "pack_unit": "EA",
+        "pcs": 180,
+        "ordered": "5",
+        "prices": [
+          "504,324.00"
+        ],
+        "line_total": "2,360,362.00"
+      }
+    ],
+    "30": [
+      {
+        "code": "1627312",
+        "ean": "8993417001376",
+        "description": "OVALE FACIAL LOTION WHITENING 200ML",
+        "qty": "11 CT",
+        "uom": "CT",
+        "pack": 36,
+        "pack_unit": "EA",
+        "pcs": 396,
+        "also": [
+          "396 EA"
+        ],
+        "prices": [
+          "901,622.00"
+        ],
+        "discounts": [
+          "3.00%",
+          "3.50%"
+        ],
+        "line_total": "9,917,842.00",
+        "line_net": "9,620,307.00"
+      }
+    ],
+    "31": [
+      {
+        "code": "1627312",
+        "ean": "8993417001376",
+        "description": "OVALE FACIAL LOTION WHITENING 200ML",
+        "qty": "396",
+        "uom": "EA",
+        "pack": 36,
+        "pack_unit": "EA",
+        "pcs": 396,
+        "ordered": "11",
+        "prices": [
+          "901,622.00"
+        ],
+        "line_total": "9,283,596.00"
+      }
+    ]
+  },
+  "fp_amounts_edge": {
+    "3": [
+      "dpp",
+      "ppn",
+      "total"
+    ],
+    "10": [
+      "dpp",
+      "ppn",
+      "total"
+    ],
+    "13": [
+      "dpp",
+      "ppn",
+      "total"
+    ],
+    "20": [
+      "dpp",
+      "ppn",
+      "total"
+    ],
+    "23": [
+      "dpp",
+      "ppn",
+      "total"
+    ],
+    "26": [
+      "dpp",
+      "ppn",
+      "total"
+    ],
+    "29": [
+      "dpp",
+      "ppn",
+      "total"
+    ]
+  },
+  "fp_amounts_faint": {
+    "8": [
+      "dpp",
+      "ppn",
+      "total"
+    ]
   }
 }

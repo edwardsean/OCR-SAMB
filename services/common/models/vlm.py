@@ -114,6 +114,14 @@ certainty, set unsure = true. Do not guess, and do not fill a value from other f
 Fields to look at again:
 """
 
+STORE = """
+Where do the goods on this page go? Give the store, branch or warehouse they are delivered to or received at, as
+printed: a Ship To / Deliver To / Delivery Address / Dikirim ke / Cabang / Store / Site / Lokasi / Gudang, or the
+receiving store's name in the header. Not SAMB (the supplier), and not the customer's head office when a store or
+branch is printed as well. If no store or branch is printed, give null. If you cannot read it with certainty, set
+unsure = true.
+"""
+
 
 def extract_all(png_bytes, schema):
     """vlm-first: read the page against the WHOLE combined field list (common/context.vlm_schema)."""
@@ -135,3 +143,13 @@ def second_look(png_bytes, asks, crops):
     for name, png in crops:
         parts += [{"text": f"Zoomed crop for {name}:"}, _image_part(png)]
     return _call(parts, schema, timeout=240)
+
+
+def store(png_bytes):
+    """S4, blind: the store the page's goods go to. The page only, never Satellite's store names. ({value,
+    source_text, unsure}, meta)."""
+    schema = {"type": "OBJECT", "properties": {"value": {"type": "STRING", "nullable": True},
+                                               "source_text": {"type": "STRING", "nullable": True},
+                                               "unsure": {"type": "BOOLEAN"}},
+              "required": ["value", "source_text", "unsure"]}
+    return _call([{"text": RULES + STORE}, _image_part(png_bytes)], schema, timeout=240)

@@ -137,8 +137,14 @@ def apply_change(content, change):
         name = change.get("field")
         if name not in new["fields"]:
             return content, [f"{name!r} is not on the combined list; propose it as a new field instead"]
+        if name in COMMON:
+            return content, [f"{name} is on every type already: adding it to one type tells Jev nothing"]
         entry = {"name": name, "how_often": change.get("how_often", "sometimes"), "note": change.get("note", "")}
-        t["fields"] = [f for f in t["fields"] if f["name"] != name] + [entry]
+        at = next((i for i, f in enumerate(t["fields"]) if f["name"] == name), None)
+        if at is None:
+            t["fields"].append(entry)
+        else:                                         # in place, so repeating an entry is seen as no change
+            t["fields"][at] = entry
     elif kind == "new_field":
         f = change.get("field") or {}
         name = f.get("name", "")
@@ -152,6 +158,8 @@ def apply_change(content, change):
                             "note": change.get("note", "")})
     else:
         return content, [f"unknown change {kind!r}"]
+    if new == content:
+        return content, ["this changes nothing: the context already says it"]
     problems = validate(new)
     for name, f in content["fields"].items():         # meanings and kinds of existing fields never change
         if new["fields"].get(name, {}).get("meaning") != f["meaning"] or new["fields"][name]["kind"] != f["kind"]:
@@ -235,7 +243,7 @@ def ensure(conn, jev_criteria, keywords, jev_types):
         version, content = active(conn)
     problems = validate(content)
     if problems:
-        raise RuntimeError(f"active context v{version} is invalid: {problems}")
+        raise RuntimeError(f"active context #{version} is invalid: {problems}")
     return version, content
 
 
@@ -250,10 +258,17 @@ def propose(conn, content, parent, created_by, note):
 
 
 def activate(conn, version, approved_by):
-    """A person approved it: it becomes the one active context; the old one is retired."""
-    r = conn.execute("SELECT status, content FROM staging.context_version WHERE version=%s", (version,)).fetchone()
+    """A person approved it: it becomes the one active context; the old one is retired. A proposal built on an older
+    context is refused: its content is that older context plus one change, so activating it would silently undo
+    whatever was approved since, and its replay was measured against the wrong context."""
+    r = conn.execute("SELECT status, parent, content FROM staging.context_version WHERE version=%s",
+                     (version,)).fetchone()
     if not r or r["status"] != "proposed":
-        raise ValueError(f"version {version} is not a proposal")
+        raise ValueError(f"context #{version} is not a proposal")
+    now = conn.execute("SELECT version FROM staging.context_version WHERE status='active'").fetchone()
+    if now and r["parent"] != now["version"]:
+        raise ValueError(f"context #{version} was built on #{r['parent']}, but #{now['version']} is active now. "
+                         "Reject it and ask the teacher again (python -m worker.lesson run).")
     problems = validate(r["content"])
     if problems:
         raise ValueError(problems)

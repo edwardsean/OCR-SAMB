@@ -1,0 +1,249 @@
+{% extends "base.html" %}
+{% block title %}Review {{ v.sor }}{% endblock %}
+{% block main %}
+  <style>
+    .rv-box { border: 1px solid var(--line, #ddd); border-radius: 10px; padding: 12px 14px; margin: 12px 0; }
+    .rv-box h2 { margin-top: 0; }
+    .rv-sugg { display: inline-flex; flex-wrap: wrap; gap: 6px; margin: 4px 0; }
+    .rv-sugg button { font-size: 12px; padding: 2px 8px; }
+    .rv-lines td { vertical-align: top; }
+    .rv-pick { display: flex; flex-direction: column; gap: 4px; }
+    .rv-pick button { text-align: left; font-size: 12px; }
+    .rv-pick .ai { outline: 2px dashed var(--warn, #c90); }
+    .rv-crop { max-width: 100%; border: 1px solid #ccc; margin: 4px 0; background: #fff; }
+    .rv-left li { margin: 2px 0; }
+    .rv-card { border-left: 4px solid var(--warn, #c90); padding: 6px 12px; margin: 12px 0; }
+    .rv-card.rv-wait, .rv-card.rv-label { border-left-color: var(--line, #bbb); }
+    .rv-card h3 { margin: 4px 0 6px; font-size: 15px; }
+    .rv-pair th { text-align: left; font-weight: normal; padding-right: 12px; }
+    .rv-accept button { font-size: 12px; margin: 2px; }
+    .rv-all > summary { cursor: pointer; margin: 18px 0 6px; }
+  </style>
+  <section class="head">
+    <p class="crumbs"><a href="/review?batch={{ batch }}">Review</a> / <span class="mono">{{ v.sor }}</span></p>
+    <h1><span class="mono">{{ v.sor }}</span> <span class="muted">{{ (v.so or {}).customer_name or '' }}</span></h1>
+    <p class="lede">Status: <strong>{{ v.bundle.status }}</strong>{% if v.bundle.reviewed_by %} · approved by
+      {{ v.bundle.reviewed_by }}{% endif %} · <a href="/bundles?batch={{ batch }}">its folder</a></p>
+  </section>
+
+  {% macro field_form(f, d) %}
+      <div class="rv-field">
+        <p><strong>{{ f.label }}</strong> ·
+          read <span class="mono">{{ f.value if f.value is not none else '—' }}</span> ·
+          <span class="muted">{{ f.why }}</span>
+          {% if not f.asked %}<span class="muted">(no look-again asked for it)</span>{% endif %}</p>
+        <img class="rv-crop" src="/crop/{{ batch }}/{{ d.page }}/{{ f.name }}" alt="" loading="lazy" onerror="this.style.display='none'">
+        <form method="post" action="/review/confirm" class="small">
+          <input type="hidden" name="batch" value="{{ batch }}"><input type="hidden" name="sor" value="{{ v.sor }}">
+          <input type="hidden" name="page" value="{{ d.page }}"><input type="hidden" name="field" value="{{ f.name }}">
+          <input type="hidden" name="shown" value="{{ f.value if f.value is not none else '' }}">
+          <span class="rv-sugg">{% for val, why in f.suggest %}<button type="button" data-fill="{{ val }}">{{ val }} · {{ why }}</button>{% endfor %}
+            {% if f.value is not none %}<button type="button" data-fill="{{ f.value }}">{{ f.value }} · as the AI read it</button>{% endif %}</span>
+          <label>as printed <input name="value" class="mono" size="18" required></label>
+          <input name="by" placeholder="your name" size="10" required> <button type="submit">Confirm</button>
+        </form>
+      </div>
+  {% endmacro %}
+
+  <section class="rv-box" id="left">
+    <h2>What is left {% if v.open_items %}<span class="muted">· {{ v.open_items|length }} item{{ 's' if v.open_items|length != 1 }}; nothing else needs you</span>{% endif %}</h2>
+    {% if v.can_approve %}
+      <p>Nothing: every check passed or was accepted, and every page is settled.</p>
+      <form method="post" action="/review/approve">
+        <input type="hidden" name="batch" value="{{ batch }}"><input type="hidden" name="sor" value="{{ v.sor }}">
+        <input name="by" placeholder="your name" size="14" required> <button type="submit">Approve this bundle</button>
+      </form>
+    {% elif not v.open_items and not v.calibration %}
+      <ul class="rv-left">{% for x in v.left %}<li>{{ x }}</li>{% endfor %}</ul>
+    {% endif %}
+
+    {% if v.calibration %}{% set cal = v.calibration %}
+    <div class="rv-card" id="calibration">
+      <h3>This customer's first look <span class="muted">{{ cal.name }} · asked once; afterwards its bundles only come
+        here for anomalies</span></h3>
+      {% for a in cal.asks %}
+        <p>{{ a.why }}</p>
+        <form method="post" action="/review/calibrate" class="small">
+          <input type="hidden" name="batch" value="{{ batch }}"><input type="hidden" name="sor" value="{{ v.sor }}">
+          <input type="hidden" name="chain" value="{{ cal.chain }}"><input type="hidden" name="name" value="{{ cal.name }}">
+          {% if a.what == 'allowance' %}
+            {% if cal.gaps %}
+            <table class="grid small"><thead><tr><th>Its bundle</th><th>Check</th><th>Apart from Satellite (Rp)</th></tr></thead>
+              <tbody>{% for g in cal.gaps[:6] %}<tr><td class="mono">{{ g.sor }}</td><td>{{ g.check }}</td>
+                <td class="mono">{{ '{:,.2f}'.format(g.gap) }}</td></tr>{% endfor %}</tbody></table>
+            {% endif %}
+            {% if cal.suggest is none %}<p class="muted">The largest gap (Rp {{ '{:,.2f}'.format(cal.worst) }}) is more than
+              rounding: settle that difference below first, then choose the rounding this customer uses.</p>{% endif %}
+            <span class="rv-sugg">{% for s in cal.steps %}<button type="button" data-fill="{{ s }}"
+              {% if s == cal.suggest %}class="ai"{% endif %}>Rp {{ s }}</button>{% endfor %}</span>
+            <label>its amounts may differ by up to Rp <input name="allowance" class="mono" size="6" required></label>
+            <input name="by" placeholder="your name" size="10" required> <button type="submit">Confirm for this customer</button>
+          {% else %}
+            <input name="by" placeholder="your name" size="10" required>
+            <button type="submit" name="receipt_shows" value="received" {% if a.suggest == 'received' %}class="ai"{% endif %}>
+              Its receipt prints what was received</button>
+            <button type="submit" name="receipt_shows" value="ordered">It prints the whole order</button>
+          {% endif %}
+        </form>
+      {% endfor %}
+    </div>
+    {% endif %}
+
+    {% for it in v.open_items %}
+    <div class="rv-card rv-{{ it.kind }}">
+      {% if it.kind == 'check' %}
+        <h3>{{ it.title }} <span class="muted">· {{ it.status }}</span></h3>
+        {% if it.pair %}
+        <table class="grid small rv-pair"><tbody>
+          {% for label, val in it.pair %}<tr><th>{{ label }}</th><td class="mono">{{ '{:,.2f}'.format(val) if val is not none else '—' }}</td></tr>{% endfor %}
+          {% if it.gap is not none %}<tr><th>Gap</th><td class="mono"><strong>{{ '{:,.2f}'.format(it.gap) }}</strong>
+            {% if it.allow is not none %}<span class="muted">(this customer's allowance: Rp {{ '%g' % it.allow }})</span>{% endif %}</td></tr>{% endif %}
+        </tbody></table>
+        {% endif %}
+        <p>{{ it.why }}</p>
+        {% if it.tolakan %}<p><strong>Tolakan (Satellite):</strong> {{ it.tolakan|join('; ') }}</p>{% endif %}
+        {% if it.rows %}
+        <details open><summary>Why: the PO's rows against SAMB's order lines</summary>
+          <table class="grid small"><thead><tr><th>PO row</th><th>Qty</th><th>Printed amount</th><th>SAMB's order line</th></tr></thead>
+            <tbody>{% for x in it.rows %}<tr class="{{ 'ok' if x.line else ('' if x.bonus else 'warn') }}">
+              <td>p{{ x.page }} · {{ x.i + 1 }} · {{ x.desc }}</td><td class="mono">{{ x.qty or '' }} {{ x.uom or '' }}</td>
+              <td class="mono">{{ '{:,.2f}'.format(x.amount) if x.amount is not none else '—' }}</td>
+              <td>{% if x.bonus %}<span class="muted">a free (bonus) row</span>{% elif x.line %}line {{ x.line.line_no }} · {{ x.line.description }}
+                  <span class="muted mono">{{ '%g' % x.line.qty_pcs|float }} pcs · {{ '{:,.2f}'.format(x.line.line_amount|float) }}</span>
+                  {% else %}<strong>none paired</strong>{% endif %}</td></tr>{% endfor %}
+            {% for s in it.missing_lines %}<tr class="warn"><td class="muted">no PO row</td><td></td><td></td>
+              <td>line {{ s.line_no }} · {{ s.description }} <span class="muted mono">{{ '%g' % s.qty_pcs|float }} pcs ·
+                {{ '{:,.2f}'.format(s.line_amount|float) }}</span></td></tr>{% endfor %}</tbody></table>
+          <p class="muted small">A PO row with no line and an SAMB line with no row are either one product not paired yet
+            (pair it under "All values") or a product only one side has: that is where a gap comes from.</p>
+        </details>
+        {% elif it.notes %}<details><summary>Why: the rows</summary><ul class="small">{% for x in it.notes %}<li>{{ x }}</li>{% endfor %}</ul></details>{% endif %}
+        {% if it.held_link %}<p>If it is in this batch, it is held on <a href="{{ it.held_link }}">/bundles</a>: confirm its key there and it joins.</p>{% endif %}
+        {% if it.accept %}
+        <form method="post" action="/review/accept" class="small rv-accept">
+          <input type="hidden" name="batch" value="{{ batch }}"><input type="hidden" name="sor" value="{{ v.sor }}">
+          <input type="hidden" name="check" value="{{ it.key }}"><input type="hidden" name="input_print" value="{{ it.print }}">
+          Accept it: {% for r in v.accept_reasons %}<button type="submit" name="reason" value="{{ r }}">{{ r }}</button> {% endfor %}
+          <input name="note" placeholder="note (optional)" size="14"> <input name="by" placeholder="your name" size="10" required>
+        </form>
+        {% else %}<p class="muted small">Nothing to do yet: it waits ({{ 'the AI looks again first' if it.status != 'waiting' else "for Satellite's record" }}).</p>{% endif %}
+        {% if it.fix %}
+        <details><summary>…or a value it used is misread: correct it</summary>
+          {% for f in it.fix %}{{ field_form(f, f) }}{% endfor %}
+        </details>
+        {% endif %}
+      {% elif it.kind == 'page' %}
+        <h3>{{ it.title }}</h3>
+        {% for f in it.fields %}{{ field_form(f, {'page': it.page}) }}{% endfor %}
+      {% elif it.kind == 'label' %}
+        <h3>{{ it.title }}</h3><p><a href="/label?batch={{ batch }}">Label screen</a></p>
+      {% else %}
+        <h3>{{ it.title }}</h3><p class="muted small">No input needed: <span class="mono">python -m worker.vf again {{ batch }}</span> runs it.</p>
+      {% endif %}
+    </div>
+    {% endfor %}
+  </section>
+
+  <details class="rv-all" id="all"><summary><strong>All values of this bundle</strong> <span class="muted">· never
+    required: every check, every value read, row confirmations and product pairing</span></summary>
+
+  <section class="rv-box" id="checks">
+    <h2>Checks <span class="muted">documents against each other and against Satellite</span></h2>
+    <table class="grid small">
+      <thead><tr><th>Check</th><th>Result</th><th>Why</th></tr></thead>
+      <tbody>
+      {% for k, c in v.checks.items() %}
+        <tr class="{{ 'ok' if c.status in ('pass', 'accepted') else ('bad' if c.status == 'fail' else ('warn' if c.status == 'unknown' else '')) }}">
+          <td>{{ v.labels[k] }}</td><td>{{ c.status }}</td>
+          <td>{{ c.why }}{% if c.tolakan %}<div><strong>Tolakan:</strong> {{ c.tolakan|join('; ') }}</div>{% endif %}</td>
+        </tr>
+      {% endfor %}
+      </tbody>
+    </table>
+  </section>
+
+
+  {% for d in v.documents %}
+  <section class="rv-box" id="p{{ d.page }}">
+    <h2>Page {{ d.page }}{% if d.pages|length > 1 %}–{{ d.pages[-1] }}{% endif %} · {{ d.kind }}
+      <span class="muted">outcome {{ d.outcome }}</span>
+      <a class="small" href="/batches/{{ batch }}/pages/{{ d.page }}">the page</a></h2>
+
+    {% for f in d.head %}{{ field_form(f, d) }}{% endfor %}
+    {% if d.kept %}
+      <details class="rv-kept"><summary class="muted">Kept as read, not verified ({{ d.kept|length }}): no check
+        uses {{ 'it' if d.kept|length == 1 else 'them' }}, so {{ 'it never holds' if d.kept|length == 1 else 'they never hold' }}
+        this bundle · {{ d.kept|map(attribute='label')|join(', ') }}</summary>
+        {% for f in d.kept %}{{ field_form(f, d) }}{% endfor %}
+      </details>
+    {% endif %}
+
+    {% if d.rows %}
+    <table class="grid small rv-lines">
+      <thead><tr><th>Row</th><th>As read</th><th>To confirm</th><th>SAMB's line</th></tr></thead>
+      <tbody>
+      {% for r in d.rows %}
+        <tr class="{{ '' if r.bonus else ('ok' if r.match.status == 'matched' and not r.todo else 'warn') }}">
+          <td class="mono">{{ r.i + 1 }}<br><span class="muted">{{ r.key }}</span></td>
+          <td>{{ r.row.product_description or r.row.material_description or r.row.nama_produk or '' }}
+            <div class="mono">{% if d.type == 'FP' %}{{ r.row.qty_crt }} / {{ r.row.qty_pcs }}{% else %}{{ r.row.qty }} {{ r.row.uom or '' }}{% if r.row.unit_price %} · {{ r.row.unit_price }}{% endif %}{% if r.row.discount %} · {{ r.row.discount }}{% endif %}{% endif %}</div>
+            <div class="muted mono small">{{ r.row.row_text or '' }}</div></td>
+          <td>{% if r.bonus %}<span class="muted">a free (bonus) row</span>
+            {% elif not r.todo %}<span class="muted">nothing</span>
+            {% else %}{% for x in r.todo %}
+              <form method="post" action="/review/confirm" class="small">
+                <input type="hidden" name="batch" value="{{ batch }}"><input type="hidden" name="sor" value="{{ v.sor }}">
+                <input type="hidden" name="page" value="{{ d.page }}"><input type="hidden" name="field" value="lines[{{ r.key }}].{{ x.col }}">
+                <input type="hidden" name="row_key" value="{{ r.key }}"><input type="hidden" name="shown" value="{{ x.read or '' }}">
+                <span class="rv-sugg">{% for val, why in x.hints %}<button type="button" data-fill="{{ val }}">{{ val }} · {{ why }}</button>{% endfor %}</span>
+                <label>{{ x.label }}, as printed <input name="value" class="mono" size="10" required></label>
+                <input name="by" placeholder="your name" size="8" required> <button type="submit">Confirm</button>
+              </form>
+            {% endfor %}{% endif %}</td>
+          <td>{% if r.bonus %}<span class="muted">none: not an SO line</span>
+            {% elif r.match.status == 'matched' %}
+              <span class="mono">line {{ r.line.line_no }} · {{ r.line.item_code }}</span> {{ r.line.description }}
+              <div class="muted">{{ r.match.how }}: {{ r.match.why }}</div>
+            {% elif d.type != 'FP' %}
+              {% if r.match.status == 'proposed' %}<div class="muted">the AI suggests line {{ r.ai }}: {{ r.match.why }}</div>{% endif %}
+              {% if r.match.status == 'refused' %}<div class="muted">a person said: no SO line</div>{% endif %}
+              <form method="post" action="/review/pair" class="rv-pick">
+                <input type="hidden" name="batch" value="{{ batch }}"><input type="hidden" name="sor" value="{{ v.sor }}">
+                <input type="hidden" name="page" value="{{ d.page }}"><input type="hidden" name="row" value="{{ r.i }}">
+                <input name="by" placeholder="your name" size="10" required>
+                {% for s in v.lines %}<button type="submit" name="line_no" value="{{ s.line_no }}"
+                    class="{{ 'ai' if r.ai == s.line_no else '' }}">line {{ s.line_no }} · {{ s.item_code }} · {{ s.description }}
+                    · {{ '%g' % s.qty_pcs|float }} pcs</button>{% endfor %}
+                <span>none of these, because: {% for r in v.none_reasons %}<button type="submit" name="line_no" value="none"
+                  onclick="this.form.note.value='{{ r }}'">{{ r }}</button> {% endfor %}</span>
+                <input type="hidden" name="note" value="">
+              </form>
+            {% else %}<span class="muted">not paired with an SO line</span>{% endif %}</td>
+        </tr>
+      {% endfor %}
+      </tbody>
+    </table>
+    {% endif %}
+    {% if not d.head and not d.rows and not d.kept %}<p class="muted">Nothing on this page to settle.</p>{% endif %}
+  </section>
+  {% endfor %}
+  </details>
+
+  <script>
+    (function () {
+      var key = 'rv-name', name = '';
+      try { name = localStorage.getItem(key) || ''; } catch (e) {}
+      document.querySelectorAll('input[name="by"]').forEach(function (i) { if (!i.value) i.value = name; });
+      document.addEventListener('submit', function (e) {
+        var by = e.target.querySelector('input[name="by"]');
+        if (by && by.value) { try { localStorage.setItem(key, by.value); } catch (err) {} }
+      });
+    })();
+    document.addEventListener('click', function (e) {
+      var b = e.target.closest('button[data-fill]');
+      if (!b) return;
+      var input = b.closest('form').querySelector('input[name="value"], input[name="allowance"]');
+      input.value = b.getAttribute('data-fill'); input.focus();
+    });
+  </script>
+{% endblock %}

@@ -2,6 +2,7 @@
 <section class="extract">
   <h2>vlm-first ·
     {% if p.outcome == 'clear' %}<span class="pill s-read">clear: ready for grouping</span>
+    {% elif p.outcome == 'waiting_ai' %}<span class="pill s-queued">waiting for the AI OCR {{ 'to read the page' if p.extract_status == 'failed' else 'to look again' }}</span>
     {% elif p.outcome == 'needs_person' %}<span class="pill s-queued">a person checks some values</span>
     {% elif p.outcome == 'held_unsure' %}<span class="pill s-failed">held: waiting for a label</span>
     {% else %}<span class="pill">not read yet</span>{% endif %}
@@ -37,7 +38,7 @@
   </div>
 
   {% if p.fields_all %}
-  <details><summary>Everything the AI OCR read ({{ vfp.filled }} of {{ vfp.fields|length }} fields filled)</summary>
+  <details{% if not p.doc_type %} open{% endif %}><summary>Everything the AI OCR read ({{ vfp.filled }} of {{ vfp.fields|length }} fields filled){% if not p.doc_type %}: the whole reading, since the page has no type yet{% endif %}</summary>
     <table class="grid small">
       <thead><tr><th>Combined field</th><th>Value</th><th>As printed</th><th>Where (0–1000)</th><th>Meaning</th></tr></thead>
       <tbody>
@@ -62,7 +63,10 @@
   {% endif %}
 
   {% if p.second_look %}
-  <details open><summary>Look again (Gemini, blind: told which fields, never what Tesseract read)</summary>
+  <details open><summary>Look again (the same AI OCR, blind: told which fields, never what Tesseract read)</summary>
+    {% if p.second_look.waiting %}<p><strong>Not run yet:</strong> {{ p.second_look.waiting }}. The values Tesseract
+      didn't back wait for it (<span class="mono">python -m worker.vf again</span>); a person gets them only if print
+      still doesn't back the AI OCR's second answer.</p>{% endif %}
     {% if p.second_look.error %}<p class="muted">{{ p.second_look.error }}</p>{% endif %}
     <table class="grid small"><thead><tr><th>Field</th><th>First reading</th><th>Second reading</th><th>Result</th></tr></thead>
     <tbody>{% for name, r in (p.second_look.results or {}).items() %}
@@ -71,6 +75,14 @@
         <td class="mono">{{ (r.second or {}).get('source_text') or ('unsure' if (r.second or {}).get('unsure') else '—') }}</td>
         <td>{{ '✅ ' if r.kept_second else '⚠ ' }}{{ r.why }}</td></tr>
     {% endfor %}</tbody></table>
+  </details>
+  {% endif %}
+
+  {% if p.ship_to %}
+  <details open><summary>The store question (S4: the same AI OCR, blind: the page only, never Satellite's store names)</summary>
+    <p>Asked because a key only the AI OCR read matches one SO while SOs one character away ship to other stores.
+      The answer: <span class="mono">{{ p.ship_to.source_text or p.ship_to.value or '—' }}</span>{% if p.ship_to.unsure %} (unsure){% endif %}
+      <span class="muted">· {{ p.ship_to.model }} · {{ p.ship_to.at }}</span>. Whether it decided the key is in the key's reason above.</p>
   </details>
   {% endif %}
 

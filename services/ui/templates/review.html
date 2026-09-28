@@ -1,0 +1,33 @@
+{% extends "base.html" %}
+{% block title %}Review{% endblock %}
+{% block main %}
+  <section class="head">
+    <h1>Review <span class="muted">{{ batch or '' }}</span></h1>
+    <p class="lede">Each bundle's documents are checked against each other and against Satellite (Problem Statement
+      §6.3). Here a person settles what the machine couldn't: confirms a value as printed, says which SO line a
+      customer's row is (once: the product map then knows it), accepts a difference with its reason, and approves the
+      bundle when nothing is left.</p>
+  </section>
+  <table class="grid">
+    <thead><tr><th>SOR</th><th>Customer</th><th>Status</th><th>Checks</th><th>What is left</th></tr></thead>
+    <tbody>
+    {% for r in rows %}
+      <tr class="{{ 'ok' if r.status in ('auto_ok', 'reviewed') else 'warn' }}">
+        <td class="mono"><a href="/review/{{ r.sor_no }}?batch={{ batch }}">{{ r.sor_no }}</a></td>
+        <td>{{ r.customer_name or '' }}</td>
+        <td>{{ r.status }}{% if r.reviewed_by %} <span class="muted">by {{ r.reviewed_by }}</span>{% endif %}
+          {% if r.hold_reason %}<span class="muted">({{ r.hold_reason }})</span>{% endif %}</td>
+        <td class="mono">✓{{ r.counts.pass }}{% if r.counts.accepted %} ☑{{ r.counts.accepted }}{% endif %}
+          ✗{{ r.counts.fail }} ?{{ r.counts.unknown }}</td>
+        <td class="small">{% for x in r.reasons[:3] %}<div>{{ x[:160] }}{{ '…' if x|length > 160 }}</div>{% endfor %}
+          {% if r.reasons|length > 3 %}<div class="muted">+{{ r.reasons|length - 3 }} more</div>{% endif %}</td>
+      </tr>
+    {% else %}
+      <tr><td colspan="5" class="muted">No bundles in this batch yet.</td></tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  <p class="note">✓ passed · ☑ accepted by a person · ✗ failed · ? can't be decided yet. A quantity read from a table row
+    is never taken on its own (the row doesn't show which column it came from), so quantities wait for a person here
+    until the columns can be told apart.</p>
+{% endblock %}

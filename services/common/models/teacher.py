@@ -20,21 +20,36 @@ URL = "https://api.z.ai/api/paas/v4/chat/completions"
 MODEL = os.environ.get("TEACHER_MODEL", "glm-4.6v-flash")
 
 
-def _post(messages):
+def _post(messages, model=None):
+    """model: another Z.ai model for a text-only task (the product matching, grouper/matching.py)."""
     key = os.environ.get("ZAI_API_KEY")
     if not key:
         raise RuntimeError("no ZAI_API_KEY: add a free Z.ai key to .env to run the teacher")
+    model = model or MODEL
     t0 = time.time()
     for attempt in range(5):
         r = httpx.post(URL, headers={"Authorization": f"Bearer {key}"},
-                       json={"model": MODEL, "messages": messages, "temperature": 0.2}, timeout=240)
+                       json={"model": model, "messages": messages, "temperature": 0.2}, timeout=240)
         if r.status_code == 429 or r.status_code >= 500:
             time.sleep(min(60, 5 * 2 ** attempt)); continue
         r.raise_for_status()
         j = r.json()
-        return j["choices"][0]["message"]["content"], {"model": j.get("model", MODEL),
+        return j["choices"][0]["message"]["content"], {"model": j.get("model", model),
                                                        "ms": int((time.time() - t0) * 1000), **(j.get("usage") or {})}
     raise RuntimeError(f"Z.ai unavailable (HTTP {r.status_code}) after retries")
+
+
+def ask_text(prompt, model):
+    """(parsed JSON answer, meta) from a text model."""
+    messages = [{"role": "user", "content": prompt}]
+    text, meta = _post(messages, model)
+    try:
+        return parse(text), meta
+    except ValueError:
+        messages += [{"role": "assistant", "content": text},
+                     {"role": "user", "content": "Answer again with ONLY the JSON object, nothing else."}]
+        text, meta = _post(messages, model)
+        return parse(text), meta
 
 
 def parse(text):

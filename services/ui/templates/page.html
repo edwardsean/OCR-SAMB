@@ -70,11 +70,12 @@
   {% if p.extract_status %}
   <section class="extract">
     <h2>Phase 4 · AI OCR
-      {% if p.extract_status == 'done' %}<span class="pill s-queued">read as {{ p.doc_type }}</span>
+      {% if p.extract_status == 'done' %}<span class="pill s-queued">{% if p.doc_type %}read as {{ p.doc_type }}{% elif vfp %}read every field on the combined list · type not decided yet{% else %}read{% endif %}</span>
       {% elif p.extract_status == 'failed' %}<span class="pill s-failed">failed</span> <span class="mono muted">{{ p.extract_error }}</span>
       {% else %}<span class="pill">skipped</span> <span class="muted">{{ 'still unsure after the second try — held for a person' if p.type_status == 'unsure' else 'no field list for this type' }}</span>{% endif %}
-      {% for k, m in (p.vlm_meta or {}).items() %}<span class="muted mono"> · {{ k }}: {{ m.model }}{% if m.fell_back_from %} (fallback from {{ m.fell_back_from|join(', ') }}){% endif %}, {% if m.ms %}{{ (m.ms / 1000)|round(1) }} s, {% endif %}{{ m.tokens_thinking or 0 }} thinking tokens</span>{% endfor %}
+      {% for k, m in (p.vlm_meta or {}).items() %}<span class="muted mono"> · {{ k }}: {{ m.model }}{% if m.fell_back_from %} (fallback from {{ m.fell_back_from|join(', ') }}){% endif %}, {% if m.ms %}{{ (m.ms / 1000)|round(1) }} s, {% endif %}{% if m.tokens_thinking is not none %}{{ m.tokens_thinking }} thinking tokens{% elif m.tokens_in %}{{ m.tokens_in }} tokens in, {{ m.tokens_out }} out{% endif %}</span>{% endfor %}
     </h2>
+    {% if vfp and p.extract_status == 'done' and not p.doc_type %}<p class="note" style="margin-top:0">The AI OCR read this page, but its type isn't decided yet, so there are no per-type fields here. The whole reading is in the vlm-first section below.</p>{% endif %}
     {% set sec = (p.type_votes or {}).get('second_try') %}
     {% if sec %}<p class="note" style="margin-top:0">Second classification try (Jev on the AI OCR's reading): <strong>{{ p.doc_type or ('unsure, guess ' ~ (p.type_guess or '—')) }}</strong> — {{ sec.reason }} · Jev {{ sec.jev.choice }} {{ sec.jev.confidence }}</p>{% endif %}
     {% if p['keys'] %}
@@ -89,8 +90,8 @@
       {% set hc = (pc or {}).get('header', {}) %}
       {% for k, f in p.fields.items() if k != 'lines' %}
         {% set c = hc.get(k) %}
-        <tr class="{{ {'ok': 'ok', 'check': 'warn'}.get(c.verdict, '') if c else '' }}"><td class="mono">{{ k }}</td><td class="mono">{{ f.value if f and f.value is not none else '—' }}</td><td class="mono muted">{{ f.source_text if f and f.source_text else '' }}</td>
-          <td>{% if not c %}<span class="muted">not checked yet</span>{% elif c.verdict == 'ok' %}✅ {{ {'text': "printed in Tesseract's text", 'qr': 'equals the QR code', 'adds_up': 'DPP + PPN = Total', 'zoom': "Tesseract read its spot zoomed in", 'second_look': 'second look, backed by print'}.get(c.by, c.by) }}{% elif c.verdict == 'check' %}⚠ a person checks it — {{ c.why }}{% else %}<span class="muted">nothing read</span>{% endif %}</td></tr>
+        <tr class="{{ {'ok': 'ok', 'check': 'warn'}.get(c.verdict, '') if c else '' }}"><td class="mono">{{ k }}</td><td class="mono">{{ f.value if f and f.value is not none else '—' }}{% if f and f.ai_value is defined and f.ai_value != f.value %} <span class="muted small">(read {{ f.ai_value if f.ai_value is not none else 'nothing' }})</span>{% endif %}</td><td class="mono muted">{{ f.source_text if f and f.source_text else '' }}</td>
+          <td>{% if not c %}<span class="muted">not checked yet</span>{% elif c.verdict == 'ok' %}✅ {{ {'text': "printed in Tesseract's text", 'qr': 'equals the QR code', 'adds_up': 'DPP + PPN = Total', 'zoom': "Tesseract read its spot zoomed in", 'second_look': 'second look, backed by print', 'satellite': "Satellite's SO record", 'person': 'a person'}.get(c.by, c.by) }}{% if c.by in ('satellite', 'person') and c.why %} <span class="muted small">({{ c.why }})</span>{% endif %}{% elif c.verdict == 'check' and (p.second_look or {}).get('waiting') %}⚠ not backed yet, waiting for the AI OCR to look again — {{ c.why }}{% elif c.verdict == 'check' %}⚠ a person checks it — {{ c.why }}{% else %}<span class="muted">nothing read</span>{% endif %}</td></tr>
       {% endfor %}
       </tbody>
     </table>

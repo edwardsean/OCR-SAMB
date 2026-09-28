@@ -1,0 +1,11 @@
+<section class="checks {{ 'pass' if p6.all_ok else 'fail' }}">
+  <h2>Phase 6 acceptance · grouping: pages → documents → one bundle (and one folder) per SOR</h2>
+  <ul>
+  {% for label, ok, detail in p6.checks %}
+    <li class="{{ 'ok' if ok else 'bad' }}"><span class="dot"></span>{{ label }} <em>{{ detail }}</em></li>
+  {% endfor %}
+  </ul>
+  <p class="note">{{ p6.complete }} bundles complete · {{ p6.held_bundles }} waiting for their FP · {{ p6.held }} documents
+    held for a key · {{ p6.unplaced }} pages not grouped yet (not read, or waiting for a label) ·
+    <a href="/bundles?batch={{ batch_id }}">Bundles</a></p>
+</section>

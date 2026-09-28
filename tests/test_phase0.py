@@ -9,13 +9,13 @@ VF = os.environ.get("PIPELINE") == "vlm-first"
 def test_all_services_healthy():
     s = httpx.get(f"{UI}/api/status", timeout=30).json()
     down = {r["name"]: r["detail"] for r in s["services"] if not r["ok"]}
-    assert len(s["services"]) == (5 if VF else 9)
+    assert len(s["services"]) == (6 if VF else 9)          # vf: 3 shared servers + vf-worker, vf-teacher, vf-ui
     assert not down, down
 
 
 def test_schema_loaded():
     s = httpx.get(f"{UI}/api/status", timeout=30).json()
-    assert len(s["tables"]) == (23 if VF else 20), s["tables"]
+    assert len(s["tables"]) == (27 if VF else 20), s["tables"]
     for t in ("satellite.sor", "satellite.sor_document", "satellite.doc_ttg",
               "staging.scan_batch", "staging.page", "staging.bundle"):
         assert t in s["tables"]

@@ -16,4 +16,9 @@ __pycache__/
 # real customer documents and results: never committed
 *.pdf
 *.xlsx
+*.csv
 /Screenshot*.png
+
+.claude
+
+CLAUDE.md

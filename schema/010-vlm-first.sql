@@ -58,5 +58,11 @@ ALTER TABLE staging.page
   ADD COLUMN IF NOT EXISTS zoom            jsonb,     -- Tesseract re-reading each checked value's spot, zoomed in
   ADD COLUMN IF NOT EXISTS second_look     jsonb,     -- the AI OCR's blind second look at fields Tesseract didn't back
   ADD COLUMN IF NOT EXISTS prep_version    integer,   -- image preparation (upright, straighten, QR) done by vlm-first
-  ADD COLUMN IF NOT EXISTS outcome         text CHECK (outcome IN ('clear', 'needs_person', 'held_unsure'));
+  ADD COLUMN IF NOT EXISTS outcome         text;
+-- clear: every §6.1 value backed by print · waiting_ai: the AI OCR still has to read the page or look again (skipped,
+-- out of budget, or the call failed: `python -m worker.vf again`) · needs_person: still not backed after the look-again
+-- · held_unsure: waiting for a label. A value never goes to a person before the AI OCR has looked again.
+ALTER TABLE staging.page DROP CONSTRAINT IF EXISTS page_outcome_check;
+ALTER TABLE staging.page ADD CONSTRAINT page_outcome_check
+  CHECK (outcome IN ('clear', 'waiting_ai', 'needs_person', 'held_unsure'));
 COMMENT ON COLUMN staging.page.fields IS 'vlm-first: fields_all projected onto the page''s type (per-type names, as v1), so the phase-5 check and table mapping are unchanged.';

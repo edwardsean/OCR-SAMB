@@ -10,12 +10,15 @@
   {% if not d or not d.rows %}<p class="muted">No pages read by both yet.</p>{% else %}
   <section>
     <table class="grid">
-      <thead><tr><th></th><th>Types right</th><th>Unsure</th><th>Types WRONG</th><th>Main values ✅</th><th>Main values for a person</th></tr></thead>
+      <thead><tr><th></th><th>Types right</th><th>Unsure</th><th>Types WRONG</th><th>Main values ✅</th><th>Main values for a person</th><th>Waiting for the look-again</th></tr></thead>
       <tbody>{% for side, name in (('v1', 'v1'), ('vf', 'vlm-first')) %}{% set s = d.sums[side] %}
-        <tr><td><strong>{{ name }}</strong></td><td>{{ s.right }}</td><td>{{ s.unsure }}</td>
-          <td class="{{ 'bad' if s.wrong else '' }}">{{ s.wrong }}</td><td>{{ s.ok }}</td><td>{{ s.check }}</td></tr>
+        <tr><td><strong>{{ name }}</strong></td><td>{{ s.right }}</td><td>{{ s.unsure }}{% if s['not read'] %} <span class="muted">(+ {{ s['not read'] }} not read yet)</span>{% endif %}</td>
+          <td class="{{ 'bad' if s.wrong else '' }}">{{ s.wrong }}</td><td>{{ s.ok }}</td><td>{{ s.check }}</td>
+          <td>{% if side == 'v1' %}<span class="muted">no look-again in v1</span>{% else %}{{ s.waiting }}{% endif %}</td></tr>
       {% endfor %}</tbody>
     </table>
+    {% if d.sums.vf.waiting %}<p class="note">vlm-first sends an unbacked value to a person only after the AI OCR has
+      looked again. {{ d.sums.vf.waiting }} values are still waiting for that (<span class="mono">python -m worker.vf again</span>).</p>{% endif %}
     <p class="note">vlm-first's AI OCR readings came from: {% for m, n in d.read_by.items() %}<strong>{{ m }}</strong> × {{ n }} · {% endfor %}
       {% if 'v1 reading (dry run)' in d.read_by %}<br>A <strong>dry run</strong> uses v1's stored readings (no document title) instead of Gemini: it tests the machinery, not the design.{% endif %}</p>
     <p class="note">vlm-first model calls: {% for c in d.vf_calls %}{{ c.provider }} {{ c.n }} · {% endfor %}{% if not d.vf_calls %}none{% endif %}
@@ -27,10 +30,10 @@
       <tbody>{% for r in d.rows %}
         <tr><td><a href="/batches/{{ batch }}/pages/{{ r.page }}">{{ r.page }}</a></td><td>{{ r.key }}</td>
           {% for side in ('v1', 'vf') %}{% set x = r[side] %}
-          <td class="{{ 'bad' if x.verdict == 'wrong' else ('warn' if x.verdict == 'unsure' else '') }}">{{ x.type or 'unsure' }}</td>
+          <td class="{{ 'bad' if x.verdict == 'wrong' else ('warn' if x.verdict == 'unsure' else '') }}">{{ x.type or ('not read yet' if x.verdict == 'not read' else 'unsure') }}</td>
           {% endfor %}
           {% for side in ('v1', 'vf') %}{% set x = r[side] %}
-          <td>{% if x.read %}{{ x.ok }} / {{ x.check }}{% else %}<span class="muted">not read</span>{% endif %}</td>
+          <td>{% if x.read %}{{ x.ok }} / {{ x.check }}{% if x.waiting %} <span class="muted">/ {{ x.waiting }} waiting</span>{% endif %}{% else %}<span class="muted">not read</span>{% endif %}</td>
           {% endfor %}</tr>
       {% endfor %}</tbody>
     </table>

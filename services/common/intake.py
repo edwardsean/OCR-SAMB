@@ -3,6 +3,8 @@
 n8n calls these two steps in order (see n8n/intake.workflow.json):
   split(batch)   render every page, store images, write scan_batch + page rows
   enqueue(batch) publish one ticket per page to q.pages
+The vlm-first experiment calls them itself from its upload (n8n belongs to v1): its database, its RabbitMQ vhost, and
+its files under STORAGE_PREFIX (vf/), so it never writes v1's.
 """
 import io
 import json
@@ -20,6 +22,7 @@ from . import db, queue, storage
 RENDER_DPI = 300        # the scans are 300 dpi bilevel; this keeps every pixel
 RENDER_WORKERS = 6
 THUMB_WIDTH = 220
+PREFIX = os.environ.get("STORAGE_PREFIX", "")        # "" for v1; "vf/" for the vlm-first experiment
 
 
 def batch_id_for(sha256: str) -> str:
@@ -28,7 +31,7 @@ def batch_id_for(sha256: str) -> str:
 
 def page_key(batch_id, page_no, kind):
     ext = "jpg" if kind == "thumb" else "png"
-    return f"pages/{batch_id}/{kind}/p{page_no:03d}.{ext}"
+    return f"{PREFIX}pages/{batch_id}/{kind}/p{page_no:03d}.{ext}"
 
 
 def _render_one(pdf_path, batch_id, page_no, tmpdir):

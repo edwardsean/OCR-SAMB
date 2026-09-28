@@ -12,6 +12,7 @@ Dokumen Pelunasan: a later stage -> no field list yet.
 
 source:  "6.1"      listed in §6.1 (the fields to store)
          "linking"  not in §6.1; read so documents can be tied to their SOR (§6.2) and shown separately
+         "check"    not stored in Satellite: read so the bundle's checks can compare it (a receipt's own total)
 kind:    id | text | amount | qty | date   (drives normalisation, SQL type and verification)
 """
 
@@ -52,6 +53,8 @@ DOCS = {
             F("vendor_number", "id", "6.1", "Vendor Number", "SAMB's supplier / vendor number at this customer"),
             F("no_ref", "id", "linking", "No Ref", "No Ref / No Reference, ONLY if it is an SOR number (some customers print SAMB's SOR here)"),
             F("customer_name", "text", "linking", "Customer", "the customer that issued this receipt"),
+            F("total", "amount", "check", "Receipt total", "the receipt's printed total, with or without tax, if it prints one"),
+            F("dpp", "amount", "check", "Receipt total before tax", "the receipt's total before tax, if it prints one"),
         ],
         "lines": [
             F("item_code", "id", "6.1", "Item code", "customer item code / SKU / PLU"),
@@ -101,6 +104,28 @@ DOCS = {
 NOT_YET = {"SJ": "Surat Jalan: §6.1 'belum diobservasi' — no field list until a filled example arrives",
            "PEL": "Dokumen Pelunasan: later stage"}
 
+# Which values decide something (verification redesign, the user 2026-09-26). Every other value is still read and
+# stored, "kept as read": it never blocks a page or a bundle and is never asked again (a TTG's number, vendor codes,
+# customer names, every row cell of a PO or TTG, the FP's pack size).
+#   keys     a page links through one of them (grouping)
+#   page     settled on the page: the FP's amounts, from Satellite's SO as ordered (7b)
+#   support  settled by Satellite once the key is; blocks only when print contradicts Satellite (a person decides)
+#   bundle   judged by the bundle's checks against Satellite: the order side (PO ↔ SO as ordered) and the delivery
+#            side (TTG ↔ the CGR, what was received), never the page
+# Kept apart from CANON on purpose: a reading's version (context.fields_version) hashes the AI's field list, and a
+# change there would re-read every page.
+DECIDES = {
+    "FP": {"keys": ("sor",), "page": ("dpp", "ppn", "total"), "support": ("nomor_cpo", "customer_code"), "bundle": ()},
+    "PO": {"keys": ("purchase_order_no",), "page": (), "support": (), "bundle": ("total", "ppn")},
+    "TTG": {"keys": ("no_ref", "purchase_order_no"), "page": (), "support": (), "bundle": ("posting_date", "total", "dpp")},
+}
+
+
+def decides(doc_type, *levels):
+    """The type's decision values (its names), at the levels asked for (keys, page, support, bundle), else all."""
+    d = DECIDES.get(doc_type) or {}
+    return {f for level in (levels or ("keys", "page", "support", "bundle")) for f in d.get(level, ())}
+
 
 def column(f):
     return "sor_no" if f["name"] == "sor" else f["name"]
@@ -122,13 +147,15 @@ def ddl():
         cols = ["  id           bigserial PRIMARY KEY",
                 f"  sor_no       text {'NOT NULL ' if t['sor_required'] else ''}{'UNIQUE ' if t.get('one_per_sor') else ''}REFERENCES satellite.sor (sor_no)"]
         for f in t["header"]:
-            if f["name"] == "sor":
+            if f["name"] == "sor" or f["source"] == "check":
                 continue
             cols.append(f"  {column(f):<20} {SQL[f['kind']]}")
         cols += ["  page_ref     integer[]", "  linked_by    link_key", "  confidence   numeric(4,3)",
                  "  source_batch text", "  source_pages integer[]"]
         out.append(f"\nCREATE TABLE satellite.{t['table']} (  -- {code}: {t['name']}\n" + ",\n".join(cols) + "\n);")
         for f in t["header"]:
+            if f["source"] == "check":
+                continue
             out.append(f"COMMENT ON COLUMN satellite.{t['table']}.{column(f)} IS '{'§6.1' if f['source'] == '6.1' else 'linking (not in §6.1)'}: {f['label']}';")
         if t["lines"]:
             lcols = [f"  doc_id   bigint NOT NULL REFERENCES satellite.{t['table']} (id) ON DELETE CASCADE", "  line_no  smallint NOT NULL"]
@@ -191,7 +218,8 @@ TYPE_MAP = {
     "FP": {"sor": "sor", "dpp": "dpp", "ppn": "ppn", "total": "total", "po_number": "nomor_cpo",
            "customer_name": "customer_name", "customer_code": "customer_code"},
     "TTG": {"posting_date": "posting_date", "document_no": "document_no", "po_number": "purchase_order_no",
-            "vendor_code": "vendor_number", "sor": "no_ref", "customer_name": "customer_name"},
+            "vendor_code": "vendor_number", "sor": "no_ref", "customer_name": "customer_name", "total": "total",
+            "dpp": "dpp"},
     "PO": {"po_number": "purchase_order_no", "vendor_code": "vendor_code", "vendor_name": "vendor_name", "ppn": "ppn",
            "total": "total", "customer_name": "customer_name"},
     "FPJ": {n: n for n in ("sor", "billing_number", "kode_seri", "npwp_pengusaha", "nitku_pengusaha", "npwp_pembeli",
