@@ -53,13 +53,11 @@ DOCS = {
             F("vendor_number", "id", "6.1", "Vendor Number", "SAMB's supplier / vendor number at this customer"),
             F("no_ref", "id", "linking", "No Ref", "No Ref / No Reference, ONLY if it is an SOR number (some customers print SAMB's SOR here)"),
             F("customer_name", "text", "linking", "Customer", "the customer that issued this receipt"),
-            F("total", "amount", "check", "Receipt total", "the receipt's printed total, with or without tax, if it prints one"),
-            F("dpp", "amount", "check", "Receipt total before tax", "the receipt's total before tax, if it prints one"),
-        ],
+        ],       # no amounts (the mentors, 2026-09-28): a receipt is compared with Satellite's goods receipt in quantities
         "lines": [
             F("item_code", "id", "6.1", "Item code", "customer item code / SKU / PLU"),
             F("material_description", "text", "6.1", "Material description", "item description"),
-            F("qty", "qty", "6.1", "Qty", "quantity received"),
+            F("qty", "qty", "6.1", "Qty", "quantity received (not ordered, not the pack size)"),
             F("uom", "text", "6.1", "UOM", "unit"),
         ],
     },
@@ -117,7 +115,7 @@ NOT_YET = {"SJ": "Surat Jalan: §6.1 'belum diobservasi' — no field list until
 DECIDES = {
     "FP": {"keys": ("sor",), "page": ("dpp", "ppn", "total"), "support": ("nomor_cpo", "customer_code"), "bundle": ()},
     "PO": {"keys": ("purchase_order_no",), "page": (), "support": (), "bundle": ("total", "ppn")},
-    "TTG": {"keys": ("no_ref", "purchase_order_no"), "page": (), "support": (), "bundle": ("posting_date", "total", "dpp")},
+    "TTG": {"keys": ("no_ref", "purchase_order_no"), "page": (), "support": (), "bundle": ("posting_date",)},
 }
 
 
@@ -218,8 +216,7 @@ TYPE_MAP = {
     "FP": {"sor": "sor", "dpp": "dpp", "ppn": "ppn", "total": "total", "po_number": "nomor_cpo",
            "customer_name": "customer_name", "customer_code": "customer_code"},
     "TTG": {"posting_date": "posting_date", "document_no": "document_no", "po_number": "purchase_order_no",
-            "vendor_code": "vendor_number", "sor": "no_ref", "customer_name": "customer_name", "total": "total",
-            "dpp": "dpp"},
+            "vendor_code": "vendor_number", "sor": "no_ref", "customer_name": "customer_name"},
     "PO": {"po_number": "purchase_order_no", "vendor_code": "vendor_code", "vendor_name": "vendor_name", "ppn": "ppn",
            "total": "total", "customer_name": "customer_name"},
     "FPJ": {n: n for n in ("sor", "billing_number", "kode_seri", "npwp_pengusaha", "nitku_pengusaha", "npwp_pembeli",
@@ -231,7 +228,8 @@ LINE_CANON = {f["name"]: f for f in [
     CF("description", "text", "the item's description as printed"),
     CF("customer_item_code", "id", "the customer's own item code (SKU / PLU / article / product code)"),
     CF("samb_material_code", "id", "SAMB's material code (column 'Kode' on SAMB's invoice)"),
-    CF("qty", "qty", "quantity ordered or received"),
+    CF("qty", "qty", "the quantity: on a goods receipt the quantity RECEIVED (Diterima, Qty Received), not the quantity "
+                     "ordered and not the pack size (24/CTN); on an order the quantity ordered"),
     CF("uom", "text", "unit of measure"),
     CF("qty_crt", "qty", "on SAMB's invoice QTY is printed 'CRT / PCS': the number BEFORE the slash"),
     CF("qty_pcs", "qty", "on SAMB's invoice QTY is printed 'CRT / PCS': the number AFTER the slash"),

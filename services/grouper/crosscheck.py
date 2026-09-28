@@ -117,6 +117,8 @@ def _read(pages, span, doc_type, canon):
         p = pages.get(n) or {}
         own = p.get("doc_type") == doc_type
         f, src = ((p.get("fields") or {}).get(name) if own else None) or {}, "fields"
+        if f.get("value") == satellite.NOT_PRINTED:       # a person said this page prints none: never the AI's
+            continue                                      # reading of it instead
         if f.get("value") in (None, ""):
             f, src = (p.get("fields_all") or {}).get(canon) or {}, "fields_all"
         if f.get("value") in (None, ""):
@@ -270,62 +272,97 @@ def _order_side(pages, spans, ref, so_lines, allow=ROUNDING):
     return result("unknown", f"{why}, and SO lines {missing} aren't among its rows", gap=gap)
 
 
-def _delivery_side(pages, spans, rec, so_lines, allow=ROUNDING, receipt_shows=None):
-    """TTG ↔ what Satellite received (satellite.received: its goods receipt; the invoice is built from it). Never the
-    FP, never the order. A usable total decides (with tax against the received total, before tax against the received
-    DPP); with none, the receipt's printed rows: every received line's amount among them. Several receipts are
-    summed (a split delivery). receipt_shows 'ordered' (decision 8: this customer's receipts print the whole order):
-    a receipt can't show a tolakan, so one Satellite records goes to a person; without one, ordered = received."""
-    allow_all = allow * len(spans)
-    rejected = sum((x["rejected"] or 0) for x in rec["lines"])
+def _unit_sizes(pages, po_docs, so_lines, matches):
+    """{SO line index: how many of the customer's pieces make one of SAMB's}, from the order's own numbers: a PO row
+    that pairs with an SO line by its printed amount while its quantity differs (Duta Buah's CHUPA CHUPS GUMFILLE:
+    30 PCS for 46,621.62 on the PO, 1 for 46,616.22 on SAMB's line: a jar of 30). Only a pair by amount says so: the
+    money agrees, so the units differ."""
+    out = {}
+    for n in po_docs:
+        for r in matching.rows_of("PO", (pages.get(n) or {}).get("fields")):
+            m = matches.get((n, r["i"])) or {}
+            if m.get("how") != "amount" or m.get("line") is None:
+                continue
+            s = so_lines[m["line"]]
+            q, want = matching.pieces(r, s), float(s.get("qty_pcs") or 0)
+            if q and want and abs(q - want) >= 0.001:
+                out[m["line"]] = q / want
+    return out
+
+
+def _delivery_side(pages, spans, so_lines, matches, receipt_shows=None, units=None):
+    """TTG ↔ what Satellite recorded as received, in QUANTITIES (the mentors, 2026-09-28: a receipt proves what arrived;
+    its amounts aren't needed). Each receipt row paired with an SO line (matching.match) counts in pieces (the line's
+    pieces per carton), summed over the bundle's receipts (a split delivery), and must equal what Satellite's goods
+    receipt recorded on that line (cgr_qty). Every line Satellite received must be on a receipt row. A customer whose
+    receipts print the whole order (calibration, decision 8) is compared with the quantity ordered, and a tolakan it
+    can't show goes to a person. The AI copying the wrong column costs a Review, never a pass: with no tolakan the
+    ordered quantity equals the received one; with one, or a pack size read as a quantity, they differ."""
+    rejected = sum(float(s.get("rejected_qty") or 0) for s in so_lines)
     if rejected and receipt_shows == "ordered":
         return result("unknown", f"this customer's receipts print the whole order, so this one can't show the tolakan "
                                  f"of {rejected:g} pieces Satellite records: a person confirms it")
+    col, said = ("qty_pcs", "ordered") if receipt_shows == "ordered" else ("cgr_qty", "received")
+    got, rows, used = {}, [], []
+    for span in spans:
+        n = span[0]
+        for r in matching.rows_of("TTG", (pages.get(n) or {}).get("fields")):
+            if r["bonus"] or (not str(r["desc"] or "").strip() and r["qty"] in (None, "")):
+                continue                                   # a free row, or a blank one the AI returned (AEON p3)
+            m = matches.get((n, r["i"])) or {}
+            if m.get("status") == "refused":               # a person said it is no SO line ("not in SAMB's order")
+                continue
+            j = m.get("line") if m.get("status") == "matched" else None
+            row = {"page": n, "i": r["i"], "desc": r["desc"], "qty": r["qty"], "uom": r["uom"], "line": None,
+                   "pieces": None}
+            if j is not None:
+                s = so_lines[j]
+                q = matching.pieces(r, s)
+                if q is not None and (units or {}).get(j):          # the customer's pieces → SAMB's (_unit_sizes)
+                    q = round(q / units[j], 3)
+                per, want = float(s.get("pcs_per_uom") or 1), float(s.get(col) or 0)
+                nums = re.findall(r"\d[\d.,]*", str(r["qty"] or ""))
+                read = verify.amount(nums[0]) if len(nums) == 1 else None
+                row.update(line=s["line_no"], pieces=q, per=per, want=want,
+                           # the number read is this product's own pack size (AEON p3 read 20 / 12 / 10 on its
+                           # 20X200GR / 12X250GR / 10X320GR lines; Hari Hari p7 "24 PC" on 24 a carton): the AI
+                           # took the pack-size column, not the quantity received
+                           pack=per > 1 and read is not None and abs(read - per) < 0.001 and q is not None
+                           and abs(q - want) >= 0.001)
+                if q is not None:
+                    got[j] = got.get(j, 0) + q
+                    used.append({"page": n, "row": r["i"], "src": "fields", "kind": "qty", "text": str(r["qty"]),
+                                 "ref": float(so_lines[j].get(col) or 0), "allow": 0})
+            rows.append(row)
+    lines, differ, missing = [], [], []
+    for j, s in enumerate(so_lines):
+        want = float(s.get(col) or 0)
+        if j not in got and want <= 0:
+            continue
+        have = got.get(j)
+        lines.append({"line_no": s["line_no"], "desc": s.get("description"), "receipt": have, "satellite": want,
+                      "rejected": float(s.get("rejected_qty") or 0), "reason": s.get("reject_reason")})
+        if have is None:
+            missing.append(s["line_no"])
+        elif abs(have - want) >= 0.001:
+            differ.append(f"line {s['line_no']}: the receipt shows {have:g} pieces, Satellite {said} {want:g}")
+    unpaired = [x["i"] + 1 for x in rows if x["line"] is None]
+    no_qty = [f"row {x['i'] + 1} ({x['qty']!r})" for x in rows if x["line"] is not None and x["pieces"] is None]
     shown = f"; it shows the tolakan Satellite records ({rejected:g} pieces)" if rejected else ""
-    tries = []                   # every total the receipt prints must fit: one fitting never covers another that doesn't
-    totals = [_read(pages, s, "TTG", "total") for s in spans]
-    dpps = [_read(pages, s, "TTG", "dpp") for s in spans]
-    received = [("what Satellite received, with tax", rec["total"]), ("what Satellite received, before tax", rec["dpp"])]
-    if _usable(totals):
-        tries.append(("the receipt's total", totals, received, _settle(totals, received, allow_all)))
-    if _usable(dpps):
-        tries.append(("the receipt's total before tax", dpps, received[1:], _settle(dpps, received[1:], allow_all)))
-    gap = max((min(abs(info["got"] - v) for _, v in opts if v is not None) for *_, opts, (st, info) in tries),
-              default=None)
-    gap = round(gap, 2) if gap is not None else None
-    if tries and all(st == "pass" for *_, (st, _) in tries):
-        says, used = [], []
-        for what, reads, _, (st, info) in tries:
-            label, want = info["ref"]
-            says.append(f"{what} {_money(info['got'])} and {label} {_money(want)}"
-                        + (" are equal" if abs(info["got"] - want) < 0.005 else
-                           f": {_money(abs(info['got'] - want))} apart, rounding (up to Rp {allow_all:g})") + info["how"])
-            used += _uses(reads, info["got"], want, allow_all) if not info["how"] else []
-        return result("pass", "; ".join(says) + shown, used=used, gap=gap)
-    if tries:
-        rank = {"fail": 0, "ask": 1, "unknown": 2}
-        what, reads, _, (st, info) = min((t for t in tries if t[3][0] != "pass"), key=lambda t: rank[t[3][0]])
-        extra = ""
-        if rejected:
-            extra = f" (Satellite records a tolakan of {rejected:g} pieces the receipt may not show)"
-        asks = [a for *_, (s, i) in tries if s == "ask" for a in i["ask"]]
-        out = _unsettled(st, info, what, f"Satellite received {_money(rec['total'])} with tax, "
-                                         f"{_money(rec['dpp'])} before tax ({rec['state']})", extra)
-        return {**out, "gap": gap, **({"ask": asks} if asks and st != "fail" else {})}
-    wants = [(x["line_no"], [x["net"], x["with_vat"]]) for x in rec["lines"] if (x["net"] or 0) > 0]
-    missing, used, gap = _rows_settle([r for s in spans for r in _rows(pages, s, "TTG")], wants, allow)
-    why = "the receipt has no usable total (" + ("cut at the scan's edge" if any((t and t["cut"]) or (d and d["cut"])
-                                                for t, d in zip(totals, dpps)) else "none read") + ")"
-    if not missing:
-        return result("pass", f"{why}; every line Satellite received is on its rows" + shown,
-                      used=_row_uses(used, allow), gap=gap)
-    absent = [s[0] for s, t, d in zip(spans, totals, dpps)
-              if not t and not d and "total" not in _asked(pages.get(s[0]))]
-    if absent:
-        return result("unknown", f"{why}, and lines {missing} Satellite received aren't among its rows. The AI "
-                                 "looks for its total first", ask=[(n, c) for n in absent for c in ("total", "dpp")],
-                      gap=gap)
-    return result("unknown", f"{why}, and lines {missing} Satellite received aren't among its rows", gap=gap)
+    more = {"lines": lines, "qty_rows": rows}
+    if differ:
+        packs = sorted({x["line"] for x in rows if x.get("pack")})
+        return result("fail", "; ".join(differ) + (f" (on line{'s' if len(packs) > 1 else ''} {', '.join(map(str, packs))} "
+                                                  "the number read is the product's pack size: the AI probably read "
+                                                  "the wrong column)" if packs else
+                                                  " (a real difference, or the AI read another column)"), **more)
+    if missing or unpaired or no_qty:
+        return result("unknown", "; ".join(
+            ([f"lines {missing} Satellite {said} aren't paired with a receipt row yet"] if missing else []) +
+            ([f"receipt rows {unpaired} aren't paired with an SO line"] if unpaired else []) +
+            ([f"{', '.join(no_qty)}: no quantity to compare"] if no_qty else [])), **more)
+    return result("pass", f"every line Satellite {said} is on the receipt, in the same quantity "
+                          f"({len(lines)} line{'s' if len(lines) != 1 else ''})" + shown, used=used, **more)
 
 
 def _dates(pages, spans, so, scan_day):
@@ -573,8 +610,9 @@ def check_bundle(sor, docs, pages, so, so_lines, matches, expected=("FP", "TTG")
             out["received"] = result(rec["state"], rec["why"], tolakan=tolakan, rows=explain)
         else:
             out["received"] = {**_delivery_side(pages, [spans.get(n) or [n] for n in distinct(pages, ttgs, "document_no")],
-                                                rec, so_lines, allow,
-                                                prof.get("receipt_shows")), "tolakan": tolakan, "rows": explain}
+                                                so_lines, matches, prof.get("receipt_shows"),
+                                                _unit_sizes(pages, distinct(pages, pos, "purchase_order_no"), so_lines, matches)),
+                               "tolakan": tolakan, "rows": explain}
     out["dates"] = _dates(pages, [spans.get(n) or [n] for n in ttgs], so, scan_day) if ttgs else \
         result("n/a", "no TTG in the bundle")
     out["fpj"] = result("n/a", "no Faktur Pajak in this stage")
@@ -653,7 +691,8 @@ def inputs(c, bid):
     bundles = c.execute("""SELECT DISTINCT b.id, b.sor_no, b.status::text AS status, b.fingerprint, b.checks
                              FROM staging.bundle b JOIN staging.bundle_document bd ON bd.bundle_id = b.id
                              JOIN staging.document d ON d.id = bd.document_id
-                            WHERE d.batch_id = %s AND b.hold_reason IS NULL ORDER BY b.sor_no""", (bid,)).fetchall()
+                            WHERE d.batch_id = %s AND b.hold_reason IS NULL AND b.status <> 'published'
+                            ORDER BY b.sor_no""", (bid,)).fetchall()     # a published bundle is never checked again
     sos = satellite.load(c, [b["sor_no"] for b in bundles])
     decisions = {(r["page_no"], r["row_index"]): r for r in c.execute(
         "SELECT * FROM staging.line_match WHERE batch_id=%s", (bid,))}

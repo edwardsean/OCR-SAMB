@@ -14,13 +14,16 @@ from test_vf_totals import amount, line, page, so
 HERO = {"chain": "1100002447", "name": "chain 1100002447 (HERO DC PBF [320] CIBITUNG BEKASI)"}
 
 
-def checks(po_total, profile=None, ttg_total=None, **kw):
+def checks(po_total, profile=None, ttg_qty=None, **kw):
+    """ttg_qty: the receipt's one row, in pieces (a receipt is compared in quantities, 2026-09-28)."""
+    from grouper import matching
     s, lines = kw.pop("the_so", None) or so(), kw.pop("lines", None) or [line()]
     pages = {1: page("FP"), 2: page("PO", {"total": amount(po_total)})}
     docs = [(1, "FP"), (2, "PO")]
-    if ttg_total is not None:
-        pages[3], docs = page("TTG", {"total": amount(ttg_total)}), docs + [(3, "TTG")]
-    return crosscheck.check_bundle("SOR1", docs, pages, s, lines, {}, ("FP",), date(2026, 9, 23), profile=profile)
+    if ttg_qty is not None:
+        pages[3], docs = page("TTG", rows=[{"item_code": "1000001", "qty": str(ttg_qty), "uom": "PCS"}]), docs + [(3, "TTG")]
+    m = matching.match([(3, "TTG", matching.rows_of("TTG", pages[3]["fields"]))], lines, {}, {}) if 3 in pages else {}
+    return crosscheck.check_bundle("SOR1", docs, pages, s, lines, m, ("FP",), date(2026, 9, 23), profile=profile)
 
 
 def test_a_new_customers_first_bundle_waits_for_its_allowance():
@@ -61,11 +64,11 @@ def rejected():
 
 def test_the_first_tolakan_asks_what_the_receipt_prints():
     s, ln = rejected()
-    c = checks(s["order_total"], {**HERO, "allowance": 5}, ttg_total=s["total"], the_so=s, lines=[ln])
+    c = checks(s["order_total"], {**HERO, "allowance": 5}, ttg_qty=5, the_so=s, lines=[ln])
     ask = c["calibration"]["calibrate"]
     assert c["calibration"]["status"] == "unknown" and [a["what"] for a in ask] == ["receipt"]
-    assert ask[0]["suggest"] == "received"                    # the receipt showed the lower total
-    done = checks(s["order_total"], {**HERO, "allowance": 5, "receipt_shows": "received"}, ttg_total=s["total"],
+    assert ask[0]["suggest"] == "received"                    # the receipt showed what was received: 5 of 10
+    done = checks(s["order_total"], {**HERO, "allowance": 5, "receipt_shows": "received"}, ttg_qty=5,
                   the_so=s, lines=[ln])
     assert done["calibration"]["status"] == done["received"]["status"] == "pass"
 
@@ -73,10 +76,10 @@ def test_the_first_tolakan_asks_what_the_receipt_prints():
 def test_a_customer_whose_receipts_print_the_whole_order():
     s, ln = rejected()
     ordered = {**HERO, "allowance": 5, "receipt_shows": "ordered"}
-    c = checks(s["order_total"], ordered, ttg_total=s["order_total"], the_so=s, lines=[ln])
+    c = checks(s["order_total"], ordered, ttg_qty=10, the_so=s, lines=[ln])
     assert c["received"]["status"] == "unknown" and "can't show the tolakan" in c["received"]["why"]
     plain = so()                                               # no tolakan: what was ordered is what was received
-    c = checks(plain["order_total"], ordered, ttg_total=plain["total"])
+    c = checks(plain["order_total"], ordered, ttg_qty=24)
     assert c["received"]["status"] == "pass"
 
 

@@ -824,8 +824,13 @@ def page_page(request: Request, batch_id: str, page_no: int):
                              "pdf_key": b["file_path"]}, indent=2)
     words = p["ocr_words"] if p and p["ocr_words"] else []
     size = _png_size(p["upright_path"]) if p and p["upright_path"] else None
+    roles = {}
+    if VF and p and p["doc_type"]:                 # what each unsettled value does (verification redesign): the ⚠
+        from common.fields import DECIDES          # column says so, instead of "a person checks it" for every value
+        for level, names in (DECIDES.get(p["doc_type"]) or {}).items():
+            roles.update({n: level for n in names})
     return templates.TemplateResponse("page.html", ctx(request, batch_id=batch_id, b=b, p=p, page_no=page_no,
-                                      ticket=ticket, words=words, size=size, pc=pc, vfp=vfp))
+                                      ticket=ticket, words=words, size=size, pc=pc, vfp=vfp, roles=roles))
 
 
 def _png_size(key):
@@ -970,6 +975,8 @@ def _vf_bend_header(rows, pages):
         for name, v in r["checks"]["header"].items():
             f = (r["fields"] or {}).get(name)
             # print-backed ✅ only: a misread of a value Satellite or a person settled is replaced, not passed
+            if name not in kinds:                   # a field no longer on the type's list (a receipt's total, 2026-09-28)
+                continue
             if v["verdict"] == "ok" and v.get("by") not in ("satellite", "person") and f and f.get("value") is not None:
                 changed += 1
                 hit = _vf_bent_passes(r, name, kinds[name], f)
@@ -1059,6 +1066,19 @@ def _vf_bend_bundles(batch_id):
             for u in chk.get("used") or []:
                 page = x["pages"].get(u["page"]) or {}
                 store = u.get("src") or "fields"            # the page's own field, or its whole reading
+                if u["kind"] == "qty":                      # a receipt row's quantity the delivery side relied on
+                    lines = (page.get(store) or {}).get("lines") or []
+                    row = lines[u["row"]]
+                    changed += 1
+                    for k, ch in enumerate(u["text"]):
+                        if not ch.isdigit():
+                            continue
+                        t = u["text"][:k] + str((int(ch) + 1) % 10) + u["text"][k + 1:]
+                        bent = [*lines[:u["row"]], {**row, "qty": t}, *lines[u["row"] + 1:]]
+                        if still_passes(x, name, u["page"], {**page, store: {**page[store], "lines": bent}}):
+                            missed.append(f"{x['sor']} {name}: p{u['page']} row {u['row'] + 1} qty {u['text']!r}→{t!r}")
+                            break
+                    continue
                 if u["kind"] == "row":                      # a printed row amount the row fallback relied on
                     lines = (page.get(store) or {}).get("lines") or []
                     row = lines[u["row"]]
@@ -1494,7 +1514,7 @@ def review_list(batch):
                               JOIN staging.document d ON d.id = bd.document_id
                               LEFT JOIN satellite.sor s ON s.sor_no = b.sor_no
                              WHERE d.batch_id = %s""", (batch,)).fetchall()
-    order = {"needs_review": 0, "grouping": 1, "reviewed": 2, "auto_ok": 3}
+    order = {"needs_review": 0, "grouping": 1, "reviewed": 2, "auto_ok": 3, "published": 4}
     out = []
     for r in rows:
         checks = (r["checks"] or {}).get("checks") or {}
@@ -1519,8 +1539,8 @@ def review_view(batch, sor):
         docs = _bundle_pages(c, batch, sor)
         numbers = [n for _, _, ps in docs for n in ps]
         pages = {r["page_no"]: dict(r) for r in c.execute(
-            """SELECT page_no, doc_type::text AS doc_type, fields, outcome, second_look FROM staging.page
-                WHERE batch_id=%s AND page_no = ANY(%s)""", (batch, numbers))}
+            """SELECT page_no, doc_type::text AS doc_type, fields, outcome, second_look, thumb_upright_path
+                 FROM staging.page WHERE batch_id=%s AND page_no = ANY(%s)""", (batch, numbers))}
         for n in pages:
             pages[n]["checks"] = verify.load(c, batch, n)
         so = sat.load(c, [sor]).get(verify.flat(sor))
@@ -1549,9 +1569,7 @@ def review_view(batch, sor):
             refs = [(order.get("total"), "the order's total, with tax (Satellite)"),
                     (order.get("dpp"), "the order's DPP: a total before tax (Satellite)")] if name == "total" else \
                 [(order.get("ppn"), "the order's PPN (Satellite)")] if name == "ppn" else []
-        if t == "TTG" and name in ("total", "dpp") and got and got["state"] in ("invoiced", "reconstructed"):
-            refs = ([(got["total"], "received, with tax (Satellite)")] if name == "total" else []) + \
-                [(got["dpp"], "received, before tax (Satellite)")]
+
         return out + [(f"{v:.2f}", why) for v, why in refs if v is not None]
 
     def entry(n, t, name):
@@ -1615,19 +1633,53 @@ def review_view(batch, sor):
         documents.append({"page": n, "type": t, "kind": KIND.get(t, t), "pages": ps, "outcome": p.get("outcome"),
                           "head": head, "kept": kept, "rows": rows})
     ok, left = crosscheck.can_approve(checks, {n: pages[n] for n in pages})
-    items = _open_items(batch, sor, docs, pages, checks, lines, pairs, entry)
+    items = _open_items(batch, sor, docs, pages, checks, lines, pairs, entry, {"received": got, "order": order})
+    flagged = {f["page"] for i in items for f in i.get("fix") or []} | {i["page"] for i in items if i.get("page")}
+    strip = [{"page": n, "type": t, "kind": KIND.get(t, t), "first": n == ps[0],
+              "thumb": f"/img/{pages[n]['thumb_upright_path']}" if (pages.get(n) or {}).get("thumb_upright_path") else None,
+              "flag": n in flagged} for n0, t, ps in docs for n in ps]
+    passed = [crosscheck.LABEL.get(k, k) for k, c in checks.items() if c["status"] in ("pass", "accepted")]
     return {"bundle": b, "sor": sor, "so": so, "lines": lines, "checks": checks, "labels": crosscheck.LABEL,
             "reasons": (b["checks"] or {}).get("reasons") or [], "documents": documents, "can_approve": ok,
             "left": left, "accept_reasons": ACCEPT_REASONS, "none_reasons": NONE_REASONS, "open_items": items,
+            "strip": strip, "passed": passed,
             "calibration": _calibration_view(so, checks)}
 
 
 OPEN = ("fail", "unknown", "waiting")
-FIX_FIELDS = {"fp_po_total": ("PO", ("total", "ppn")), "received": ("TTG", ("total", "dpp")),
-              "dates": ("TTG", ("posting_date",))}
+FIX_FIELDS = {"fp_po_total": ("PO", ("total", "ppn")), "dates": ("TTG", ("posting_date",))}   # a receipt's
+# quantities are row cells: its card lists them, each with its own fix
 
 
-def _open_items(batch, sor, docs, pages, checks, lines, pairs, entry):
+def _money(x):
+    return f"Rp {x:,.2f}" if isinstance(x, (int, float)) else "—"
+
+
+def _plain(k, c, refs=None):
+    """A check that doesn't pass, said in one plain line (the Review card's title)."""
+    gap = c.get("gap")
+    if k == "fp_po_total":
+        if gap is None:
+            return "The PO's total can't be compared with SAMB's order yet"
+        more = (c.get("po") or 0) > (c.get("fp") or 0)
+        return f"The PO asks {_money(gap)} {'more' if more else 'less'} than SAMB's order"
+    if k == "received":
+        if c["status"] == "fail":
+            return "The receipt's quantities don't match what Satellite recorded as received"
+        return "The receipt's rows aren't all paired with SAMB's lines yet"
+    if k == "dates":
+        return "The receipt's date doesn't fit Satellite's goods-receipt date"
+    if k == "docs_complete":
+        return "A document is missing: " + (c.get("why") or "").replace("no ", "the ").replace(" in the bundle", "") \
+            .replace("TTG", "receipt (Tanda Terima)")
+    if k == "store_named":
+        return "A page names a different store of this customer"
+    if k == "sor_in_satellite":
+        return "This order isn't in Satellite"
+    return None
+
+
+def _open_items(batch, sor, docs, pages, checks, lines, pairs, entry, refs=None):
     """Review for anomalies only (verification redesign S5): one card per thing that holds the bundle, each with the
     one action it needs. A failed check shows both amounts and the gap, the rows lined up against SAMB's order lines
     as the explanation, the values it used (to correct a misread), and a one-click accept. A page shows only the
@@ -1657,11 +1709,24 @@ def _open_items(batch, sor, docs, pages, checks, lines, pairs, entry):
     for k, c in checks.items():                                       # the bundle's checks that don't pass
         if c["status"] not in OPEN or k == "calibration":
             continue
-        item = {"kind": "check", "key": k, "title": crosscheck.LABEL.get(k, k), "status": c["status"], "why": c["why"],
+        item = {"kind": "check", "key": k, "title": crosscheck.LABEL.get(k, k), "plain": _plain(k, c, refs),
+                "status": c["status"], "why": c["why"],
                 "print": c.get("print"), "accept": c["status"] != "waiting" and not c.get("ask"),
                 "gap": c.get("gap"), "allow": c.get("allow"), "tolakan": c.get("tolakan") or [], "notes": [], "fix": []}
         if k == "fp_po_total" and c.get("po") is not None:
             item["pair"] = [("the PO", c["po"]), ("SAMB's order (Satellite, as ordered)", c.get("fp"))]
+        if k == "received" and c.get("lines"):          # quantities, line by line (the mentors, 2026-09-28)
+            item["qty_lines"] = c["lines"]
+            item["qty_bad"] = [x for x in c["lines"] if x["receipt"] is None or abs(x["receipt"] - x["satellite"]) >= 0.001]
+            keys = {n: sat_row_keys(pages, n) for n, dt, _ in docs if dt == "TTG"}
+            item["qty_fix"] = [{**x, "key": keys.get(x["page"], [])[x["i"]] if x["i"] < len(keys.get(x["page"], [])) else None}
+                               for x in c.get("qty_rows") or []
+                               if x["line"] in {y["line_no"] for y in item["qty_bad"]} or x["line"] is None or x["pieces"] is None]
+            got_rows = {x["line"] for x in c.get("qty_rows") or [] if x["line"] is not None}
+            item["qty_missing"] = [y for y in item["qty_bad"] if y["line_no"] not in got_rows]   # not on the receipt
+            item["qty_pack"] = any(x.get("pack") for x in item["qty_fix"])
+        ours, ref = ((item.get("pair") or [(None, None), (None, None)])[0][1], (item.get("pair") or [(None, None), (None, None)])[1][1])
+        item["suspect"] = bool(ours and ref and (ours < 0.05 * ref or ours > 20 * ref))   # not a difference: a misread
         if k == "docs_complete":
             item["held_link"] = f"/bundles?batch={batch}"
         t, names = FIX_FIELDS.get(k, (None, ()))
@@ -1671,11 +1736,19 @@ def _open_items(batch, sor, docs, pages, checks, lines, pairs, entry):
                        if (pages[n].get("fields") or {}).get(f) or f == "total"]
         if k == "fp_po_total":                                        # the rows explain where a gap comes from
             item["rows"], item["unmatched"], item["missing_lines"] = _rows_against_order(pages, firsts, lines, pairs)
+            item["odd_rows"] = [x for x in item["rows"] if x["line"] is None and not x["bonus"]]
+            item["ok_rows"] = sum(1 for x in item["rows"] if x["line"] is not None)
         elif c.get("rows"):
             item["notes"] = c["rows"]
         items.append(item)
     order = {"check": 0, "page": 1, "label": 2, "wait": 3}
     return sorted(items, key=lambda i: order[i["kind"]])
+
+
+def sat_row_keys(pages, n):
+    """The keys a person's row confirmation uses on this page (satellite.row_keys)."""
+    from common import satellite as sat
+    return sat.row_keys("TTG", ((pages.get(n) or {}).get("fields") or {}).get("lines") or [])
 
 
 def _rows_against_order(pages, firsts, lines, pairs):
@@ -1720,10 +1793,11 @@ def _calibration_view(so, checks):
 
 
 @app.get("/review", response_class=HTMLResponse)
-def page_review(request: Request, batch: str | None = None):
+def page_review(request: Request, batch: str | None = None, published: int | None = None):
     batch = batch or _latest_batch()
-    return templates.TemplateResponse("review.html", ctx(request, batch=batch,
-                                                         rows=review_list(batch) if batch else []))
+    rows = review_list(batch) if batch else []
+    return templates.TemplateResponse("review.html", ctx(request, batch=batch, rows=rows, just_published=published,
+                                                         ready=sum(1 for r in rows if r["status"] in ("auto_ok", "reviewed"))))
 
 
 @app.get("/review/{sor}", response_class=HTMLResponse)
@@ -1836,6 +1910,32 @@ def review_calibrate(batch: str = Form(...), sor: str = Form(...), chain: str = 
     for bid in crosscheck.calibrate(chain, name, by.strip(), value, receipt_shows or None):
         _regroup(bid)
     return RedirectResponse(f"/review/{sor}?batch={batch}#calibration", status_code=303)
+
+
+@app.post("/review/publish")
+def review_publish(batch: str = Form(...), by: str = Form(...)):
+    """Phase 8: publish the batch's finished bundles (auto_ok or reviewed): Satellite's document rows and one PDF per
+    SOR. Checked once more first; a bundle with anything left is never published."""
+    if not by.strip():
+        return JSONResponse({"error": "say who you are"}, status_code=400)
+    from publisher import publish
+    done = publish.publish(batch)
+    return RedirectResponse(f"/review?batch={batch}&published={len(done)}", status_code=303)
+
+
+@app.get("/documents/{sor}.pdf")
+def sor_pdf(sor: str):
+    """A published SOR's PDF (phase 8), from Satellite's document record."""
+    with db.connect() as c:
+        r = c.execute("SELECT pdf_path FROM satellite.sor_document WHERE sor_no=%s", (sor,)).fetchone()
+    if not r:
+        return Response(status_code=404)
+    try:
+        obj = storage.client().get_object(storage.bucket(), r["pdf_path"])
+        data = obj.read(); obj.close(); obj.release_conn()
+    except Exception:
+        return Response(status_code=404)
+    return Response(data, media_type="application/pdf", headers={"Content-Disposition": f'inline; filename="{sor}.pdf"'})
 
 
 @app.post("/review/approve")
@@ -2141,7 +2241,7 @@ def phase7_values(batch_id, golden):
     totals = []
     for pg, printed in (golden.get("amounts") or {}).items():
         p = pages.get(int(pg))
-        if not p or p["doc_type"] not in ("PO", "TTG"):
+        if not p or p["doc_type"] != "PO":          # a receipt's amounts aren't read any more (2026-09-28)
             continue
         nums = [x for x in (verify.amount(a) for _, a in printed) if x is not None]
         for k in ("total", "dpp", "ppn"):
@@ -2218,7 +2318,7 @@ def phase7_checks(batch_id):
     checks.append(("Grouping still right: no page in a wrong bundle", p6["checks"][0][1],
                    p6["checks"][0][2]))
     with db.connect() as c:                               # 7c: each bundle's checks and status (grouper/crosscheck.py)
-        bundles = c.execute("""SELECT DISTINCT b.sor_no, b.status::text AS status, b.checks, b.hold_reason
+        bundles = c.execute("""SELECT DISTINCT b.sor_no, b.status::text AS status, b.checks, b.hold_reason, b.json
                                  FROM staging.bundle b JOIN staging.bundle_document bd ON bd.bundle_id = b.id
                                  JOIN staging.document d ON d.id = bd.document_id
                                 WHERE d.batch_id = %s ORDER BY 1""", (batch_id,)).fetchall()
@@ -2227,14 +2327,16 @@ def phase7_checks(batch_id):
     # wrong value it decides on: a key, the FP's own values (their graded field), a PO's or receipt's amounts (the
     # number must be printed on its page: phase7_values). An amount's label isn't its decision: page 27 prints only
     # its total before tax, graded "not the total with tax" by the key, and the check compares it with the order's DPP
-    amounts = {"PO": {"total", "ppn"}, "TTG": {"total", "dpp"}}
+    amounts = {"PO": {"total", "ppn"}}                # a receipt has no amounts to decide on (2026-09-28)
     wrong_pages = {g["page"] for g in graded if g["grade"] == "WRONG" and g["path"].startswith("header.")
                    and g["path"].split(".", 1)[1] in decides(rows[g["page"]]["doc_type"])
                    and g["path"].split(".", 1)[1] not in amounts.get(rows[g["page"]]["doc_type"], ())} | \
         {t["page"] for t in totals if t["grade"] != "right"}
     unexplained = [b["sor_no"] for b in bundles if not b["hold_reason"] and not b["checks"]]
+    def auto(b):                      # auto_ok, or published from auto_ok (phase 8): no person approved it
+        return b["status"] == "auto_ok" or (b["status"] == "published" and (b.get("json") or {}).get("published_from") == "auto_ok")
     bad_ok = [f"{b['sor_no']} (pages {sorted(pages_of.get(b['sor_no'], set()) & wrong_pages)})" for b in bundles
-              if b["status"] == "auto_ok" and pages_of.get(b["sor_no"], set()) & wrong_pages]
+              if auto(b) and pages_of.get(b["sor_no"], set()) & wrong_pages]
     tally = {}
     for b in bundles:
         tally[b["status"]] = tally.get(b["status"], 0) + 1
@@ -2250,7 +2352,7 @@ def phase7_checks(batch_id):
         allow = t.get("allow", ROUNDING)
         if t.get("fp") is not None and t.get("po") is not None and abs(t["fp"] - t["po"]) >= 0.005:
             (rounding if abs(t["fp"] - t["po"]) <= allow + 0.005 else differ).append(b["sor_no"])
-            if abs(t["fp"] - t["po"]) > allow + 0.005 and (t.get("status") == "pass" or b["status"] == "auto_ok"):
+            if abs(t["fp"] - t["po"]) > allow + 0.005 and (t.get("status") == "pass" or auto(b)):
                 passed.append(b["sor_no"])
     tolak = [x for b in bundles for x in (((b["checks"] or {}).get("checks") or {}).get("received") or {})
              .get("tolakan") or []]

@@ -9,9 +9,9 @@ from psycopg.rows import dict_row
 from common.fields import CANON, DOCS, LINE_CANON, LINE_MAP, TYPE_MAP, lift, project
 
 
-def test_31_per_type_fields_become_18_plus_2_clues():
+def test_29_per_type_fields_become_18_plus_2_clues():
     per_type = sum(len(d["header"]) for d in DOCS.values())
-    assert per_type == 31              # 29, plus a receipt's own total and total before tax (S2: its bundle checks them)
+    assert per_type == 29              # a receipt carries no amounts: it is compared in quantities (2026-09-28)
     store = [n for n, f in CANON.items() if f["role"] == "store"]
     clue = [n for n, f in CANON.items() if f["role"] == "clue"]
     assert (len(store), len(clue)) == (18, 2)

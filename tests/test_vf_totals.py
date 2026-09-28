@@ -33,12 +33,15 @@ def amount(v, printed=True):
     return {"value": f"{v:.2f}", "source_text": f"{v:,.2f}"}, (TEXT if printed else CHECK)
 
 
-def page(doc_type, values=None, text="", lines=None, second=None, **fields_all):
+def page(doc_type, values=None, text="", lines=None, second=None, rows=None, **fields_all):
+    """lines: rows by their printed text only; rows: rows as dicts (a receipt's item_code, qty, uom)."""
     fields, header = {}, {}
     for name, (f, v) in (values or {}).items():
         fields[name], header[name] = f, v
     if lines is not None:
         fields["lines"] = [{"row_text": t} for t in lines]
+    if rows is not None:
+        fields["lines"] = [{"row_text": "", **r} for r in rows]
     return {"doc_type": doc_type, "fields": fields, "checks": {"header": header, "lines": []}, "outcome": "clear",
             "classical_text": text, "fields_all": fields_all or None, "second_look": second}
 
@@ -51,8 +54,11 @@ def bundle(po=None, ttg=None, the_so=None, lines=None, fp_total=1.0, **kw):
         pages[2], docs = po, docs + [(2, "PO")]
     if ttg:
         pages[3], docs = ttg, docs + [(3, "TTG")]
-    return crosscheck.check_bundle("SOR1", docs, pages, the_so or so(), lines or [line()], {},
-                                   scan_day=date(2026, 9, 23), **kw)
+    from grouper import matching
+    ls = lines or [line()]
+    m = matching.match([(n, t, matching.rows_of(t, pages[n]["fields"])) for n, t in docs if t in ("PO", "TTG")],
+                       ls, {}, {})
+    return crosscheck.check_bundle("SOR1", docs, pages, the_so or so(), ls, m, scan_day=date(2026, 9, 23), **kw)
 
 
 # ── the order side ─────────────────────────────────────────────────────────────────────────────────────────────
@@ -129,14 +135,20 @@ def rejected_half():
     return s, ln
 
 
+def receipt(pieces):
+    return page("TTG", rows=[{"item_code": "1000001", "qty": str(pieces), "uom": "PCS"}])
+
+
 def test_a_rejection_the_receipt_against_what_was_received():
+    """The user's example: FP 10, the goods receipt 5 received + 5 rejected, the receipt 5: it passes on what was
+    received, in quantities (the mentors, 2026-09-28), and the FP is never read."""
     s, ln = rejected_half()
-    ttg = page("TTG", {"total": amount(s["total"])})
+    ttg = receipt(5)
     c = bundle(ttg=ttg, the_so=s, lines=[ln], fp_total=s["order_total"])["received"]
     assert c["status"] == "pass" and "tolakan" in c["why"] and c["tolakan"]
     # the receipt showing the whole order: Satellite recorded a rejection it doesn't show
-    c = bundle(ttg=page("TTG", {"total": amount(s["order_total"])}), the_so=s, lines=[ln])["received"]
-    assert c["status"] == "fail" and "tolakan" in c["why"]
+    c = bundle(ttg=receipt(10), the_so=s, lines=[ln])["received"]
+    assert c["status"] == "fail" and "Satellite received 5" in c["why"]
     # and the FP (printed as ordered, 10) is never what the receipt is compared with
     assert bundle(ttg=ttg, the_so=s, lines=[ln], fp_total=1.0) == bundle(ttg=ttg, the_so=s, lines=[ln], fp_total=9e9)
 
@@ -151,33 +163,34 @@ def test_the_received_value_follows_satellites_state():
     assert satellite.received(so(status="CGR", total=0), [line(cgr_qty=0, rejected_qty=0)])["state"] == "waiting"
     assert satellite.received(so(sor_no="SOF26110002444"), [ln])["state"] == "unknown"
     assert satellite.received(None, [ln])["state"] == "unknown"
-    waiting = bundle(ttg=page("TTG", {"total": amount(s["total"])}), the_so=so(status="GOOD_ISSUED", cgr_no=None, total=0))
+    waiting = bundle(ttg=receipt(24), the_so=so(status="GOOD_ISSUED", cgr_no=None, total=0))
     assert waiting["received"]["status"] == "waiting"
     assert crosscheck.decide(waiting, {1: {"outcome": "clear"}})[0] == "grouping"          # waits: never a person
 
 
 def test_two_receipts_are_summed():
-    s = so()
-    part = round(s["dpp"] / 2, 2)
+    """A split delivery: 12 + 12 pieces on two receipts of one line of 24."""
+    from grouper import matching
+    s, ln = so(), line()
     spans = {3: [3], 4: [4]}
-    pages = {1: page("FP"), 3: page("TTG", {"dpp": amount(part)}), 4: page("TTG", {"dpp": amount(s["dpp"] - part)})}
-    c = crosscheck.check_bundle("SOR1", [(1, "FP"), (3, "TTG"), (4, "TTG")], pages, s, [line()], {},
-                                scan_day=date(2026, 9, 23), spans=spans)["received"]
+    pages = {1: page("FP"), 3: receipt(12), 4: receipt(12)}
+    docs = [(1, "FP"), (3, "TTG"), (4, "TTG")]
+    m = {(n, 0): {"line": 0, "status": "matched", "how": "person"} for n in (3, 4)}
+    c = crosscheck.check_bundle("SOR1", docs, pages, s, [ln], m, scan_day=date(2026, 9, 23), spans=spans)["received"]
     assert c["status"] == "pass"
 
 
-def test_equal_lines_need_equal_prints():
-    s = so()
-    two = [line(line_no=10, invoice_amount=100000.0), line(line_no=20, invoice_amount=100000.0)]
-    once = page("TTG", {}, lines=["1 A 10 100,000.00", "2 B 10 5.00"])
-    twice = page("TTG", {}, lines=["1 A 10 100,000.00", "2 B 10 100,000.00"])
-    assert bundle(ttg=once, lines=two)["received"]["status"] == "unknown"
-    assert bundle(ttg=twice, lines=two)["received"]["status"] == "pass"
+def test_every_line_received_must_be_on_the_receipt():
+    two = [line(line_no=10, description="PRODIET ADULT 85GR OCEAN FISH"),
+           line(line_no=20, item_code="1000002", description="SENNA KRUPUKKU 500GR UDANG")]
+    one = page("TTG", rows=[{"qty": "24", "uom": "PCS", "material_description": "PRODIET 85G OCEAN FISH"}])
+    c = bundle(ttg=one, lines=two)["received"]
+    assert c["status"] == "unknown" and "lines [20]" in c["why"]          # received, and not on the receipt
 
 
 def test_free_goods_go_to_a_person():
     s = so(sor_no="SOF26110002444")
-    c = bundle(po=page("PO", {"total": amount(1.0)}), ttg=page("TTG", {"total": amount(1.0)}), the_so=s)
+    c = bundle(po=page("PO", {"total": amount(1.0)}), ttg=receipt(24), the_so=s)
     assert c["fp_po_total"]["status"] == c["received"]["status"] == "unknown"
 
 
@@ -186,7 +199,7 @@ def test_free_goods_go_to_a_person():
 def test_the_receipt_date():
     def dated(day, printed=True, second=None):
         v = ({"value": day, "source_text": day}, TEXT if printed else CHECK)
-        return bundle(ttg=page("TTG", {"posting_date": v, "total": amount(so()["total"])}, second=second))["dates"]
+        return bundle(ttg=page("TTG", {"posting_date": v}, second=second))["dates"]
     assert dated("2026-09-10")["status"] == "pass"                            # Satellite's goods receipt date
     assert dated("2026-09-12", printed=False)["status"] == "pass"             # in order, kept as read
     assert dated("2026-10-12")["status"] == "fail"                            # printed, out of order: a person
@@ -199,10 +212,10 @@ def test_the_receipt_date():
 # ── the look-again the bundle asks for ─────────────────────────────────────────────────────────────────────────
 
 def test_the_bundle_asks_and_the_page_looks_again():
-    header = {"purchase_order_no": TEXT, "total": CHECK, "posting_date": TEXT}
-    assert vf.to_ask("TTG", header) == []                                    # the page alone asks nothing
-    assert vf.to_ask("TTG", header, requested=("total", "dpp")) == ["total", "dpp"]
-    assert vf.to_ask("TTG", header, asked={"total"}, requested=("total", "dpp")) == ["dpp"]   # once each
+    header = {"purchase_order_no": TEXT, "total": CHECK, "ppn": CHECK}
+    assert vf.to_ask("PO", header) == []                                     # the page alone asks nothing
+    assert vf.to_ask("PO", header, requested=("total", "ppn")) == ["total", "ppn"]
+    assert vf.to_ask("PO", header, asked={"total"}, requested=("total", "ppn")) == ["ppn"]    # once each
 
 
 def test_asks_make_the_bundle_wait():
@@ -223,3 +236,28 @@ def test_copies_of_one_po_count_once():
     pages = {6: page("PO.2026.09.32029"), 7: page("PO.2026.09.32029"), 8: page("PO.2026.09.32029"),
              20: page("PO.2026.09.40001"), 21: page(None), 22: page(None)}
     assert crosscheck.distinct(pages, [6, 7, 8, 20, 21, 22], "purchase_order_no") == [6, 20, 21, 22]
+
+
+def test_a_pack_size_read_as_a_quantity_is_named_and_a_persons_answers_settle_it():
+    """7000363700-03 p3 (AEON): the AI read 20 / 10 CARTON, the pack sizes of 20X200GR / 10X320GR, where the receipt
+    prints 0 and 1 carton received (2026-09-28). The check names it; a person's quantity, and a person's 'not in
+    SAMB's order' on a row, settle it."""
+    lines = [line(line_no=10, description="MIE CAP AYAM 2 TELOR 200GR REGULER", pcs_per_uom=20, qty_pcs=40,
+                  cgr_qty=0, rejected_qty=40),
+             line(line_no=30, item_code="1000003", description="BIHUN CAP TANAM JAGUNG 320GR", pcs_per_uom=10,
+                  qty_pcs=20, cgr_qty=10, rejected_qty=10)]
+    ttg = page("TTG", rows=[{"material_description": "AYAM 2 TELOR MI TELOR LEBAR KERITING 200GR", "qty": "20.0", "uom": "CARTON"},
+                            {"material_description": "CAP TANAM JAGUNG BIHUN JAGUNG 320G", "qty": "10.0", "uom": "CARTON"},
+                            {"material_description": "BIHUNKU SEDUH RASA SOTO AYAM 144G", "qty": "20.0", "uom": "CARTON"},
+                            {"material_description": "", "qty": None}])            # a blank row: never counted
+    c = bundle(ttg=ttg, lines=lines)["received"]
+    assert c["status"] == "fail" and "pack size" in c["why"]
+    assert [r["pack"] for r in c["qty_rows"] if r["line"]] == [True, True]
+    ttg["fields"]["lines"][0]["qty"], ttg["fields"]["lines"][1]["qty"] = "0 CTN", "1 CTN"     # a person's answers
+    from grouper import matching
+    pages = {1: page("FP"), 3: ttg}
+    m = matching.match([(3, "TTG", matching.rows_of("TTG", ttg["fields"]))], lines, {}, {})
+    m[(3, 2)] = {"line": None, "status": "refused", "how": "person", "why": "not in SAMB's order"}
+    c = crosscheck.check_bundle("SOR1", [(1, "FP"), (3, "TTG")], pages, so(), lines, m,
+                                scan_day=date(2026, 9, 23))["received"]
+    assert c["status"] == "pass"

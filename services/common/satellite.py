@@ -32,6 +32,8 @@ from datetime import date
 from common import confusions, gates
 
 PRINTED = ("text", "qr", "zoom", "second_look", "adds_up")    # verdicts backed by print
+NOT_PRINTED = "(not printed)"   # a person's answer: this page prints no such value (7000363700-03 p5: the AI took the
+                                # receipt's quantity total 190.00 for its money total; the receipt prints none)
 SOR_QR = re.compile(r"^SOR\d{11}$")                               # an FP's QR code: its SOR
 
 
@@ -387,6 +389,38 @@ def _rows_decide(name, value, index, doc_type, fields, verdicts, why, items_of):
     return f"{why}; {said}"
 
 
+def _receipt_is_po(fields, verdicts, sos, items_of, put):
+    """A receipt that prints no PO number of its own, but whose receipt number IS the order's customer PO number
+    (AEON's receiving note: RECEIPT NO 10101000125418 = the PO; the AI filled the PO field with the contract number
+    OS-073, read 05-073). When the receipt's PO number isn't settled and its receipt number exactly equals one SO's
+    Nomor CPO, that is its PO number: the receipt number trusted by print or a person, else by Satellite (no SO one
+    character away) or the rows; and if the page has rows, at least one fits that SO (a coincidence would have
+    another customer's goods). Measured on both batches: only AEON's two receipts match an SO; 12 others match none."""
+    doc = (fields.get("document_no") or {}).get("value")
+    if not doc or not items_of:
+        return
+    exact, near = near_keys(doc, _cached_index(sos, "cpo_no"))
+    if len(exact) != 1:
+        return
+    from grouper import matching                          # grouper sits on common; imported when first needed
+    v = verdicts.get("document_no") or {}
+    if _ok(v) and v.get("by") in PRINTED + ("person",):
+        how = f"its receipt number {doc} is printed"
+    elif not near:
+        how = "no other SO's Nomor CPO is one character away"
+    else:
+        ok, said = matching.rows_tell("TTG", fields, exact[0], near, items_of)
+        if not ok:
+            return
+        how = said
+    rows = [r for r in matching.rows_of("TTG", fields) if not r["bonus"]]
+    if rows and not matching.fit_count("TTG", rows, items_of(exact[0])):
+        return
+    put("purchase_order_no", doc, "receipt_no",
+        f"the receipt prints no PO number of its own: its receipt number {doc} is {exact[0]}'s Nomor CPO ({how})")
+    fields["purchase_order_no"]["source_text"] = (fields.get("document_no") or {}).get("source_text") or doc
+
+
 def _store_decides(name, value, index, sos, ship_to, verdicts, why):
     """S4, for a key only the AI read that matches exactly one SO while others are one character away: the store
     printed on the page decides, when it can (store_can_tell). Not asked yet (ship_to None): the verdict carries
@@ -536,6 +570,13 @@ def settle(doc_type, fields, verdicts, sos, confirmed=None, items_of=None, ship_
         if LINE_FIELD.match(name):                        # a line cell: person_lines()
             continue
         old = (fields.get(name) or {}).get("value")
+        if c["value"] == NOT_PRINTED:                     # nothing printed: the value is gone, the AI's reading kept
+            f = fields[name] = fields.get(name) or {}
+            f.setdefault("ai_value", f.get("value"))
+            f.update(value=NOT_PRINTED, source_text=None)
+            verdicts[name] = {"verdict": "ok", "by": "person", "why": f"not printed on this page, said {c['confirmed_by']}"
+                              + (f": the AI read {old!r}" if old not in (None, "") else "")}
+            continue
         put(name, c["value"], "person", f"confirmed by {c['confirmed_by']}" if same_id(old, c["value"])
             else f"corrected by {c['confirmed_by']}: read {old!r}")
 
@@ -601,6 +642,8 @@ def settle(doc_type, fields, verdicts, sos, confirmed=None, items_of=None, ship_
                 why = why and _store_decides("purchase_order_no", po, index, sos, ship_to, verdicts, why)
                 if why and v:
                     v["why"] = f"{v.get('why') or 'not backed by print'}; {why}"
+    if doc_type == "TTG" and not _ok(verdicts.get("purchase_order_no")) and not mine("purchase_order_no"):
+        _receipt_is_po(fields, verdicts, sos, items_of, put)     # 3b. the receipt number is the PO number
     if doc_type == "TTG":
         ref, v = (fields.get("no_ref") or {}).get("value"), verdicts.get("no_ref")
         if ref and not _ok(v) and not mine("no_ref"):

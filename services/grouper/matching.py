@@ -12,9 +12,11 @@ MASK NUTRI COLOR 20GR"). Satellite keeps no barcode, and no table maps one to th
   amount     a PO row: the only SO line whose amount (net, or with PPN) its printed amount fits, to 0.03%: money
              doesn't depend on how each side counts pieces (Duta Buah's PO: 48 PCS; SAMB's line: 2). Two rows at one
              amount (ALPENLIEBE KARAMEL and STRAWBERRY, both 32,760) are told apart by name, clearly, or not at all
+  words      a row: the only free SO line sharing two or more product words (four letters or more) with it, more than
+             any other line, and claimed by no other row as strongly (PRODIET ADULT OCEAN FISH …)
   po_row     a TTG row takes the line of the PO row with the same code (one customer, one system)
   ai         proposed by a text model on Z.ai (propose()), checked on the numbers; a person confirms it once
-The first six decide; an AI pair is a proposal until a person confirms it (7d), and that confirmation fills the map,
+The first seven decide; an AI pair is a proposal until a person confirms it (7d), and that confirmation fills the map,
 so the same product then matches with no AI and no person. Boots' three Vaseline 425ML variants share quantity and
 price: only their names tell them apart, which is exactly what an AI can get wrong confidently.
 
@@ -34,7 +36,7 @@ from common import db, satellite, verify
 AI_MODEL = os.environ.get("MATCH_MODEL", "glm-4.7-flash")        # text only, free on Z.ai; not Groq's AI OCR budget
 PAUSE = int(os.environ.get("MATCH_PAUSE", "30"))                   # seconds between calls
 COLS = {"TTG": ("item_code", "material_description"), "PO": ("product_code", "product_description")}
-CARTON = {"KTN", "CT", "CTN", "CAR", "CRT", "KRT", "KARTON", "CASE", "CS", "DUS", "BOX"}
+CARTON = {"KTN", "CT", "CTN", "CTNS", "CAR", "CRT", "KRT", "KARTON", "CARTON", "CARTONS", "CASE", "CS", "DUS", "BOX"}
 BARCODE = re.compile(r"(?<!\d)(\d{12,13})(?!\d)")                 # EAN-13 / UPC-A; 8-digit SKUs aren't barcodes here
 
 
@@ -77,8 +79,9 @@ def pieces(row, s):
     if re.search(r"\d\s*[X×]\s*\d", q) or len(nums) != 1:
         return None
     n = verify.amount(nums[0])
-    unit = re.sub(r"[^A-Z]", "", q) or verify.flat(row.get("uom"))
-    return n * float(s.get("pcs_per_uom") or 1) if unit in CARTON else n
+    words = re.findall(r"[A-Z]+", q) or re.findall(r"[A-Z]+", str(row.get("uom") or "").upper())
+    unit = words[0] if words else ""               # 'CRT / PCS' (Indomaret's cartons / pieces columns): its first
+    return n * float(s.get("pcs_per_uom") or 1) if unit in CARTON else n     # word says what one number counts
 
 
 def price_fits(price, s):
@@ -110,6 +113,25 @@ def _words4(text):
     return set(re.findall(r"[A-Z]{4,}", str(text or "").upper()))
 
 
+def _same_word(a, b):
+    """Two product words the same, as the customer and SAMB abbreviate them: GUMFILLE / GUMFILLED, CHUP / CHUPS,
+    STRAWBERRY / STRAW (one starts the other, four letters or more), or one letter apart in words of six or more."""
+    if a == b or (min(len(a), len(b)) >= 4 and (a.startswith(b) or b.startswith(a))):
+        return True
+    return min(len(a), len(b)) >= 6 and abs(len(a) - len(b)) <= 1 and satellite.edits(a, b) <= 1
+
+
+def shared_words(a, b):
+    """How many of a's product words b has too (_same_word), each counted once."""
+    left, n = set(_words4(b)), 0
+    for w in _words4(a):
+        hit = next((x for x in left if _same_word(w, x)), None)
+        if hit:
+            left.discard(hit)
+            n += 1
+    return n
+
+
 def row_fits(doc_type, r, s, strong=False):
     """Does a customer row look like this SO line, on the page's own evidence (no person, no product map)? Its
     printed amount (as ordered; a receipt's also as received), its pieces and price, or two shared words of four
@@ -126,7 +148,7 @@ def row_fits(doc_type, r, s, strong=False):
     want = [float(s.get("qty_pcs") or 0)] + ([float(s["cgr_qty"])] if doc_type == "TTG" and s.get("cgr_qty") is not None else [])
     if q is not None and any(abs(q - w) < 0.001 for w in want) and price_fits(r.get("price"), s):
         return True
-    return not strong and len(_words4(r.get("desc")) & _words4(s.get("description"))) >= 2
+    return not strong and shared_words(r.get("desc"), s.get("description")) >= 2
 
 
 def fit_count(doc_type, rows, so_lines, strong=False):
@@ -249,6 +271,26 @@ def match(docs, so_lines, pmap, decisions):
             i = likes[0][1]
             take(page, i, j, "amount", "matched", f"its printed amount {amount_str(r_amount(rows, i))} is SO line "
                  f"{s['line_no']}'s ({float(s['line_amount']):,.2f})" + (" and the name is the closest" if len(who) > 1 else ""))
+    for page, dt, rows in docs:                                          # a row by its product words, again
+        for _ in range(len(rows)):                                       # while a pair frees the next (Hari Hari:
+            claims = {}                                                  # OCEAN FISH fits two lines until the
+            for r in rows:                                               # KITTEN one takes its own)
+                if (page, r["i"]) in out or r["bonus"]:
+                    continue
+                shared = sorted(((shared_words(r["desc"], s.get("description")), j)
+                                 for j, s in enumerate(so_lines) if free(page, j)), reverse=True)
+                if shared and shared[0][0] >= 2 and (len(shared) == 1 or shared[1][0] < shared[0][0]):
+                    claims.setdefault(shared[0][1], []).append((shared[0][0], r["i"]))
+            took = 0
+            for j, who in claims.items():
+                who.sort(reverse=True)
+                if len(who) > 1 and who[1][0] == who[0][0]:
+                    continue                                             # two rows, one line, equally alike
+                take(page, who[0][1], j, "words", "matched",
+                     f"the only SO line sharing {who[0][0]} product words with it ({so_lines[j]['description']})")
+                took += 1
+            if not took:
+                break
     po_line = {r["code"]: out[(page, r["i"])]["line"] for page, dt, rows in docs if dt == "PO" for r in rows
                if r["code"] and out.get((page, r["i"]), {}).get("status") == "matched"}
     for page, dt, rows in docs:                                          # a TTG row by its PO row

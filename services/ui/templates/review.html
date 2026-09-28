@@ -8,14 +8,27 @@
       customer's row is (once: the product map then knows it), accepts a difference with its reason, and approves the
       bundle when nothing is left.</p>
   </section>
+  <section class="rv-publish">
+    {% if just_published is not none %}<p><strong>Published {{ just_published }} bundle{{ '' if just_published == 1 else 's' }}.</strong></p>{% endif %}
+    {% if ready %}
+    <form method="post" action="/review/publish">
+      <input type="hidden" name="batch" value="{{ batch }}">
+      <strong>{{ ready }} bundle{{ '' if ready == 1 else 's' }} finished</strong> (auto_ok or reviewed): publish them to
+      Satellite's document tables, with one PDF per SOR.
+      <input name="by" placeholder="your name" size="12" required> <button type="submit">Publish</button>
+    </form>
+    <p class="muted small">They are checked once more first; a bundle with anything left is never published.</p>
+    {% else %}<p class="muted">No finished bundle to publish.</p>{% endif %}
+  </section>
   <table class="grid">
     <thead><tr><th>SOR</th><th>Customer</th><th>Status</th><th>Checks</th><th>What is left</th></tr></thead>
     <tbody>
     {% for r in rows %}
-      <tr class="{{ 'ok' if r.status in ('auto_ok', 'reviewed') else 'warn' }}">
+      <tr class="{{ 'ok' if r.status in ('auto_ok', 'reviewed', 'published') else 'warn' }}">
         <td class="mono"><a href="/review/{{ r.sor_no }}?batch={{ batch }}">{{ r.sor_no }}</a></td>
         <td>{{ r.customer_name or '' }}</td>
         <td>{{ r.status }}{% if r.reviewed_by %} <span class="muted">by {{ r.reviewed_by }}</span>{% endif %}
+          {% if r.status == 'published' %} · <a href="/documents/{{ r.sor_no }}.pdf">PDF</a>{% endif %}
           {% if r.hold_reason %}<span class="muted">({{ r.hold_reason }})</span>{% endif %}</td>
         <td class="mono">✓{{ r.counts.pass }}{% if r.counts.accepted %} ☑{{ r.counts.accepted }}{% endif %}
           ✗{{ r.counts.fail }} ?{{ r.counts.unknown }}</td>

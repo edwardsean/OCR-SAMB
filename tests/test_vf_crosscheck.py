@@ -23,8 +23,7 @@ def page(doc_type, header, verdicts, lines=(), line_verdicts=(), outcome="clear"
             "checks": {"header": verdicts, "lines": list(line_verdicts)}, "outcome": outcome}
 
 
-def boots(po_ok=OK, po_total="1126006.00", grn_total="1126006.00", grn_ok=OK, cgr=4, rejected=0, reason=None,
-          received=1.0):
+def boots(po_ok=OK, po_total="1126006.00", grn_qty="4", cgr=4, rejected=0, reason=None, received=1.0):
     line = {**LINE, "cgr_qty": cgr, "rejected_qty": rejected, "reject_reason": reason,
             "invoice_amount": round(DPP * received, 2), "invoice_qty": cgr}
     so = {**SO, "dpp": round(DPP * received, 2), "ppn": round(PPN * received, 2), "total": round(TOTAL * received, 2)}
@@ -33,8 +32,8 @@ def boots(po_ok=OK, po_total="1126006.00", grn_total="1126006.00", grn_ok=OK, cg
                      {"total": po_ok, "ppn": OK, "vendor_name": OK},
                      [{"product_code": "K6N302030561", "qty": "4", "uom": "EA", "unit_price": "63,361", "row_text": ""}],
                      [{"qty": CHECK, "unit_price": OK}]),
-             5: page("TTG", {"posting_date": "2026-09-10", "total": grn_total}, {"posting_date": OK, "total": grn_ok},
-                     [{"item_code": "K6N302030561", "qty": "4", "uom": "EA", "row_text": ""}], [{"qty": CHECK}])}
+             5: page("TTG", {"posting_date": "2026-09-10"}, {"posting_date": OK},
+                     [{"item_code": "K6N302030561", "qty": grn_qty, "uom": "EA", "row_text": ""}], [{"qty": CHECK}])}
     docs = [(3, "FP"), (4, "PO"), (5, "TTG")]
     rows = [(n, t, matching.rows_of(t, pages[n]["fields"])) for n, t in docs if t != "FP"]
     m = matching.match(rows, [line], {}, {})
@@ -53,7 +52,7 @@ def test_the_po_and_the_order_agree_up_to_a_few_rupiah_of_rounding():
 def test_an_ai_reading_counts_within_the_allowance():
     """Tesseract couldn't read the PO's total or the receipt's: the AI's readings fit Satellite, so they pass. The
     rows only explain (a row's quantity never decides)."""
-    c, _ = boots(po_ok=CHECK, grn_ok=CHECK)
+    c, _ = boots(po_ok=CHECK)
     assert c["fp_po_total"]["status"] == c["received"]["status"] == "pass"
     assert c["fp_po_lines"]["status"] == "info"
     c, _ = boots(po_ok=CHECK, po_total="1126100.00")  # beyond, only the AI read it: it looks again first
@@ -61,18 +60,20 @@ def test_an_ai_reading_counts_within_the_allowance():
 
 
 def test_a_receipt_that_shows_the_tolakan_passes_and_it_is_named():
-    c, _ = boots(grn_total=f"{TOTAL / 2:.2f}", cgr=2, rejected=2, reason="TOLAK TOKO ( OVER STOCK )", received=0.5)
+    """A receipt is compared in quantities with what Satellite received (the mentors, 2026-09-28): 2 of 4 received."""
+    c, _ = boots(grn_qty="2", cgr=2, rejected=2, reason="TOLAK TOKO ( OVER STOCK )", received=0.5)
     assert c["received"]["status"] == "pass" and "tolakan" in c["received"]["why"]
     assert c["received"]["tolakan"] == ["line 10: 2 pieces (TOLAK TOKO ( OVER STOCK ))"]
     assert c["fp_po_total"]["status"] == "pass"         # the order side is still the order: the FP never changes
 
 
 def test_a_receipt_that_disagrees_with_what_satellite_received():
-    # the receipt prints the whole order, Satellite's goods receipt records half rejected
-    c, _ = boots(grn_total="1126006.00", cgr=2, rejected=2, reason="TOLAK TOKO", received=0.5)
-    assert c["received"]["status"] == "fail" and "tolakan" in c["received"]["why"]
-    c, _ = boots(grn_total="1126006.00", grn_ok=CHECK, cgr=2, rejected=2, reason="TOLAK TOKO", received=0.5)
-    assert c["received"]["status"] == "unknown" and c["received"]["ask"]   # only the AI read it: look again first
+    # the receipt shows the whole order, Satellite's goods receipt records half rejected (or the AI read the ordered
+    # column): a person looks, never a pass
+    c, _ = boots(grn_qty="4", cgr=2, rejected=2, reason="TOLAK TOKO", received=0.5)
+    assert c["received"]["status"] == "fail" and "shows 4 pieces, Satellite received 2" in c["received"]["why"]
+    c, _ = boots(grn_qty="2 x 24")                                          # a pack size, not a quantity
+    assert c["received"]["status"] == "unknown" and "no quantity" in c["received"]["why"]
 
 
 def test_the_checks_never_change_a_page():

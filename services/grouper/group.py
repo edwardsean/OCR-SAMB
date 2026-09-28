@@ -267,6 +267,13 @@ def _run(bid, folders):
                 (bid, d["type"], d["pages"][0], d["pages"][-1], d["read"].get("sor"), d["read"].get("po_no"),
                  d["sor"], d["linked_by"], Json(d["keys"]), Json(d["evidence"]), d["hold"], d["suggest"])).fetchone()["id"]
         for s, b in out["bundles"].items():
+            done = c.execute("SELECT id FROM staging.bundle WHERE sor_no=%s AND status='published' ORDER BY id DESC "
+                             "LIMIT 1", (s,)).fetchone()     # published (phase 8): its pages go back to it, never to
+            if done:                                         # a new bundle that would come to Review again
+                for d in b["documents"]:
+                    c.execute("INSERT INTO staging.bundle_document (bundle_id, document_id) VALUES (%s, %s)",
+                              (done["id"], ids[id(d)]))
+                continue
             bundle = c.execute("""
                 INSERT INTO staging.bundle (sor_no, status, hold_reason, folder)
                 VALUES (%s, %s, %s, %s)

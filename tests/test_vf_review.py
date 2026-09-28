@@ -55,7 +55,7 @@ def test_the_review_screens_answer():
     r = httpx.get(f"{UI}/review", params={"batch": BID}, timeout=60)
     assert r.status_code == 200 and "SOR26110257250" in r.text
     r = httpx.get(f"{UI}/review/SOR26110257250", params={"batch": BID}, timeout=60)
-    assert r.status_code == 200 and "CGR" in r.text and "What is left" in r.text
+    assert r.status_code == 200 and "CGR" in r.text and ("What is left" in r.text or "Published" in r.text)
 
 
 # ------------------------------------------------------------------------------------------ S5: anomalies only
@@ -99,10 +99,28 @@ def test_review_asks_only_for_what_is_left():
         r = httpx.get(f"{UI}/review/{sor}", params={"batch": batch}, timeout=60)
         top = r.text.split('<details class="rv-all"')[0]
         cal = sum(len(c["asks"]) for c in [v["calibration"]] if c)
-        allowed = sum(1 + len(i.get("fix") or []) + len(i.get("fields") or []) for i in v["open_items"]) + cal + \
+        allowed = sum(1 + len(i.get("fix") or []) + len(i.get("fields") or [])
+                      + sum(1 for x in i.get("qty_fix") or [] if (x.get("key") and x.get("line")) or not x.get("line"))
+                      for i in v["open_items"]) + cal + \
             (1 if v["can_approve"] else 0)
         assert len(re.findall(r"<form", top)) <= allowed, sor
         for d in v["documents"]:                          # quantity suggestions carry their unit (a bare 48 on a
             for row in d["rows"]:                         # carton row was taken as 48 cartons)
                 for x in row["todo"]:
                     assert x["col"] != "qty" or all(val.endswith(" PCS") for val, _ in x["hints"]), (sor, row["key"])
+
+
+def test_a_person_can_say_a_value_isnt_printed():
+    """7000363700-03 p5: the AI took the receipt's quantity total 190.00 for its money total; the receipt prints none.
+    The answer empties the value (the AI's reading kept), and the bundle never reads the AI's instead."""
+    fields = {"total": {"value": "190.00", "source_text": "190.00"}, "purchase_order_no": {"value": "PO.RCV-1"}}
+    said = {"total": {"value": satellite.NOT_PRINTED, "confirmed_by": "Edward"},
+            "purchase_order_no": {"value": satellite.NOT_PRINTED, "confirmed_by": "Edward"}}
+    f, h = satellite.settle("TTG", fields, {"total": {"verdict": "ok", "by": "text"}}, {}, said)
+    assert f["total"] == {"value": satellite.NOT_PRINTED, "source_text": None, "ai_value": "190.00"}
+    assert h["total"]["by"] == "person" and "not printed" in h["total"]["why"]
+    from common import keys as keymod
+    assert "po_no" not in keymod.derive("TTG", f, "", None, h)                  # no PO number: no key
+    pages = {5: {"doc_type": "TTG", "fields": f, "fields_all": {"total": {"value": "190.00"}},
+                 "checks": {"header": h}}}
+    assert crosscheck._read(pages, [5], "TTG", "total") is None                 # never the AI's 190.00

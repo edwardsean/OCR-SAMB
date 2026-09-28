@@ -222,3 +222,24 @@ def test_a_key_settles_by_its_rows_and_a_misread_never_does():
     assert not matching.rows_tell("PO", fields, "SO28", ["SO29"], lines.get)[0]      # the misread: held
     same = {"A": lines["SO29"], "B": lines["SO29"]}                                    # Boots: one order, ten stores
     assert not matching.rows_tell("PO", fields, "A", ["B"], same.get)[0]
+
+
+def test_a_receipt_whose_number_is_the_po_links_by_it():
+    """7000363700-03 p3, AEON's receiving note: no PO field; RECEIPT NO 10101000125418 is the PO. The AI read the
+    receipt number right and put the contract number OS-073 (read 05-073) in the PO field (2026-09-28)."""
+    sos = {satellite.flat(s): {"sor_no": s, "cpo_no": c, "customer_name": "AEON EASTVARA TANGERANG"}
+           for s, c in (("SOR26110264129", "10101000125418"), ("SOR26110263399", "10101000125428"))}
+    lines = {"SOR26110264129": [{"line_no": 10, "description": "MIE CAP AYAM 2 TELOR 200GR REGULER", "line_amount": 199280,
+                                 "vat": 0, "qty_pcs": 40, "pcs_per_uom": 20, "price_pcs": 4982}],
+             "SOR26110263399": [{"line_no": 10, "description": "SIMPLE ROLL ON 45ML", "line_amount": 1, "vat": 0,
+                                 "qty_pcs": 1, "pcs_per_uom": 1, "price_pcs": 1}]}
+    fields = {"document_no": {"value": "10101000125418", "source_text": "10101000125418"},
+              "purchase_order_no": {"value": "05-073", "source_text": "05-073"},
+              "lines": [{"material_description": "AYAM 2 TELOR MI TELOR LEBAR KERITING 200GR", "qty": "0", "uom": "CT"}]}
+    f, h = satellite.settle("TTG", fields, {"document_no": {"verdict": "ok", "by": "text"},
+                                            "purchase_order_no": dict(CHECK)}, sos, None, lines.get)
+    assert f["purchase_order_no"]["value"] == "10101000125418" and f["purchase_order_no"]["ai_value"] == "05-073"
+    assert h["purchase_order_no"]["by"] == "receipt_no"
+    other = {**fields, "lines": [{"material_description": "PANTENE SHAMPOO 170ML", "qty": "3"}]}   # another's goods
+    assert satellite.settle("TTG", other, {"document_no": {"verdict": "ok", "by": "text"},
+                                           "purchase_order_no": dict(CHECK)}, sos, None, lines.get)[1]["purchase_order_no"]["verdict"] == "check"

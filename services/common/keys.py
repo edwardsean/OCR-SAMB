@@ -9,6 +9,7 @@ so every key says HOW it is confirmed. Grouping may only use confirmed keys.
                             the page names that SO's store and none of the SOs one character away
                = rows       (vlm-first) only the AI read it, it names one SO, and the page's rows fit that SO's lines
                             clearly better than any SO one character away (grouper.matching.rows_tell)
+               = receipt_no (vlm-first) a receipt with no PO number of its own: its receipt number is an SO's Nomor CPO
                = None         unconfirmed: nobody else saw it
 """
 import re
@@ -29,8 +30,10 @@ def in_text(value, classical_text):
 
 
 def val(fields, name):
+    """A field's value; None when a person said the page doesn't print it (satellite.NOT_PRINTED): no key."""
     x = (fields or {}).get(name)
-    return (x or {}).get("value") if isinstance(x, dict) else None
+    v = (x or {}).get("value") if isinstance(x, dict) else None
+    return None if v == "(not printed)" else v
 
 
 def key(value, classical_text, qr=None, kind=None):
