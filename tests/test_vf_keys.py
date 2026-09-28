@@ -197,3 +197,28 @@ def test_a_garbled_box_keeps_the_answer():
     out = openai_vlm._json(raw)
     assert out["sor"]["value"] == "SOR26110254669" and out["sor"]["box"] is None
     assert out["total"]["source_text"] == "2.687.976,00"
+
+
+def test_a_key_settles_by_its_rows_and_a_misread_never_does():
+    """A single-store customer's POs run in sequence (Duta Buah BSD PO.2026.09.32028, …29), so neither Satellite nor
+    the store can vouch for the AI's reading. The page's rows can: amounts and quantities are the order's own
+    (7000363700-03 p6: 6 of 7 rows fit its SO, 2 fit the best neighbour's) (2026-09-28)."""
+    from grouper import matching
+    lines = {"SO29": [{"line_no": 10, "description": "MENTOS ROLL 37GR FRUIT", "line_amount": 72077.76, "vat": 0,
+                       "qty_pcs": 24, "pcs_per_uom": 1, "price_pcs": 3003.24},
+                      {"line_no": 20, "description": "MENTOS ROLL 37GR MINT", "line_amount": 144155.52, "vat": 0,
+                       "qty_pcs": 48, "pcs_per_uom": 1, "price_pcs": 3003.24}],
+             "SO28": [{"line_no": 10, "description": "MENTOS ROLL 37GR FRUIT", "line_amount": 36038.88, "vat": 0,
+                       "qty_pcs": 12, "pcs_per_uom": 1, "price_pcs": 3003.24},
+                      {"line_no": 20, "description": "KOPIKO CANDY 150GR", "line_amount": 99000.00, "vat": 0,
+                       "qty_pcs": 10, "pcs_per_uom": 1, "price_pcs": 9900}]}
+    fields = {"lines": [
+        {"product_description": "MENTOS ROLL FRUIT 37G", "qty": "24", "uom": "PCS", "unit_price": "3004",
+         "row_text": "6 MENTOS ROLL FRUIT 37G 24 PCS 3,004.00 72,086.49"},
+        {"product_description": "MENTOS ROLL MINT 37GR", "qty": "48", "uom": "PCS", "unit_price": "3004",
+         "row_text": "7 MENTOS ROLL MINT 37GR 48 PCS 3,004.00 144,172.97"}]}
+    ok, why = matching.rows_tell("PO", fields, "SO29", ["SO28"], lines.get)
+    assert ok and "2 of 2" in why
+    assert not matching.rows_tell("PO", fields, "SO28", ["SO29"], lines.get)[0]      # the misread: held
+    same = {"A": lines["SO29"], "B": lines["SO29"]}                                    # Boots: one order, ten stores
+    assert not matching.rows_tell("PO", fields, "A", ["B"], same.get)[0]

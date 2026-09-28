@@ -7,6 +7,8 @@ so every key says HOW it is confirmed. Grouping may only use confirmed keys.
                = zoom · second_look · satellite · person   (vlm-first: from the field's final verdict)
                = ship_to    (vlm-first, S4) only the AI read it, it names one SO in Satellite, and the store printed on
                             the page names that SO's store and none of the SOs one character away
+               = rows       (vlm-first) only the AI read it, it names one SO, and the page's rows fit that SO's lines
+                            clearly better than any SO one character away (grouper.matching.rows_tell)
                = None         unconfirmed: nobody else saw it
 """
 import re

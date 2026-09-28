@@ -106,6 +106,61 @@ def amount_fits(amount, s):
     return any(abs(amount - x) <= max(1.0, AMOUNT_FIT * x) for x in (net, net + float(s.get("vat") or 0)))
 
 
+def _words4(text):
+    return set(re.findall(r"[A-Z]{4,}", str(text or "").upper()))
+
+
+def row_fits(doc_type, r, s, strong=False):
+    """Does a customer row look like this SO line, on the page's own evidence (no person, no product map)? Its
+    printed amount (as ordered; a receipt's also as received), its pieces and price, or two shared words of four
+    letters or more (SIMPLE GENTLE …; one brand word isn't enough). strong: amounts and quantities only, which are
+    this order's own (a repeat order of the same products has other quantities)."""
+    if r.get("bonus"):
+        return False
+    if amount_fits(r.get("amount"), s):
+        return True
+    if doc_type == "TTG" and r.get("amount") and amount_fits(r["amount"], {"line_amount": s.get("invoice_amount"),
+                                                                           "vat": 0}):
+        return True
+    q = pieces(r, s)
+    want = [float(s.get("qty_pcs") or 0)] + ([float(s["cgr_qty"])] if doc_type == "TTG" and s.get("cgr_qty") is not None else [])
+    if q is not None and any(abs(q - w) < 0.001 for w in want) and price_fits(r.get("price"), s):
+        return True
+    return not strong and len(_words4(r.get("desc")) & _words4(s.get("description"))) >= 2
+
+
+def fit_count(doc_type, rows, so_lines, strong=False):
+    """How many of the page's rows fit a distinct line of this SO (row_fits), first come first served."""
+    used, n = set(), 0
+    for r in rows:
+        j = next((j for j, s in enumerate(so_lines) if j not in used and row_fits(doc_type, r, s, strong)), None)
+        if j is not None:
+            used.add(j)
+            n += 1
+    return n
+
+
+def rows_tell(doc_type, fields, exact, near, items_of):
+    """A key only the AI read names exactly one SO, with others one character away: do the page's rows say it is
+    that SO? (fits, why) when they fit it clearly better than every SO one character away: at least 2 rows (1 on a
+    one-row page, by amount or quantity), and every neighbour fewer than half as many. Amounts and quantities first
+    (this order's own), then product words too. A misread lands on a neighbour, and the true order is then among the
+    neighbours: its rows fit it at least as well, so the key is held. Boots' one order to ten stores fits them all
+    alike: held (the store decides that, S4)."""
+    rows = [r for r in rows_of(doc_type, fields) if not r["bonus"]]
+    if not rows:
+        return False, "the page has no rows to compare"
+    for strong, kind in ((True, "by amount or quantity"), (False, "by amount, quantity or product words")):
+        e = fit_count(doc_type, rows, items_of(exact), strong)
+        if e < 2 and not (strong and e == 1 and len(rows) == 1):
+            continue
+        rival = max(((fit_count(doc_type, rows, items_of(n), strong), n) for n in near), default=(0, None))
+        if 2 * rival[0] < e:
+            return True, (f"its rows fit {exact} ({e} of {len(rows)}, {kind}); no SO one character away fits more than "
+                          f"{rival[0]}")
+    return False, "its rows don't tell it from the SOs one character away"
+
+
 def load_map(c, chain):
     """{("code", customer code): SAMB item, ("barcode", barcode): SAMB item} for the SO's chain; a barcode from any."""
     out = {}

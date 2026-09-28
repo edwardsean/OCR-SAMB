@@ -371,6 +371,22 @@ def by_store(ship_to, sor, near, sos):
                   "fits it as well")
 
 
+def _rows_decide(name, value, index, doc_type, fields, verdicts, why, items_of):
+    """A key only the AI read that names exactly one SO, with others one character away: the page's rows decide
+    when they fit that SO clearly better than every neighbour (grouper.matching.rows_tell). No model call, so it goes
+    before the store question. On both batches: 22 correct keys settle; a key bent to each neighbour's number (164)
+    never does."""
+    exact, near = near_keys(value, index)
+    if len(exact) != 1 or not near or not items_of or not (fields.get("lines") or []):
+        return why
+    from grouper import matching                          # grouper sits on common; imported when first needed
+    ok, said = matching.rows_tell(doc_type, fields, exact[0], near, items_of)
+    if ok:
+        verdicts[name] = {"verdict": "ok", "by": "rows", "why": f"equals the key of {exact[0]} in Satellite; {said}"}
+        return None
+    return f"{why}; {said}"
+
+
 def _store_decides(name, value, index, sos, ship_to, verdicts, why):
     """S4, for a key only the AI read that matches exactly one SO while others are one character away: the store
     printed on the page decides, when it can (store_can_tell). Not asked yet (ship_to None): the verdict carries
@@ -581,7 +597,8 @@ def settle(doc_type, fields, verdicts, sos, confirmed=None, items_of=None, ship_
                                                  f"equals the Nomor CPO of {sor} in Satellite; no other SO's is one "
                                                  "character away"}
             elif why:
-                why = _store_decides("purchase_order_no", po, index, sos, ship_to, verdicts, why)
+                why = _rows_decide("purchase_order_no", po, index, doc_type, fields, verdicts, why, items_of)
+                why = why and _store_decides("purchase_order_no", po, index, sos, ship_to, verdicts, why)
                 if why and v:
                     v["why"] = f"{v.get('why') or 'not backed by print'}; {why}"
     if doc_type == "TTG":
@@ -594,8 +611,9 @@ def settle(doc_type, fields, verdicts, sos, confirmed=None, items_of=None, ship_
                 verdicts["no_ref"] = {"verdict": "ok", "by": "satellite",
                                       "why": "is an SO in Satellite; no other SO is one character away"}
             elif why and not _ok(verdicts.get("purchase_order_no")):
-                why = _store_decides("no_ref", f if f.startswith("SOR") else "SOR" + f, index, sos, ship_to,
-                                     verdicts, why)
+                key = f if f.startswith("SOR") else "SOR" + f
+                why = _rows_decide("no_ref", key, index, doc_type, fields, verdicts, why, items_of)
+                why = why and _store_decides("no_ref", key, index, sos, ship_to, verdicts, why)
                 if why and v:
                     v["why"] = f"{v.get('why') or 'not backed by print'}; {why}"
         so = _so_of_customer_doc(fields, verdicts, sos)       # 4. the receipt date vs Satellite's CGR date (7b)
