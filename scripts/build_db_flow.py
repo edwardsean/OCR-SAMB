@@ -32,7 +32,9 @@ def _cols_in_parens(s):
     return [c.strip() for c in m.group(1).split(",")] if m else []
 
 
-def parse_schema(files=None):
+def parse_schema(files=None, honor_drop=False):
+    """honor_drop: a DROP TABLE empties the table's columns (it keeps its place), so a table 008 recreates has only
+    008's columns. Off for v1, whose published view predates it (it shows the base file's doc_* columns too)."""
     tables, enums, comments = OrderedDict(), OrderedDict(), {}
     for fname in files or SCHEMA_FILES:
         tag = "base" if fname.startswith("satellite") else fname[:3]
@@ -40,6 +42,14 @@ def parse_schema(files=None):
         i = 0
         while i < len(lines):
             s = lines[i].strip()
+            m = re.match(r"DROP TABLE (?:IF EXISTS )?(\w+\.\w+)", s)
+            if m and honor_drop:
+                if m.group(1) in tables:
+                    tables[m.group(1)]["cols"] = OrderedDict()
+                for k in [k for k in comments if k[0] == m.group(1)]:
+                    del comments[k]
+                i += 1
+                continue
             m = re.match(r"CREATE TABLE (?:IF NOT EXISTS )?(\w+)\.(\w+) \(", s)
             if m:
                 name = m.group(1) + "." + m.group(2)
@@ -496,28 +506,46 @@ GAPS = [
 
 
 # ---------------------------------------------------------------------------
-# 2b. vlm-first (branch vlm-first, database ocr_vf): the same tables plus migration 010
+# 2b. vlm-first (branch vlm-first, database ocr_vf): the same tables plus migrations 010 to 018
 # ---------------------------------------------------------------------------
 SRC_VF, SRC_CLONE, SRC_CTX = "services/worker/vf.py", "services/worker/clone.py", "services/common/context.py"
 SRC_VERIFY, SRC_LESSON = "services/common/verify.py", "services/worker/lesson.py"
+SRC_GROUP, SRC_SAT = "services/grouper/group.py", "services/common/satellite.py"
+SRC_CC, SRC_MATCH = "services/grouper/crosscheck.py", "services/grouper/matching.py"
+SRC_PUB, SRC_FIELDS, SRC_LOAD = "services/publisher/publish.py", "services/common/fields.py", "scripts/load_satellite.py"
+SRC_NOTICE = "services/common/notice.py"
+SO_COLS = ["sor_no", "customer_code", "customer_name", "cpo_no", "tgl_so", "dpp", "ppn", "total", "vat_pct", "billing_no",
+           "cgr_date", "order_dpp", "order_ppn", "order_total", "customer_parent", "status", "cgr_no"]   # satellite.load
+FC_COLS = ["batch_id", "page_no", "field_path", "vlm_value", "source_text", "classical_match", "status", "confirmed_by",
+           "reason", "adjudicated_value", "adjudicator"]                                              # verify.store
+FC_READ = ["field_path", "status", "confirmed_by", "reason"]                                          # verify.load
+LM_COLS = ["batch_id", "page_no", "row_index", "sor_no", "so_line_no", "how", "status", "reason", "customer_code", "ean",
+           "proposed_at"]
+PROV = ["page_ref", "linked_by", "confidence", "source_batch", "source_pages"]      # every Satellite document row
 CALL_COLS = ["pacific_day", "provider", "model", "purpose", "batch_id", "page_no", "ok", "ms", "tokens", "error"]
 PREP_COLS = ["rotation", "osd_conf", "skew_angle", "black_ratio", "dark_band_ratio", "speckle_ratio", "qr_text",
              "layout_score"]
 PHASES_VF = [
     {"key": "F0", "label": "Setup", "title": "vlm-first database", "status": "built",
      "who": "By hand, once", "when": "Before the experiment runs",
-     "does": "On v1's Postgres server, a separate database ocr_vf gets schema/*.sql 001 to 009 plus 010, which adds "
-             "context_version, lesson and model_call and seven page columns. RabbitMQ gets a vhost vf. v1's database "
-             "and queues are never written.",
+     "does": "On v1's Postgres server, a separate database ocr_vf gets schema/*.sql 001 to 009 plus 010 to 018: 010 adds "
+             "context_version, lesson and model_call and seven page columns; 011 to 015 grouping, Satellite's SO lines, "
+             "the bundle checks, Review and each customer's calibration; 016 and 017 two page columns (ship_to, "
+             "fp_title); 018 the notices of bundles that need a person. New migrations are applied by hand. RabbitMQ "
+             "gets a vhost vf (q.pages, q.pages.wait, q.group, q.lessons). v1's database and queues are never written.",
      "story": "Two databases on one server: ocr (v1) and ocr_vf (vlm-first). Same table names, separate rows.",
-     "fx": ["createdb ocr_vf + 10 schema files", "rabbitmqctl add_vhost vf"], "next": "Pages are cloned",
+     "fx": ["createdb ocr_vf + 18 schema files", "rabbitmqctl add_vhost vf"], "next": "Pages are cloned",
      "ops": []},
     {"key": "F1", "label": "Step 1", "title": "Clone pages from v1", "status": "built",
      "who": "python -m worker.clone", "when": "Once per batch",
      "does": "Copies only the batch row, each page's identity and original render key, and people's labels with "
-             "their pile. Nothing v1 computed (rotation, text, type, fields) is copied: vlm-first does all of it itself.",
+             "their pile. Nothing v1 computed (rotation, text, type, fields) is copied: vlm-first does all of it itself. "
+             "A new PDF can also be uploaded on the vf UI (:8001): it posts to n8n's vf-intake workflow, which calls "
+             "vf-ui to split it (v1's intake code, renders under vf/ in MinIO) and to put one ticket per page on q.pages.",
      "story": "Pages 3 to 5 arrive in ocr_vf as bare rows pointing at the same page images v1 rendered.",
-     "fx": ["v1's database, read-only (MAIN_DATABASE_URL)"], "next": "Each page gets a ticket on vhost vf",
+     "fx": ["v1's database, read-only (MAIN_DATABASE_URL)",
+            "upload: n8n webhook /vf-intake → /internal/intake/split → /internal/intake/enqueue → q.pages"],
+     "next": "Each page gets a ticket on vhost vf",
      "ops": [
          op("v1's batch (read-only)", "staging.scan_batch", "SELECT in v1's db",
             r=["id", "file_name", "file_path", "sha256", "scanned_day", "page_total"], src=SRC_CLONE),
@@ -527,7 +555,7 @@ PHASES_VF = [
             r=["page_no", "label", "customer", "note", "labelled_by", "labelled_at", "pile"], src=SRC_CLONE),
          op("the batch", "staging.scan_batch", "INSERT",
             w=["id", "file_name", "file_path", "sha256", "scanned_day", "page_total", "status", "run",
-               "pages_rendered"], note="status 'split', run 1", src=SRC_CLONE),
+               "pages_rendered"], auto=["received_at", "page_done"], note="status 'split', run 1", src=SRC_CLONE),
          op("bare pages", "staging.page", "INSERT",
             w=["batch_id", "page_no", "image_path", "original_path", "thumb_path", "status"],
             note="status 'rendered': nothing v1 computed", src=SRC_CLONE),
@@ -536,7 +564,7 @@ PHASES_VF = [
             note="after the pages: a label references its page", src=SRC_CLONE),
      ]},
     {"key": "F2", "label": "Step 2", "title": "Prepare the image", "status": "built",
-     "who": "vf-worker", "when": "It takes a ticket from q.pages on vhost vf",
+     "who": "vf-worker ×3", "when": "It takes a ticket from q.pages on vhost vf; one worker per page at a time (a lock per page)",
      "does": "Dark bands, upright, straighten, QR. No Tesseract reading: only a quick orientation check picks 90° or "
              "270°. The upright image is written under vf/ in MinIO; v1's keys are never written.",
      "story": "Page 3 is already upright; its QR decodes to SOR26110255837 and its layout looks like SAMB's invoice.",
@@ -549,35 +577,46 @@ PHASES_VF = [
             w=["upright_path", "thumb_upright_path", "prep_version", "quality_flags"] + PREP_COLS, src=SRC_VF),
      ]},
     {"key": "F3", "label": "Step 3", "title": "AI OCR reads every field", "status": "built",
-     "who": "vf-worker + Gemini", "when": "Same ticket",
-     "does": "Gemini gets the page image and the WHOLE combined field list from the active context (20 fields, plus "
-             "line items) and returns each value as printed, with where it is. Most fields are empty on any one page.",
+     "who": "vf-worker + AI OCR (Qwen3-VL-Plus)", "when": "Same ticket",
+     "does": "The AI OCR (Qwen3-VL-Plus on Alibaba Model Studio) gets the page image and the WHOLE combined field list "
+             "from the active context (20 fields, plus line items) and returns each value as printed, with where it is. "
+             "Most fields are empty on any one page. A reading belongs to the list and the model that made it.",
      "story": "Page 4: po_number 4505832724, total 1.126.006, document_title Purchase Order; FP-only fields stay empty.",
-     "fx": ["Gemini gemini-3.8-flash (+ fallbacks), cap 40 calls a day"], "next": "Jev classifies from the reading",
+     "fx": ["dashscope:qwen3-vl-plus (VF_AI_OCR; before: Gemini, then Qwen on Groq)",
+            "free quota 1M tokens, about 6.2K a read; cap 150 calls a day",
+            "q.pages.wait: a call the daily limit or cap stopped parks the page 15 min, then back to q.pages"],
+     "next": "Jev classifies from the reading",
      "ops": [
          op("active context", "staging.context_version", "SELECT", r=["version", "content", "status"], src=SRC_CTX),
          op("seed v1 if none", "staging.context_version", "INSERT",
             w=["version", "status", "content", "created_by", "note"], auto=["created_at"], src=SRC_CTX),
          op("reuse the reading?", "staging.page", "SELECT", r=["fields_all", "fields_version", "vlm_meta"], src=SRC_VF),
-         op("count the call", "staging.model_call", "INSERT", w=CALL_COLS, auto=["id", "at"],
-            note="provider gemini, purpose read_all", src=SRC_VF),
+         op("reserve one call of today's cap", "staging.model_call", "SELECT count + INSERT, one transaction",
+            r=["provider", "pacific_day"],
+            w=["pacific_day", "provider", "model", "purpose", "batch_id", "page_no", "ok", "error"], auto=["id", "at"],
+            note="under a lock per provider, so three workers can't overspend the cap; error 'pending' until the "
+                 "answer; purpose read_all", src=SRC_VF),
+         op("settle the call", "staging.model_call", "UPDATE", w=["ok", "model", "ms", "tokens", "error"], src=SRC_VF),
          op("save · the reading", "staging.page", "same UPDATE",
-            w=["fields_all", "fields_version", "extract_status", "extract_error", "vlm_meta", "model_vlm"], src=SRC_VF),
+            w=["fields_all", "fields_version", "extract_status", "extract_error", "vlm_meta", "model_vlm"],
+            note="fields_version = context hash @ model: another model reads again", src=SRC_VF),
      ]},
     {"key": "F4", "label": "Step 4", "title": "Jev classifies from the reading", "status": "built",
      "who": "vf-worker + Jev", "when": "Same ticket",
      "does": "Jev sees only the AI OCR's reading (never Tesseract) and a question built from the context: each type's "
-             "description, titles and fields. Decided at 0.85; an SOR QR means FP and an FP also needs the QR or the FP "
-             "layout. Otherwise unsure: the page waits for a person. A label, when there is one, decides.",
+             "description, titles and fields. Decided at 0.85; an SOR QR means FP and an FP also needs a witness from the "
+             "image: the QR, the FP layout, or the printed title FAKTUR PENJUALAN (Tesseract on the top 35%, looked for "
+             "only when it can decide). Otherwise unsure: the page waits for a person. A label, when there is one, decides.",
      "story": "Page 3: Jev FP 0.95 plus the QR code: decided FP. Page 5 without a readable title: unsure, held.",
      "fx": ["Jev (TypeSafe) Choice over 8 types"], "next": "Tesseract reads the page",
      "ops": [
-         op("reuse Jev's answer?", "staging.page", "SELECT", r=["type_votes"], src=SRC_VF),
+         op("reuse Jev's answer?", "staging.page", "SELECT", r=["type_votes", "fp_title"],
+            note="the title is looked for at most once per page", src=SRC_VF),
          op("a person's label?", "staging.type_label", "SELECT", r=["label"], src=SRC_VF),
          op("count the call", "staging.model_call", "INSERT", w=CALL_COLS, auto=["id", "at"],
             note="provider jev, purpose classify", src=SRC_VF),
          op("save · the type", "staging.page", "same UPDATE",
-            w=["type_status", "doc_type", "type_guess", "doc_type_conf", "type_votes", "context_version"],
+            w=["type_status", "doc_type", "type_guess", "doc_type_conf", "type_votes", "context_version", "fp_title"],
             note="type_votes.machine keeps the machine's answer when a person labels", src=SRC_VF),
      ]},
     {"key": "F5", "label": "Step 5", "title": "Tesseract reads, after classification", "status": "built",
@@ -594,41 +633,74 @@ PHASES_VF = [
     {"key": "F6", "label": "Step 6", "title": "Check every value", "status": "built",
      "who": "vf-worker, plain code", "when": "Same ticket",
      "does": "The reading is projected onto the page's type (per-type names = Satellite columns). Each value is ✅ when "
-             "printed in Tesseract's text, equal to the QR, or the FP sums add up; else Tesseract re-reads its spot zoomed "
-             "in, and that counts only if no reading of the spot disagrees.",
-     "story": "Page 3's total 1.126.011 isn't in Tesseract's text, but DPP + PPN = Total: ✅ adds_up.",
-     "fx": ["common/verify.py", "worker/zoom.py"], "next": "Unbacked values get a second look",
+             "printed in Tesseract's text or equal to the QR; else Tesseract re-reads its spot zoomed in, and that counts "
+             "only if no reading of the spot disagrees. The 7a rules then take away any ✅ that can't be trusted. An FP "
+             "whose SOR is known is settled by its SO as ordered in Satellite (7b); a person's confirmation settles too.",
+     "story": "Page 3's QR says SOR26110255837, so its SO record settles the CPO, the customer code, DPP, PPN, the total "
+              "1.126.011 and the item lines. The AI's reading is kept beside each value it changed.",
+     "fx": ["common/verify.py", "worker/zoom.py", "common/gates.py (7a)", "common/satellite.py settle (7b)"],
+     "next": "Unbacked values get a second look",
      "ops": [
+         op("Satellite as a witness", "satellite.sor", "SELECT (kept 10 min)", r=SO_COLS,
+            note="the FP's SOR from Satellite only as a pair (SOR and CPO match one SO)", src=SRC_SAT),
+         op("Satellite as a witness", "satellite.sor_item", "SELECT",
+            r=["sor_no", "line_no", "item_code", "description", "pcs_per_uom", "qty_pcs", "line_amount", "vat",
+               "invoice_qty"], note="rows pair with SO lines by name; amounts as ordered", src=SRC_SAT),
+         op("a person as a witness", "staging.field_confirmation", "SELECT", r=["field", "value", "confirmed_by"],
+            src=SRC_SAT),
          op("save · checks", "staging.page", "same UPDATE", w=["fields", "keys", "zoom", "verify_version"],
             note="fields = the combined reading, projected onto the type", src=SRC_VF),
-         op("one row per value", "staging.field_check", "DELETE + INSERT",
-            w=["batch_id", "page_no", "field_path", "vlm_value", "source_text", "classical_match", "status",
-               "confirmed_by", "reason"], note="confirmed_by text · qr · adds_up · zoom · second_look",
-            src=SRC_VERIFY),
+         op("one row per value", "staging.field_check", "DELETE + INSERT", w=FC_COLS,
+            note="confirmed_by text · qr · zoom · second_look · satellite · rows · ship_to · person; a changed value keeps the "
+                 "AI's reading in vlm_value", src=SRC_VERIFY),
      ]},
     {"key": "F7", "label": "Step 7", "title": "Look again, blind", "status": "built",
-     "who": "vf-worker + Gemini", "when": "Header values still ⚠, or required ones empty",
-     "does": "One Gemini call per page with the field names, their meanings and zoomed crops. Never Tesseract's "
-             "reading, never its own first answer. A new answer replaces the old one only if print backs it.",
-     "story": "Page 22's vendor number: asked again, Gemini reads 510232 again; Tesseract doesn't back it, so ⚠.",
-     "fx": ["Gemini, purpose second_look"], "next": "The page's outcome",
+     "who": "vf-worker + AI OCR (Qwen3-VL-Plus)", "when": "A value that decides something is still ⚠",
+     "does": "One AI OCR call per page with the field names, their meanings and zoomed crops. Never Tesseract's "
+             "reading, never its own first answer. A new answer replaces the old one only if print backs it. Then (7b) "
+             "a key only the AI read that matches one SO, with others one character away, gets one blind question: "
+             "which store do the goods go to?",
+     "story": "Page 4's PO number 4505832724: ten Boots POs are one character apart. Asked blind, the AI answers "
+              "BOOTS HARAPAN INDAH BEKASI, which only that SO's store fits, so the key is ✅ by ship_to.",
+     "fx": ["AI OCR, purpose second_look", "AI OCR, purpose ship_to (S4)"], "next": "The page's outcome",
      "ops": [
-         op("count the call", "staging.model_call", "INSERT", w=CALL_COLS, auto=["id", "at"],
-            note="provider gemini, purpose second_look", src=SRC_VF),
-         op("save · second look", "staging.page", "same UPDATE", w=["second_look", "fields_all"],
-            note="evidence kept, so the one-digit test re-runs the whole chain", src=SRC_VF),
+         op("asked before?", "staging.page", "SELECT", r=["second_look", "ship_to"],
+            note="a reused reading keeps its look-again; the store is asked at most once per page", src=SRC_VF),
+         op("reserve one call of today's cap", "staging.model_call", "SELECT count + INSERT, one transaction",
+            r=["provider", "pacific_day"],
+            w=["pacific_day", "provider", "model", "purpose", "batch_id", "page_no", "ok", "error"], auto=["id", "at"],
+            note="purpose second_look or ship_to", src=SRC_VF),
+         op("settle the call", "staging.model_call", "UPDATE", w=["ok", "model", "ms", "tokens", "error"], src=SRC_VF),
+         op("save · second look", "staging.page", "same UPDATE", w=["second_look", "fields_all", "ship_to"],
+            note="evidence kept, so the one-digit test re-runs the whole chain; ship_to NULL = not asked", src=SRC_VF),
      ]},
     {"key": "F8", "label": "Step 8", "title": "Outcome and scoreboard", "status": "built",
      "who": "vf-worker", "when": "End of the ticket",
-     "does": "clear (every §6.1 field ✅), needs_person, or held_unsure. The page is saved only if it isn't read yet and "
-             "the run is current; the scoreboard is recounted as in v1.",
-     "story": "Pages 1 and 3: clear. Page 8 (faint): needs_person, its SOR goes to a person.",
-     "fx": ["outcome: clear · needs_person · held_unsure"], "next": "Unsure pages wait for a person",
+     "does": "clear (what the page decides is settled), waiting_ai (the AI OCR still has to read or look again), "
+             "needs_person, or held_unsure. The page is saved only if it isn't read yet and the run is current; the "
+             "scoreboard is recounted as in v1. A call the daily limit or cap stopped parks the page on q.pages.wait "
+             "(back on q.pages after 15 min); a failed call is tried 3 times. Then the worker wakes vf-grouper on "
+             "q.group (phase 6). Every 3 hours n8n's sweep puts pages still waiting for the AI back on q.pages.",
+     "story": "Pages 1 and 3: clear. A page whose look-again hit the daily limit waits (waiting_ai), never a person.",
+     "fx": ["outcome: clear · waiting_ai · needs_person · held_unsure", "q.pages.wait (TTL 15 min → q.pages)",
+            "q.group · {batch_id, reason}: a wake-up for vf-grouper after every page",
+            "n8n vf-sweep, every 3 h → /internal/vf/sweep", "python -m worker.vf again: what waits, back on q.pages"],
+     "next": "Unsure pages wait for a person; every page wakes vf-grouper",
      "ops": [
          op("save · outcome", "staging.page", "same UPDATE", w=["outcome", "status", "error", "read_at"],
             note="guarded: not read yet, run still current", src=SRC_VF),
          op("scoreboard", "staging.scan_batch", "UPDATE … RETURNING", w=["page_done", "status"],
             r=["page_total", "run"], src=SRC_WORKER),
+         op("a limit or a failed call? park it", "staging.page", "SELECT, then UPDATE",
+            r=["extract_status", "extract_error", "second_look"], w=["status"],
+            note="status 'queued' while its ticket waits on q.pages.wait; a failed call counts as a try (3 at most)",
+            src=SRC_VF),
+         op("n8n sweep, every 3 h: what still waits", "staging.page", "SELECT + UPDATE … RETURNING",
+            r=["second_look", "extract_status", "status", "original_path", "image_path"], w=["status"],
+            note="pages waiting for the AI with no ticket go back on q.pages; nothing is sent while the AI is refused",
+            src=SRC_VF),
+         op("n8n sweep: batches still grouping", "staging.bundle", "SELECT", r=["status"],
+            note="each wakes vf-grouper on q.group", src=SRC_VF),
      ]},
     {"key": "F9", "label": "Step 9", "title": "A person labels", "status": "built",
      "who": "Label screen (vf UI :8001)", "when": "A page is held unsure",
@@ -683,33 +755,278 @@ PHASES_VF = [
             src=SRC_LESSON),
          op("exam score", "staging.context_version", "UPDATE", w=["gate"], src=SRC_LESSON),
      ]},
+    {"key": "P6", "label": "Phase 6", "title": "Grouping", "status": "built",
+     "who": "vf-grouper (grouper.serve on q.group) · vf-ui after a person's confirmation · /bundles (a person)",
+     "when": "A wake-up on q.group after every page (the ones waiting together are one round: each batch groups once), "
+             "after a person's confirmation, or by hand; one at a time per batch (advisory lock)",
+     "does": "Pages become documents (a continuation joins the page before it) and documents join one bundle per SOR, "
+             "only by resolved keys: backed by print, the QR, Satellite, the store on the page or a person. The FP is the "
+             "hub: a TTG joins by the SOR it prints or its PO number = an SO's Nomor CPO, a PO by its PO number. "
+             "Everything else is held with a reason, never guessed.",
+     "story": "Page 3's QR says SOR26110255837. Page 4 (Boots' PO) carries 4505832724, but ten Boots SOs are one "
+              "character apart, so it links only by the store printed on the page or a person's confirmation on "
+              "/bundles. The Good Receipt (page 5) carries the same PO number and needs the same proof.",
+     "fx": ["MinIO vf/bundles/<SOR>/<batch>-p003-FP.png … + manifest", "held: vf/bundles/_held/<SOR>/, _held/unplaced/",
+            "/bundles screen: folders, held documents, the confirm form"],
+     "next": "Each complete bundle is checked",
+     "ops": [
+         op("every page of the batch", "staging.page", "SELECT",
+            r=["page_no", "doc_type", "type_status", "keys", "upright_path"],
+            note="keys say how each value was resolved; a value only the AI read waits", src=SRC_GROUP),
+         op("Satellite's SOs", "satellite.sor", "SELECT (kept 10 min)", r=SO_COLS,
+            note="a PO number links on an exact Nomor CPO with no other SO's one character away", src=SRC_SAT),
+         op("Satellite's SOs", "satellite.sor_item", "SELECT sums", r=["sor_no", "invoice_qty", "qty_pcs", "line_amount",
+                                                                       "vat"],
+            note="per SO: its lines' amounts summed", src=SRC_SAT),
+         op("this batch's last grouping goes", "staging.bundle_document", "DELETE", r=["bundle_id", "document_id"],
+            src=SRC_GROUP),
+         op("this batch's last grouping goes", "staging.document", "DELETE", r=["batch_id"], src=SRC_GROUP),
+         op("empty bundles go", "staging.bundle", "DELETE", r=["id", "status"],
+            note="never a reviewed or published one", src=SRC_GROUP),
+         op("pages → documents", "staging.document", "INSERT",
+            w=["batch_id", "doc_type", "page_from", "page_to", "key_sor", "key_po_no", "resolved_sor", "linked_by", "keys",
+               "evidence", "hold_reason", "suggested_sor"], auto=["id"],
+            note="hold_reason: unread or unsure · no resolved key · keys naming different SOs · …; suggested_sor is a "
+                 "hint for a person, never a link", src=SRC_GROUP),
+         op("already published?", "staging.bundle", "SELECT", r=["id", "sor_no", "status"],
+            note="a published SOR takes its pages back; no second bundle", src=SRC_GROUP),
+         op("documents → SOR", "staging.bundle", "UPSERT", r=["status"], w=["sor_no", "status", "hold_reason", "folder"],
+            auto=["id", "created_at"],
+            note="one open bundle per SOR across batches; held (e.g. fp_missing) ones too; reviewed stays reviewed",
+            src=SRC_GROUP),
+         op("link", "staging.bundle_document", "INSERT", w=["bundle_id", "document_id"], src=SRC_GROUP),
+         op("/bundles · a person confirms a key", "staging.field_confirmation", "UPSERT",
+            w=["batch_id", "page_no", "field", "value", "confirmed_by", "confirmed_at"],
+            note="kept apart from field_check, so it survives every re-check", src=SRC_UI),
+         op("re-check that page, no model call", "staging.field_confirmation", "SELECT",
+            r=["field", "value", "confirmed_by"], src=SRC_SAT),
+         op("re-check that page, no model call", "staging.page", "SELECT",
+            r=["type_status", "doc_type", "fields_all", "classical_text", "ocr_words", "qr_text", "upright_path",
+               "second_look", "zoom", "ship_to"], note="the stored readings, today's rules", src=SRC_VF),
+         op("re-check that page, no model call", "staging.page", "UPDATE",
+            w=["fields", "keys", "outcome", "zoom", "second_look"], note="vf.recheck, then the batch regroups",
+            src=SRC_VF),
+         op("re-check that page, no model call", "staging.field_check", "DELETE + INSERT", w=FC_COLS, src=SRC_VERIFY),
+     ]},
+    {"key": "P7", "label": "Phase 7", "title": "Cross-checks and review", "status": "built",
+     "who": "grouper.crosscheck, after every grouping (vf-grouper) · Review screen (a person) · n8n's needs-you "
+            "schedule · load_satellite.py (by hand)",
+     "when": "Right after grouping, per complete bundle; Review whenever a person opens it",
+     "does": "Two sides, each against Satellite: the PO's total against SAMB's order as ordered, and each receipt row, in "
+             "pieces, against Satellite's goods receipt (CGR) line by line: a receipt carries no amounts. On the order "
+             "side the total decides and rows only explain a gap. A customer's rounding allowance is confirmed once (Rp 5 until then). auto_ok when every "
+             "page is clear and every check passes; otherwise needs_review, with one card per open item on Review. "
+             "vf-grouper sends the pages a bundle asked to look again back to q.pages. Every 5 minutes n8n records the "
+             "bundles that newly need a person as a notice: a count on the Review tab until /review is opened.",
+     "story": "Boots SOR26110255837: the PO's total is within Rp 5 of the order, and the Good Receipt's quantities are "
+              "compared with the CGR. Boots' allowance isn't confirmed yet, so the bundle waits on Review for that one "
+              "question; the answer settles every Boots bundle.",
+     "fx": ["Satellite's export: 37,970 SOs, 177,218 lines (26 Aug–25 Sep 2026), real data, ocr_vf only",
+            "row pairing: map · only line · numbers · amount · words · AI (GLM-4.7-Flash) · a person",
+            "Review: confirm · pair · accept · calibrate · approve",
+            "vf-grouper → q.pages: the pages a bundle asked to look again",
+            "n8n vf-notify, every 5 min → /internal/vf/notify → staging.notice"],
+     "next": "auto_ok and reviewed bundles can be published",
+     "ops": [
+         op("load Satellite's export", "satellite.sor", "UPSERT (COPY)",
+            w=["sor_no", "customer_code", "customer_name", "cpo_no", "tgl_so", "total", "so_no", "dpp", "ppn", "vat_pct",
+               "billing_no", "cgr_no", "cgr_date", "posting_date", "status", "order_dpp", "order_ppn", "order_total",
+               "customer_parent", "loaded_at"],
+            note="by hand; then grouper.group --recheck", src=SRC_LOAD),
+         op("load Satellite's export", "satellite.sor_item", "TRUNCATE + COPY", w=ALL, src=SRC_LOAD),
+         op("the batch's complete bundles", "staging.bundle", "SELECT",
+            r=["id", "sor_no", "status", "fingerprint", "checks", "hold_reason"],
+            note="held and published bundles are never checked", src=SRC_CC),
+         op("their documents", "staging.bundle_document", "SELECT", r=["bundle_id", "document_id"], src=SRC_CC),
+         op("their documents", "staging.document", "SELECT", r=["batch_id", "doc_type", "page_from", "page_to"],
+            src=SRC_CC),
+         op("their pages", "staging.page", "SELECT",
+            r=["page_no", "doc_type", "fields", "outcome", "fields_all", "classical_text", "second_look"], src=SRC_CC),
+         op("their verdicts", "staging.field_check", "SELECT", r=FC_READ, src=SRC_VERIFY),
+         op("the scan day", "staging.scan_batch", "SELECT", r=["scanned_day", "received_at"],
+            note="dates in order, none after the scan", src=SRC_CC),
+         op("the SO", "satellite.sor", "SELECT", r=SO_COLS,
+            note="order side: order_total / order_dpp / order_ppn; the chain's stores by customer_name", src=SRC_SAT),
+         op("the SO's lines", "satellite.sor_item", "SELECT",
+            r=["sor_no", "line_no", "item_code", "description", "pcs_per_uom", "qty_pcs", "price_uom", "price_pcs",
+               "discounts", "line_amount", "vat", "invoice_amount", "cgr_qty", "rejected_qty", "reject_reason"],
+            note="receipt rows in pieces = cgr_qty per line; a shortfall is a tolakan, named with its reason",
+            src=(SRC_CC, SRC_MATCH, SRC_SAT)),
+         op("the customer (its chain)", "satellite.customer_profile", "SELECT",
+            r=["customer_code", "expected_docs", "rounding_allowance", "receipt_shows"],
+            note="expected documents (default FP + TTG); allowance NULL = not confirmed yet", src=SRC_CC),
+         op("product map", "satellite.product_code_map", "SELECT",
+            r=["customer_code", "customer_item_code", "customer_barcode", "samb_material_code"],
+            note="by chain, or by a barcode from any chain", src=SRC_MATCH),
+         op("row pairs so far", "staging.line_match", "SELECT",
+            r=["batch_id", "page_no", "row_index", "so_line_no", "how", "status", "reason"], src=(SRC_CC, SRC_MATCH)),
+         op("accepted differences", "staging.bundle_decision", "SELECT",
+            r=["sor_no", "check_name", "input_print", "reason", "note", "decided_by"],
+            note="hold only while the check prints exactly the same", src=SRC_CC),
+         op("verdict", "staging.bundle", "UPDATE", w=["checks", "status", "fingerprint", "checked_at"],
+            note="grouping (a page waits) · auto_ok · needs_review; a reviewed bundle whose fingerprint changed goes "
+                 "back to needs_review", src=SRC_CC),
+         op("ask the AI again (item 11)", "staging.page", "UPDATE", r=["second_look"], w=["second_look", "outcome"],
+            note="a value only the AI read, beyond its reference: the page waits for its look-again", src=SRC_CC),
+         op("vf-grouper sends those pages back", "staging.page", "UPDATE … RETURNING",
+            r=["status", "second_look", "original_path", "image_path"], w=["status"],
+            note="only 'read' pages whose look-again waits for a bundle's question: 'queued', one ticket each on q.pages",
+            src=SRC_VF),
+         op("AI proposals for rows nothing matched", "staging.line_match", "UPSERT", w=LM_COLS,
+            note="python -m grouper.matching propose, in vf-teacher; 'proposed' until a person confirms",
+            src=SRC_MATCH),
+         op("Review list", "staging.bundle", "SELECT",
+            r=["sor_no", "status", "checks", "hold_reason", "reviewed_by", "reviewed_at"], src=SRC_UI),
+         op("/review/confirm · a value as printed", "staging.field_confirmation", "UPSERT",
+            w=["batch_id", "page_no", "field", "value", "confirmed_by", "row_key", "shown", "confirmed_at"],
+            note="a row cell is lines[<row key>].<column>; then the page is re-checked and the batch regrouped",
+            src=SRC_UI),
+         op("/review/pair · a row", "staging.page", "SELECT", r=["doc_type", "fields"], src=SRC_UI),
+         op("/review/pair · a row", "staging.line_match", "UPSERT", w=LM_COLS,
+            note="how 'person'; refused = none of SAMB's lines, with its reason", src=SRC_UI),
+         op("/review/pair · the chain", "satellite.customer_profile", "INSERT if new",
+            w=["customer_code", "customer_name"], src=SRC_UI),
+         op("/review/pair · the map grows", "satellite.product_code_map", "UPSERT",
+            w=["customer_code", "customer_item_code", "customer_barcode", "samb_material_code", "description",
+               "confirmed_by", "confirmed_at"], note="the same product matches with no AI and no person next time",
+            src=SRC_UI),
+         op("/review/accept · a difference", "staging.bundle_decision", "UPSERT",
+            w=["sor_no", "check_name", "input_print", "reason", "note", "decided_by", "decided_at"], src=SRC_UI),
+         op("/review/calibrate · once per customer", "satellite.customer_profile", "UPSERT",
+            w=["customer_code", "customer_name", "rounding_allowance", "allowance_by", "allowance_at", "receipt_shows",
+               "receipt_by", "receipt_at"], note="every batch holding the chain is regrouped", src=SRC_CC),
+         op("/review/calibrate · which batches", "satellite.sor", "SELECT",
+            r=["sor_no", "customer_parent", "customer_code"], src=SRC_CC),
+         op("/review/approve", "staging.bundle", "UPDATE", w=["status", "reviewed_by", "reviewed_at"],
+            note="reviewed; refused (409) while anything is left", src=SRC_UI),
+         op("n8n needs-you, every 5 min: who needs a person", "staging.bundle", "SELECT",
+            r=["sor_no", "status", "fingerprint", "checks"],
+            note="needs_review, with the customer from satellite.sor; new = a sor + fingerprint no notice had",
+            src=SRC_NOTICE),
+         op("n8n needs-you: what earlier notices had", "staging.notice", "SELECT", r=["items"], src=SRC_NOTICE),
+         op("n8n needs-you: one notice", "staging.notice", "INSERT", w=["items", "text"], auto=["id", "at", "kind"],
+            note="/internal/vf/notify; nothing when no bundle is new", src=SRC_NOTICE),
+         op("the Review tab's count, every page · /review's list", "staging.notice", "SELECT",
+            r=["items", "at", "seen_at"],
+            note="unseen notices whose bundles still need a person (notice.unseen)", src=SRC_NOTICE),
+         op("opening /review", "staging.notice", "UPDATE", w=["seen_at"], note="notice.mark_seen", src=SRC_NOTICE),
+     ]},
+    {"key": "P8", "label": "Phase 8", "title": "Publish", "status": "built",
+     "who": "publisher.publish · the Publish button on /review (a person, for the pilot)",
+     "when": "A person publishes the batch's finished bundles: auto_ok or reviewed, never held",
+     "does": "Grouping and the checks run once more, then each finished bundle in one transaction: typed rows in "
+             "Satellite's document tables with their lines (the final values, after Satellite's and people's "
+             "corrections), one PDF per SOR, and the bundle marked published. A published bundle is never checked again.",
+     "story": "Once the Boots bundle is approved, the publisher writes one FP, one PO and one receipt row with their "
+              "lines, all with sor_no SOR26110255837, stores SOR26110255837.pdf (pages 3–5, upright) and marks the "
+              "bundle published. On the sample, the 7 auto_ok Hero bundles went this way: 21 documents, 7 PDFs.",
+     "fx": ["MinIO vf/documents/SOR<no>.pdf (upright pages, 1-bit, 300 dpi), stored before the rows",
+            "--undo <SOR> takes a publication back (development)"],
+     "next": "Later: Faktur Pajak and Pelunasan",
+     "ops": [
+         op("finished bundles", "staging.bundle", "SELECT", r=["sor_no", "status", "hold_reason"],
+            note="status auto_ok or reviewed, not held", src=SRC_PUB),
+         op("their documents", "staging.bundle_document", "SELECT", r=["bundle_id", "document_id"], src=SRC_PUB),
+         op("their documents", "staging.document", "SELECT",
+            r=["batch_id", "doc_type", "page_from", "page_to", "linked_by"], src=SRC_PUB),
+         op("their pages", "staging.page", "SELECT", r=["page_no", "doc_type", "fields", "fields_all", "upright_path"],
+            note="fields: the final values; '(not printed)' becomes NULL", src=SRC_PUB),
+         op("what backs each value", "staging.field_check", "SELECT", r=FC_READ,
+            note="confidence = the share of a document's values a witness backed", src=SRC_VERIFY),
+         op("lock the bundle", "staging.bundle", "SELECT … FOR UPDATE", r=["id", "status"], src=SRC_PUB),
+         op("foreign key target", "satellite.sor", "FK check", r=["sor_no"]),
+         op("FP header", "satellite.doc_faktur_penjualan", "INSERT",
+            w=["sor_no", "dpp", "ppn", "total", "nomor_cpo", "customer_name", "customer_code"] + PROV, auto=["id"],
+            note="columns = the field list (common/fields.py); one FP per SOR", src=(SRC_PUB, SRC_FIELDS)),
+         op("FP lines", "satellite.doc_faktur_penjualan_line", "INSERT",
+            w=["doc_id", "line_no", "kode_material", "nama_produk", "kemasan", "qty_crt", "qty_pcs"],
+            src=(SRC_PUB, SRC_FIELDS)),
+         op("PO header", "satellite.doc_po", "INSERT",
+            w=["sor_no", "purchase_order_no", "vendor_code", "vendor_name", "ppn", "total", "customer_name"] + PROV,
+            auto=["id"], note="copies of one PO number are one row, with every copy's pages", src=(SRC_PUB, SRC_FIELDS)),
+         op("PO lines", "satellite.doc_po_line", "INSERT",
+            w=["doc_id", "line_no", "product_code", "product_description", "qty", "uom", "unit_price", "discount"],
+            src=(SRC_PUB, SRC_FIELDS)),
+         op("receipt header", "satellite.doc_ttg", "INSERT",
+            w=["sor_no", "posting_date", "document_no", "purchase_order_no", "vendor_number", "no_ref",
+               "customer_name"] + PROV, auto=["id"],
+            note="no amounts: a receipt is compared with the CGR in quantities", src=(SRC_PUB, SRC_FIELDS)),
+         op("receipt lines", "satellite.doc_ttg_line", "INSERT",
+            w=["doc_id", "line_no", "item_code", "material_description", "qty", "uom"], src=(SRC_PUB, SRC_FIELDS)),
+         op("SOR PDF", "satellite.sor_document", "UPSERT", r=["version"],
+            w=["sor_no", "pdf_path", "page_count", "source_batch", "version", "updated_at"],
+            note="version + 1 on a re-publish", src=SRC_PUB),
+         op("published", "staging.bundle", "UPDATE", w=["status", "published_at", "json"],
+            note="json: published_from, documents, page_ref, confidence; same transaction as the rows", src=SRC_PUB),
+         op("/documents/<SOR>.pdf on Review", "satellite.sor_document", "SELECT", r=["sor_no", "pdf_path"],
+            src=SRC_UI),
+     ]},
 ]
 
-# After "clear", vlm-first goes on to grouping and table mapping: v1's planned phases 6–8, under their own keys.
+# After publishing: v1's later stages (Faktur Pajak, Pelunasan), not built on either branch.
 import copy as _copy
 for _ph in list(PHASES):
-    if _ph["key"] in ("6", "7", "8", "L"):
+    if _ph["key"] == "L":
         _c = _copy.deepcopy(_ph)
-        _c["key"] = "P" + _ph["key"]
-        _c["label"] = "Later stages" if _ph["key"] == "L" else "Next: phase " + _ph["key"]
+        _c["key"], _c["label"] = "PL", "Later stages"
         PHASES_VF.append(_c)
 
 VF_PAGE_GROUP = ("vlm-first", ["fields_all", "fields_version", "context_version", "zoom", "second_look", "prep_version",
-                               "outcome"])
+                               "outcome", "ship_to", "fp_title"])
 
-BLURB.update({
+# The vlm-first view's table notes: v1's, plus its own tables, plus what changed since phases 6 to 8 were built.
+BLURB_VF = dict(BLURB)
+BLURB_VF.update({
     "staging.context_version": "vlm-first: Jev's context, versioned. The combined field list and each type's "
                                "description; one active. Only a person makes a proposal active.",
     "staging.lesson": "vlm-first: a person's practice-pile label on a page the machine missed, for the teacher.",
-    "staging.model_call": "vlm-first: every Gemini, Jev and GLM call, counted per Google's day (midnight Pacific).",
+    "staging.model_call": "vlm-first: every AI OCR (Qwen3-VL on Model Studio; earlier Gemini, Groq), Jev and GLM call, "
+                          "counted per day against vlm-first's cap.",
+    "staging.field_check": "One row per value: ok (print · QR · Satellite · the store · a person) or check (why). When "
+                           "Satellite or a person changed a value, vlm_value keeps the AI's reading.",
+    "staging.field_confirmation": "A person's confirmation or correction of one value on one page (/bundles, Review). "
+                                  "Survives every re-check.",
+    "staging.document": "Pages that form one piece of paper, with the resolved keys that tie it to an SOR, or why it "
+                        "is held.",
+    "staging.bundle": "Documents that belong to one SOR, with the bundle's checks and status. One open bundle per SOR "
+                      "across batches; a published one keeps its pages.",
+    "staging.line_match": "Which SO line each PO or receipt row is, and how that is known (map, numbers, amount, words, "
+                          "AI, a person).",
+    "staging.bundle_decision": "A difference a person accepted on Review, with its reason. Holds while the check says "
+                               "exactly the same.",
+    "staging.notice": "vlm-first: bundles that newly need a person, recorded every 5 minutes by n8n's needs-you "
+                      "schedule. Shown in the UI (a count on the Review tab) until /review is opened.",
+    "satellite.sor": "Satellite's sales orders: customer PO number, amounts as ordered and as invoiced, billing, CGR.",
+    "satellite.sor_item": "Satellite's SO lines: SAMB's item, quantities as ordered and as received (CGR), rejections "
+                          "(tolakan) with their reason.",
+    "satellite.customer_profile": "Per chain: the expected documents and the once-per-customer answers (rounding "
+                                  "allowance, what its receipts print).",
+    "satellite.product_code_map": "A customer's item code → SAMB's item, per chain. Grows one confirmed pair at a time.",
+    "satellite.doc_ttg": "Tanda Terima: Receiving Slip, Good Receipt, Goods Receive Note. No amounts: compared with the "
+                         "CGR in quantities.",
+    "satellite.doc_ttg_line": "Receipt rows in the customer's item codes: the quantity received.",
 })
+EXTERNAL_VF = {
+    "satellite.sor": "In ocr_vf: Satellite's real export (37,970 SOs, 26 Aug–25 Sep 2026), loaded by hand with "
+                     "scripts/load_satellite.py. Real customer data: never committed.",
+    "satellite.sor_item": "From the same export (177,218 lines), replaced on every load.",
+    "satellite.customer_profile": "Rows come from Review: a person's pairing or calibration adds the chain.",
+    "satellite.product_code_map": "Grows from Review: a person confirms each new pair once.",
+}
+CUR = {"blurb": BLURB, "external": EXTERNAL}     # the pipeline being rendered (pipe_part sets it)
+
 EX.update({
     ("staging.page", "fields_all"): '{"po_number": {"value": "4505832724", "box": [95, 610, 118, 760]}, …}',
     ("staging.page", "outcome"): "clear", ("staging.page", "context_version"): "1", ("staging.page", "prep_version"): "1",
+    ("staging.page", "ship_to"): '{"value": "BOOTS HARAPAN INDAH BEKASI", …} (page 4)',
     ("staging.context_version", "version"): "1", ("staging.context_version", "status"): "active",
     ("staging.context_version", "created_by"): "seed",
     ("staging.lesson", "label"): "TTG", ("staging.lesson", "status"): "waiting",
-    ("staging.model_call", "provider"): "gemini", ("staging.model_call", "purpose"): "read_all",
+    ("staging.model_call", "provider"): "dashscope", ("staging.model_call", "purpose"): "read_all",
+    ("staging.bundle", "folder"): "vf/bundles/SOR26110255837/",
+    ("satellite.sor", "order_total"): "1126011.00",
+    ("staging.bundle_decision", "reason"): "rounding",
+    ("staging.notice", "kind"): "needs_you", ("staging.notice", "text"): "8 bundles need you: …",
 })
 
 GAPS_VF = [
@@ -718,13 +1035,28 @@ GAPS_VF = [
      "reading, so the threshold needs re-measuring after the real run."),
     ("A context can't be rolled back in the UI",
      "Approving retires the old version. Going back means proposing the old content again; there is no rollback button."),
-    ("Corrected values still have no way back",
-     "Same as v1: a person's correction (phase 7) has no column the pipeline prefers over the AI OCR's value yet."),
     ("Lessons need the page read first",
      "A label on a page the AI OCR hasn't read makes no lesson until the page is read; run worker.lesson backfill then."),
     ("Most v1 page columns are unused here",
      "enhance_version, classify_version, extract_version, clean_path, vlm_read and others stay empty in ocr_vf: vlm-first "
      "uses prep_version, fields_version and context_version instead. They are listed under 'No step touches these'."),
+    ("Publishing waits for a person",
+     "For the pilot, finished bundles are published by the Publish button on Review (or python -m publisher.publish). "
+     "Publishing after every regroup is one call; not decided yet."),
+    ("A document for an SOR already published",
+     "It joins the published bundle but is not published: a later stage (the Faktur Pajak) must append it and bump "
+     "sor_document.version."),
+    ("When is a batch 'done'?",
+     "Bundles are published one by one and held ones wait, so scan_batch.status never becomes done in ocr_vf."),
+    ("Columns grouping and publishing leave empty",
+     "staging.document.customer_code and confidence, and staging.bundle.confidence, have no writer: the confidence "
+     "that is kept lives on Satellite's document rows. They are listed under 'No step touches these'."),
+    ("The base schema still calls satellite.sor a stub",
+     "satellite-documents.sql says CGR quantities live elsewhere and are not modelled. Since 012, ocr_vf holds Satellite's "
+     "real export, with received quantities in satellite.sor_item.cgr_qty."),
+    ("This view shows the document tables as 008 defines them",
+     "008 drops and recreates Satellite's doc_* tables from the field list. The vlm-first view shows only 008's columns "
+     "(so doc_ttg has no total); the v1 view still lists the base file's columns too."),
 ]
 
 
@@ -748,11 +1080,14 @@ def resolve(tables, phases=None, groups=None, counts=(20, 47, 12)):
                 if c not in t["cols"]:
                     errors.append("phase %s %s: %s.%s not in DDL" % (ph["key"], o["label"], o["table"], c))
             if ph["status"] == "built" and o["src"]:
-                if o["src"] not in src_text:
-                    src_text[o["src"]] = open(os.path.join(ROOT, o["src"])).read()
+                srcs = (o["src"],) if isinstance(o["src"], str) else tuple(o["src"])   # several files: any may name it
+                for f in srcs:
+                    if f not in src_text:
+                        src_text[f] = open(os.path.join(ROOT, f)).read()
                 for c in o["r"] + o["w"]:
-                    if c not in o["auto"] and c not in src_text[o["src"]]:
-                        errors.append("phase %s %s: column %s not found in %s" % (ph["key"], o["label"], c, o["src"]))
+                    if c not in o["auto"] and not any(c in src_text[f] for f in srcs):
+                        errors.append("phase %s %s: column %s not found in %s" % (ph["key"], o["label"], c,
+                                                                                  " or ".join(srcs)))
     n_tables, n_page, n_batch = counts
     if len(tables) != n_tables:
         errors.append("expected %d tables, parsed %d" % (n_tables, len(tables)))
@@ -786,7 +1121,7 @@ def derive(tables, phases=None):
                 never.append((tn, cn))
                 continue
             kinds = set().union(*tr.values())
-            if "W" not in kinds and tn not in EXTERNAL:
+            if "W" not in kinds and tn not in CUR["external"]:
                 read_only.append((tn, cn))
             col = t["cols"][cn]
             if t["schema"] == "staging" and "R" not in kinds and not col["pk"] and not col["fk"]:
@@ -886,8 +1221,8 @@ def card_html(tables, trace, ph, tn, ops, n, groups=None):
             '<header><span class="sch">%s</span><h4>%s</h4><span class="cnt">%d of %d columns touched</span>%s</header>'
             '<p class="blurb">%s%s</p>%s<div class="cols"><div class="cols-in">%s</div></div></section></div>') % (
         stub, t["schema"], ph["status"], uid0, e(tn), e(t["schema"]), e(t["table"]), touched, len(t["cols"]),
-        vd_html(tn, "", uid0 + "-t"), e(BLURB.get(tn, "")),
-        (' <span class="ext">%s</span>' % e(EXTERNAL[tn])) if tn in EXTERNAL else "",
+        vd_html(tn, "", uid0 + "-t"), e(CUR["blurb"].get(tn, "")),
+        (' <span class="ext">%s</span>' % e(CUR["external"][tn])) if tn in CUR["external"] else "",
         note_row(tn, "", uid0 + "-t"), "".join(rows))
 
 
@@ -983,19 +1318,22 @@ def overview_svg():
 
 
 def overview_svg_vf():
-    """vlm-first: steps 1–11 in a row; v1's database, MinIO and the hosted models above, ocr_vf's staging below."""
+    """vlm-first: steps 1–11 in a row; v1's database, MinIO and the hosted models above, ocr_vf's staging below; under
+    it, per bundle, phases 6–8 with Satellite (in ocr_vf) and MinIO's bundle folders and PDFs."""
     W, x0, pitch, nw, nh, ny = 1200, 16, 106, 92, 58, 118
     cx = lambda i: x0 + i * pitch + nw / 2
-    steps = [ph for ph in PHASES_VF if ph["key"].startswith("F")][1:]     # its own 11 steps, not the planned phases
+    steps = [ph for ph in PHASES_VF if ph["key"].startswith("F")][1:]     # its own 11 steps
     short = {"F1": "Clone", "F2": "Prepare", "F3": "AI OCR", "F4": "Jev", "F5": "Tesseract", "F6": "Check",
              "F7": "Look again", "F8": "Outcome", "F9": "Label", "F10": "Teacher", "F11": "Approve"}
-    p = ['<svg class="ov" viewBox="0 0 %d 336" role="img" aria-label="vlm-first steps 1 to 11 in order. Step 1 reads '
-         'v1\'s database; steps 3, 4, 7 and 10 call Gemini, Jev and GLM; every step writes ocr_vf\'s staging tables; '
-         'step 11 changes the context the next page uses.">' % W]
+    p = ['<svg class="ov" viewBox="0 0 %d 500" role="img" aria-label="vlm-first steps 1 to 11 in order. Step 1 reads '
+         'v1\'s database; steps 3, 4, 7 and 10 call the AI OCR (Qwen3-VL), Jev and GLM; every step writes ocr_vf\'s '
+         'staging tables; step 11 changes the context the next page uses. Below, per bundle: phase 6 groups pages into '
+         'one bundle per SOR, phase 7 checks each bundle against Satellite and a person reviews what does not pass, '
+         'phase 8 writes Satellite\'s document rows and one PDF per SOR.">' % W]
     p.append('<defs><marker id="ahv" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" '
              'orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="currentColor"/></marker></defs>')
     boxes = [("v1's DB", "read-only", cx(0) - 46, 92), ("MinIO vf/", "upright images", cx(1) - 46, 92),
-             ("Gemini · Jev · GLM (hosted)", "read · classify · look again · teach",
+             ("AI OCR (Qwen3-VL-Plus) · Jev · GLM (hosted)", "read · classify · look again · store · teach",
               cx(2) - 46, cx(9) + 46 - (cx(2) - 46))]
     for name, sub, x, w in boxes:
         p.append('<rect class="fxb" x="%d" y="14" width="%d" height="44" rx="6"/>' % (x, w))
@@ -1004,7 +1342,8 @@ def overview_svg_vf():
     p.append('<rect class="stgb" x="%d" y="226" width="%d" height="44" rx="6"/>' % (x0, 10 * pitch + nw))
     p.append('<text class="bx" x="%d" y="245" text-anchor="middle">staging in ocr_vf</text>' % (x0 + (10 * pitch + nw) / 2))
     p.append('<text class="bs" x="%d" y="261" text-anchor="middle">scan_batch · page · field_check · type_label · '
-             'lesson · model_call · context_version</text>' % (x0 + (10 * pitch + nw) / 2))
+             'lesson · model_call · context_version · field_confirmation · document · bundle · bundle_document · '
+             'line_match · bundle_decision · notice</text>' % (x0 + (10 * pitch + nw) / 2))
     for i, ph in enumerate(steps):
         x = x0 + i * pitch
         p.append('<a href="#phase-%s"><rect class="pn built" x="%d" y="%d" width="%d" height="%d" rx="6"/>'
@@ -1027,13 +1366,51 @@ def overview_svg_vf():
     p.append('<text class="vl" x="%d" y="92">reads</text>' % (cx(0) + 5))
     p.append('<line class="ln fx" x1="%d" y1="%d" x2="%d" y2="60" marker-end="url(#ahv)"/>' % (cx(1), ny, cx(1)))
     p.append('<text class="vl" x="%d" y="92">writes</text>' % (cx(1) + 5))
-    for i, label in ((2, "Gemini"), (3, "Jev"), (6, "Gemini"), (9, "GLM · Jev")):
+    for i, label in ((2, "Qwen3-VL"), (3, "Jev"), (6, "Qwen3-VL"), (9, "GLM · Jev")):
         p.append('<line class="ln fx" x1="%d" y1="%d" x2="%d" y2="60" marker-end="url(#ahv)" marker-start="url(#ahv)"/>'
                  % (cx(i), ny, cx(i)))
         p.append('<text class="vl" x="%d" y="92">%s</text>' % (cx(i) + 5, e(label)))
-    p.append('<path class="ln sat dash" d="M%d 270 V300 H%d V270" marker-end="url(#ahv)"/>' % (cx(10) + 30, cx(2) + 30))
-    p.append('<text class="vl" x="%d" y="322">an approved context: the next page reads and classifies with it</text>'
-             % (cx(4)))
+    p.append('<path class="ln sat dash" d="M%d 270 V296 H%d V270" marker-end="url(#ahv)"/>' % (cx(10) + 30, cx(3) + 20))
+    p.append('<text class="vl" x="%d" y="314">an approved context: the next page reads and classifies with it</text>'
+             % (cx(6) + 40))
+    # per bundle: phases 6–8 (after every page the batch regroups); MinIO's folders left, its PDFs right, Satellite below
+    by, bh = 350, 58
+    nodes = [("P6", "PHASE 6", "Grouping", 236, 150), ("P7", "PHASE 7", "Checks + Review", 426, 170),
+             ("P8", "PHASE 8", "Publish", 636, 150)]
+    for x, w, name, sub in ((x0, 180, "MinIO vf/bundles/", "one folder per SOR"),
+                            (826, 220, "MinIO vf/documents/", "SOR….pdf, one per SOR")):
+        p.append('<rect class="fxb" x="%d" y="%d" width="%d" height="%d" rx="6"/>' % (x, by, w, bh))
+        p.append('<text class="bx" x="%d" y="%d" text-anchor="middle">%s</text>' % (x + w / 2, by + 24, e(name)))
+        p.append('<text class="bs" x="%d" y="%d" text-anchor="middle">%s</text>' % (x + w / 2, by + 41, e(sub)))
+    for key, pk, pt, x, w in nodes:
+        p.append('<a href="#phase-%s"><rect class="pn built" x="%d" y="%d" width="%d" height="%d" rx="6"/>'
+                 '<text class="pk" x="%d" y="%d" text-anchor="middle">%s</text>'
+                 '<text class="pt" x="%d" y="%d" text-anchor="middle">%s</text></a>' % (
+                     key, x, by, w, bh, x + w / 2, by + 22, pk, x + w / 2, by + 41, e(pt)))
+        p.append('<line class="ln stg" x1="%d" y1="%d" x2="%d" y2="272" marker-end="url(#ahv)" '
+                 'marker-start="url(#ahv)"/>' % (x + w / 2, by - 2, x + w / 2))
+        p.append('<text class="vl" x="%d" y="%d">RW</text>' % (x + w / 2 + 6, by - 12))
+    for (_, _, _, x, w), (_, _, _, x2, _) in zip(nodes, nodes[1:]):
+        p.append('<line class="ar" x1="%d" y1="%d" x2="%d" y2="%d" marker-end="url(#ahv)"/>' % (
+            x + w, by + bh / 2, x2 - 2, by + bh / 2))
+    p.append('<line class="ln fx" x1="236" y1="%d" x2="%d" y2="%d" marker-end="url(#ahv)"/>' % (
+        by + bh / 2, x0 + 182, by + bh / 2))
+    p.append('<line class="ln fx" x1="786" y1="%d" x2="824" y2="%d" marker-end="url(#ahv)"/>' % (
+        by + bh / 2, by + bh / 2))
+    sy = 448
+    p.append('<rect class="satb" x="236" y="%d" width="550" height="44" rx="6"/>' % sy)
+    p.append('<text class="bx" x="511" y="%d" text-anchor="middle">satellite in ocr_vf</text>' % (sy + 19))
+    p.append('<text class="bs" x="511" y="%d" text-anchor="middle">sor · sor_item (Satellite\'s export) · '
+             'customer_profile · product_code_map → doc_* · sor_document</text>' % (sy + 35))
+    for (_, _, _, x, w), verb in zip(nodes, ("R", "RW", "W")):
+        c = x + w / 2
+        if verb == "R":
+            p.append('<line class="ln sat" x1="%d" y1="%d" x2="%d" y2="%d" marker-end="url(#ahv)"/>' % (
+                c, sy, c, by + bh + 2))
+        else:
+            p.append('<line class="ln sat" x1="%d" y1="%d" x2="%d" y2="%d" marker-end="url(#ahv)"%s/>' % (
+                c, by + bh, c, sy - 2, ' marker-start="url(#ahv)"' if verb == "RW" else ""))
+        p.append('<text class="vl" x="%d" y="%d">%s</text>' % (c + 6, by + bh + 26, verb))
     p.append("</svg>")
     return "".join(p)
 
@@ -1443,14 +1820,26 @@ JS = r"""
 
 PIPES = [
     {"id": "vf", "name": "vlm-first", "sub": "branch vlm-first · database ocr_vf",
-     "files": SCHEMA_FILES + ["010-vlm-first.sql"], "phases": PHASES_VF, "groups": PAGE_GROUPS + [VF_PAGE_GROUP],
-     "counts": (23, 54, 12), "overview": overview_svg_vf, "gaps": GAPS_VF,
-     "lede": "The experiment: the AI OCR reads every page against one combined field list, Jev classifies from that "
-             "reading, Tesseract checks afterwards, and a teacher model proposes changes to Jev's context that a person "
-             "approves. Same server as v1, its own database (ocr_vf): v1's rows are only ever read.",
-     "caption": "The vlm-first map. Steps 1 to 8 run for every page; 9 to 11 are the learning loop. After a page is "
-                "clear, grouping and publishing (phases 6 to 8, planned) follow as in v1. Click a step to jump to its tables.",
-     "sources": "services/worker/vf.py, clone.py, lesson.py, services/common/context.py, verify.py and services/ui/app.py"},
+     "files": SCHEMA_FILES + ["010-vlm-first.sql", "011-grouping.sql", "012-crosschecks.sql", "013-bundle-checks.sql",
+                              "014-review.sql", "015-customer-calibration.sql", "016-ship-to.sql", "017-fp-title.sql",
+                              "018-notice.sql"],
+     "honor_drop": True, "blurb": BLURB_VF, "external": EXTERNAL_VF,
+     "external_note": "Tables filled from outside the page flow (satellite.sor and sor_item from Satellite's export, "
+                      "customer_profile and product_code_map from Review) are left out.",
+     "phases": PHASES_VF, "groups": PAGE_GROUPS + [VF_PAGE_GROUP],
+     "counts": (28, 56, 12), "overview": overview_svg_vf, "gaps": GAPS_VF,
+     "lede": "The experiment: the AI OCR (Qwen3-VL-Plus) reads every page against one combined field list, Jev "
+             "classifies from that reading, Tesseract and Satellite check afterwards, and a teacher model proposes "
+             "changes to Jev's context that a person approves. Then pages group into one bundle per SOR, each bundle is "
+             "checked against Satellite (Review for what doesn't pass), and a person publishes the finished ones. Same "
+             "server as v1, its own database (ocr_vf): v1's rows are only ever read.",
+     "caption": "The vlm-first map. Steps 1 to 8 run for every page (three vf-workers on q.pages); 9 to 11 are the "
+                "learning loop. After every page the worker wakes vf-grouper (q.group), which regroups the batch (phase 6) "
+                "and checks its bundles (phase 7); a person publishes the finished ones (phase 8). Click a step to jump "
+                "to its tables.",
+     "sources": "services/worker/vf.py, clone.py, lesson.py, services/common/context.py, verify.py, satellite.py, "
+                "fields.py, notice.py, services/grouper/group.py, crosscheck.py, matching.py, services/publisher/publish.py, "
+                "scripts/load_satellite.py and services/ui/app.py"},
     {"id": "v1", "name": "v1", "sub": "branch main · database ocr",
      "files": SCHEMA_FILES, "phases": PHASES, "groups": PAGE_GROUPS, "counts": (20, 47, 12), "overview": overview_svg,
      "gaps": GAPS,
@@ -1465,7 +1854,8 @@ PIPES = [
 
 def pipe_part(pipe):
     """Everything for one pipeline: its map, its steps, its matrix, its findings and its gaps."""
-    tables, enums = parse_schema(pipe["files"])
+    tables, enums = parse_schema(pipe["files"], pipe.get("honor_drop", False))
+    CUR.update(blurb=pipe.get("blurb", BLURB), external=pipe.get("external", EXTERNAL))
     resolve(tables, pipe["phases"], pipe["groups"], pipe["counts"])
     trace, cover, order, never, read_only, write_only = derive(tables, pipe["phases"])
     pid = pipe["id"]
@@ -1482,7 +1872,7 @@ def pipe_part(pipe):
     d.append('<figure class="ovf">%s<figcaption>%s</figcaption></figure>' % (pipe["overview"](), e(pipe["caption"])))
     d.append('<h2 class="sec" id="steps-%s">Step by step</h2><p class="sec-lede">%d tables, %d columns, parsed from '
              '<code>schema/*.sql</code>%s. Only what a step touches is listed under it; the matrix below shows the rest.</p>'
-             % (pid, len(tables), ncols, " (001 to 010)" if pid == "vf" else " (001 to 009)"))
+             % (pid, len(tables), ncols, " (001 to 018)" if pid == "vf" else " (001 to 009)"))
     d.append(ledger)
     d.append('<h2 class="sec" id="matrix-%s">Which %s touch which table</h2><p class="sec-lede">Click a cell to jump '
              'to that table in that step. Dashed cells are planned. A table with few cells is the first place to ask '
@@ -1494,8 +1884,9 @@ def pipe_part(pipe):
              'missing.</p>%s</div>' % ("step" if pid == "vf" else "phase", len(never),
                                        finding_rows(tables, trace, never, pid + "nv")))
     d.append('<div class="fbox"><h3>Read, but nothing in the pipeline writes them (%d)</h3><p>A step depends on a value '
-             'nobody sets. Tables owned outside the pipeline (satellite.sor, customer_profile, product_code_map) are '
-             'left out.</p>%s</div>' % (len(read_only), finding_rows(tables, trace, read_only, pid + "ro")))
+             'nobody sets. %s</p>%s</div>' % (len(read_only), pipe.get("external_note", "Tables owned outside the "
+             "pipeline (satellite.sor, customer_profile, product_code_map) are left out."),
+                                          finding_rows(tables, trace, read_only, pid + "ro")))
     d.append('<div class="fbox"><h3>Staging columns written, never read by a later step (%d)</h3><p>Diagnostics and '
              'provenance. The inspection UI shows most of them to people; no pipeline step uses them. Keep them if a '
              'person needs to see them, otherwise drop.</p>%s</div>' % (len(write_only),

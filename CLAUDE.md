@@ -72,10 +72,22 @@ v1 has no look-again at all: its ⚠ goes straight to a person (phase 5, code on
 | Data-flow artifact | https://claude.ai/artifact/1w8u1n6xxAiYc5PKV2pXAW (v4) shows **both pipelines with a switch** (vlm-first steps F0–F11 plus the planned phases 6–8; v1 unchanged). Build it from THIS branch's `scripts/build_db_flow.py`: `main`'s older generator is v1-only and would drop the vlm-first view |
 
 **Runtime** (`docker-compose.yml` here):
-- Project `samb-ocr-vf`: `vf-worker` ×1, `vf-teacher` ×1 and `vf-ui` on :8001, on v1's network `samb-ocr_default`.
-- `docker compose restart` keeps a container's old environment. After changing `.env`, recreate only the service that needs it: `docker compose up -d --no-deps --force-recreate vf-teacher`. Never recreate `vf-worker` while an `again` runs inside it.
+- Project `samb-ocr-vf`: `vf-worker` ×3, `vf-grouper` ×1, `vf-teacher` ×1 and `vf-ui` on :8001, on v1's network `samb-ocr_default`.
+- **On the queue (Stage 1, 2026-09-29; the user: "we should be using n8n, RabbitMQ queues and multiple workers").** Vhost `vf`:
+  - `q.pages` → **3 page workers** (`worker/main.py` → `vf.handle`). A page is run by one worker at a time (an advisory lock per page; a second ticket finds it read and does nothing). The AI's daily cap is **reserved per call** in one transaction (`vf.reserve`: a 'pending' ledger row), so workers can't overspend it (tested with 8 threads at a cap of 3).
+  - After every page the worker wakes **`vf-grouper`** on `q.group` (`grouper/serve.py`): it takes the wake-ups waiting together as one round, groups each batch once (`group.run`), then sends back to `q.pages` the pages a bundle asked to look again (`crosscheck.ASK_WAIT`, only pages that are 'read': a page with a ticket keeps its one). The page worker no longer groups; `vf.once` still does, for runs outside the queue.
+  - **A call the daily limit or cap stopped** → the worker parks the page on **`q.pages.wait`** (queue TTL `VF_WAIT_MINUTES`, 15; RabbitMQ dead-letters it back to `q.pages`). A parked page comes back and is parked again at the cost of one query while the AI is still refused (`vf.blocked`); never counted as a failure. A refusal naming no time (Model Studio's free quota) waits `NO_TIME_WAIT` (1 h). **A failed call** (bad answer, timeout) is tried 3 times (`MAX_TRIES`), then the page waits for `again` or Stage 2's sweep. A failed call's page waits under "the call failed", so vf-grouper never re-sends it (no bouncing).
+  - Invariant: `status='queued'` ⇔ the page has a ticket (on `q.pages` or in the waiting room).
+  - `worker.vf again` now only puts waiting pages back on `q.pages`.
+  - First run (2026-09-29): vf-grouper sent pages 12 and 14 back by itself; both look-agains ran with no command. Page 12's first call came back empty (JSONDecodeError); the retry through the queue worked.
+- **On n8n (Stage 2, 2026-09-29).** One n8n (v1's container) serves both pipelines; vf's workflows live in this branch's `n8n/` and are loaded by **`scripts/n8n-setup-vf.sh`** (copies them in, imports, publishes, restarts n8n). n8n directs the flow; RabbitMQ and the workers do the work (per-page work in n8n would be 6,800 executions a day).
+  - **`vf-intake`** (webhook `/webhook/vf-intake`): vf-ui's upload posts to it (no background thread any more; if n8n refuses, the upload says to run the setup script) → `http://vf-ui:8000/internal/intake/split` → `/internal/intake/enqueue` → `q.pages`. Checked end to end with a synthetic one-page PDF: n8n → split → vf-worker-3 read it → vf-grouper grouped it 2 s later (then the test batch was removed).
+  - **`vf-sweep`** (every 3 h): `/internal/vf/sweep` → `vf.sweep`: pages still waiting for the AI with no ticket go back on `q.pages` (a page whose calls failed gets one more try per sweep), and batches with a bundle in `grouping` regroup. Nothing is sent while the AI is refused.
+  - **`vf-notify`** (every 5 min): `/internal/vf/notify` → `common/notice.py record`: bundles that newly need a person (`needs_review`, a sor + fingerprint no earlier notice had) become one row in **`staging.notice`** (`schema/018-notice.sql`). The UI shows them only in the UI for now (the user's choice): a red count on the Review tab (`_needs_you` in `ctx`) and "New since you last looked" on /review, which marks them seen. A channel (Telegram, email) is one more n8n node. First notice by n8n itself: 15:10 WIB, "8 bundles need you".
+  - The Status page lists n8n and vf-grouper (8 services).
+- `docker compose restart` keeps a container's old environment. After changing `.env`, recreate only the service that needs it: `docker compose up -d --no-deps --force-recreate vf-teacher`. Recreate the page workers with `--force-recreate vf-worker` (a plain `up -d` can leave the first replica on old code). A worker stopped mid-page leaves its ticket unacknowledged: RabbitMQ gives it to another worker.
 - Database `ocr_vf`, RabbitMQ vhost `vf`, MinIO keys under `vf/`. It reads v1's page renders and, read-only, v1's DB (`MAIN_DATABASE_URL`).
-- **Upload works here too (the user, 2026-09-25: "i want a fresh start").** http://localhost:8001/upload stores the PDF under `vf/scans/`, and a background thread in vf-ui runs `intake.split` + `intake.enqueue` itself (n8n's intake is v1's; `/internal/intake/*` stay 403). Renders go under `vf/pages/<batch>/` (`intake.PREFIX`), and tickets go on vf's own `q.pages`. vf-worker then prepares every page and reads as many as Groq's budget allows. The rest wait (`waiting_ai`) until `python -m worker.vf again <batch>` runs; it isn't started by itself. The answer key grades only the file `7000356304 - 7000356499.pdf` (`GOLDEN_FILE`), so a new batch is never graded against batch 1's key.
+- **Upload works here too (the user, 2026-09-25: "i want a fresh start").** http://localhost:8001/upload stores the PDF under `vf/scans/` and hands it to n8n's `vf-intake` workflow (Stage 2; before, a background thread in vf-ui split it). Renders go under `vf/pages/<batch>/` (`intake.PREFIX`), and tickets go on vf's own `q.pages`. A label on such a page resumes it too (`app.resumable`: `pages/…` or `vf/pages/…`; until 2026-09-29 only `pages/…` did, so page 12 of 7000363700-03 stayed unsure after its label). The answer key grades only the file `7000356304 - 7000356499.pdf` (`GOLDEN_FILE`), so a new batch is never graded against batch 1's key.
 - **Service names must never be `ui`/`worker`**: n8n calls `http://ui:8000`.
 - Start v1 first; stop vf before `docker compose down` in v1.
 
@@ -84,7 +96,9 @@ v1 has no look-again at all: its ⚠ goes straight to a person (phase 5, code on
 docker compose up -d                                                     # vf-worker + vf-ui
 docker compose exec vf-worker python -m worker.clone b-4bab9b736d 1-31,48,52,57   # identities + labels only
 docker compose exec vf-worker python -m worker.vf once b-4bab9b736d 1,4,15 [--v1-reading] [--no-second-look]  # run pages now (dry run: v1's reading instead of Gemini)
-docker compose exec vf-worker python -m worker.vf again b-4bab9b736d [pages]      # what waits for the AI OCR: look-agains not run yet + failed reads; stops at the daily limit
+docker compose exec vf-worker python -m worker.vf again b-4bab9b736d [pages]      # put what waits for the AI OCR back on q.pages (usually not needed: vf-grouper and the waiting room do it)
+docker compose logs -f vf-worker vf-grouper                                       # the queue at work
+./scripts/n8n-setup-vf.sh                                                         # load/replace vf's n8n workflows (intake, sweep, needs-you)
 docker compose exec vf-worker python -m worker.zoom report b-4bab9b736d 1-31      # the zoomed check on v1's values, read-only
 docker compose logs -f vf-teacher                                                 # the teacher at work (it runs by itself)
 docker compose exec vf-worker python -m grouper.group b-4bab9b736d [--recheck]   # group now (it also runs after every page); --recheck after Satellite data changes
@@ -95,7 +109,7 @@ docker compose exec vf-teacher python -m grouper.matching propose b-4bab9b736d  
 docker compose exec vf-worker python -m grouper.crosscheck shadow b-4bab9b736d   # what a bundle-rule change would change (status, checks, items left); writes nothing
 docker compose exec vf-worker python -m publisher.publish b-4bab9b736d          # phase 8: publish the finished bundles (--undo <SOR> takes one back)
 docker exec -i samb-ocr-postgres-1 psql -U ocr -d ocr_vf -v ON_ERROR_STOP=1 < schema/017-fp-title.sql   # a migration, by hand (vf has no postgres of its own)
-docker compose exec -e PYTHONPATH=/app vf-ui pytest -q tests/                   # 235 pass; test_vf_acceptance fails while pages wait for a look-again; v1's phase tests skip
+docker compose exec -e PYTHONPATH=/app vf-ui pytest -q tests/                   # 249 pass; test_vf_acceptance fails while pages wait for a look-again; v1's phase tests skip
 ```
 
 **Which model reads: `VF_AI_OCR`** (in this folder's `docker-compose.yml`)

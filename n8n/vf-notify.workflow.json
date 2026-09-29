@@ -1,0 +1,28 @@
+{
+  "id": "sambOcrVfNotify1",
+  "name": "SAMB OCR vlm-first — needs you",
+  "active": false,
+  "settings": { "executionOrder": "v1" },
+  "pinData": {},
+  "nodes": [
+    {
+      "id": "5e0f7a10-0003-4b6e-8f11-000000000001",
+      "name": "Every 5 minutes",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [0, 0],
+      "parameters": { "rule": { "interval": [{ "field": "minutes", "minutesInterval": 5 }] } }
+    },
+    {
+      "id": "5e0f7a10-0003-4b6e-8f11-000000000002",
+      "name": "Record bundles that newly need a person",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [260, 0],
+      "parameters": { "method": "POST", "url": "http://vf-ui:8000/internal/vf/notify", "options": { "timeout": 60000 } }
+    }
+  ],
+  "connections": {
+    "Every 5 minutes": { "main": [[{ "node": "Record bundles that newly need a person", "type": "main", "index": 0 }]] }
+  }
+}

@@ -14,7 +14,7 @@
       {% for phase, href, label in tabs %}
         <a href="{{ href }}" class="{% if path == href or (href != "/" and path.startswith(href)) %}on{% endif %} {% if phase > built %}later{% endif %}"
            title="{% if phase > built %}Built in phase {{ phase }}{% endif %}">
-          {{ label }}{% if phase > built %}<small>P{{ phase }}</small>{% endif %}
+          {{ label }}{% if phase > built %}<small>P{{ phase }}</small>{% endif %}{% if href == '/review' and needs_you %}<span class="nbadge" title="bundles that newly need you (n8n's notice)">{{ needs_you }}</span>{% endif %}
         </a>
       {% endfor %}
     </nav>

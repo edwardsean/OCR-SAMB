@@ -40,6 +40,7 @@ templates.env.globals["static_v"] = static_v
 VF = os.environ.get("PIPELINE") == "vlm-first"
 PHASE_BUILT = 7 if VF else 5                 # grouping (6) and cross-checks + Review (7) are built on vlm-first
 N8N_WEBHOOK = "http://n8n:5678/webhook/intake"
+N8N_VF_WEBHOOK = "http://n8n:5678/webhook/vf-intake"   # vlm-first's intake workflow (n8n/vf-intake.workflow.json)
 WIB = timezone(timedelta(hours=7))
 TABS = [  # (phase, path, label)
     (0, "/", "Status"),
@@ -56,15 +57,18 @@ if VF:
 
 EXPECTED_TABLES = 20      # 19 from the base schema + staging.type_label (006)
 if VF:
-    EXPECTED_TABLES += 7  # + context_version, lesson, model_call (010), field_confirmation (011), satellite.sor_item
-                          # (012), line_match (013), bundle_decision (014)
+    EXPECTED_TABLES += 8  # + context_version, lesson, model_call (010), field_confirmation (011), satellite.sor_item
+                          # (012), line_match (013), bundle_decision (014), notice (018)
 
 # (name, role, how to probe, console link on the host)
 SERVICES = [
     ("postgres",  "Shared with v1 · database ocr_vf", "probe", None),
     ("rabbitmq",  "Shared with v1 · vhost vf",        "probe", "http://localhost:15672"),
     ("minio",     "Shared with v1 · reads v1's page renders, writes vf/", "probe", "http://localhost:9001"),
-    ("vf-worker", "vlm-first page worker",            "http://vf-worker:8080/health", None),
+    ("n8n",       "Shared with v1 · vf's intake, sweep (3 h) and needs-you (5 min) workflows",
+                  "http://n8n:5678/healthz", "http://localhost:5678"),
+    ("vf-worker", "vlm-first page workers ×3: q.pages (q.pages.wait while the AI refuses)", "http://vf-worker:8080/health", None),
+    ("vf-grouper", "q.group: group, check bundles, send pages back to look again", "http://vf-grouper:8080/health", None),
     ("vf-teacher", "Teacher: q.lessons, one lesson at a time", "http://vf-teacher:8080/health", None),
     ("vf-ui",     "This UI",                          "self",  None),
 ] if VF else [
@@ -132,7 +136,20 @@ def status():
 
 
 def ctx(request, **kw):
-    return {"request": request, "tabs": TABS, "built": PHASE_BUILT, "path": request.url.path, **kw}
+    return {"request": request, "tabs": TABS, "built": PHASE_BUILT, "path": request.url.path,
+            "needs_you": _needs_you(), **kw}
+
+
+def _needs_you():
+    """vlm-first: how many bundles in unseen notices still need a person (the Review tab's count)."""
+    if not VF:
+        return 0
+    try:
+        from common import notice
+        with db.connect() as c:
+            return len(notice.unseen(c))
+    except Exception:                    # before migration 018, or the database is down: no count, never an error
+        return 0
 
 
 @app.get("/", response_class=HTMLResponse)
@@ -158,19 +175,7 @@ def _recent_batches(limit=20):
                             FROM staging.scan_batch ORDER BY received_at DESC LIMIT %s""", (limit,)).fetchall()
 
 
-VF_NO_INTAKE = "In the vlm-first experiment the upload splits the file itself: n8n's intake belongs to v1."
 PREFIX = os.environ.get("STORAGE_PREFIX", "")
-
-
-def _vf_intake(payload):
-    """vlm-first's own intake (n8n's belongs to v1): render every page, then one ticket per page on its q.pages.
-    vf-worker then reads each page. Runs in the background; a failure is kept on the batch (intake.split)."""
-    try:
-        intake.split(payload["batch_id"], payload["object_key"], payload["file_name"], payload["sha256"],
-                     payload["scanned_day"])
-        intake.enqueue(payload["batch_id"])
-    except Exception as e:
-        print(f"intake of {payload['batch_id']} failed: {type(e).__name__}: {e}", flush=True)
 
 
 @app.get("/upload", response_class=HTMLResponse)
@@ -198,32 +203,45 @@ async def do_upload(request: Request, file: UploadFile = File(...)):
     storage.ensure_bucket().put_object(storage.bucket(), key, io.BytesIO(data), len(data), content_type="application/pdf")
 
     payload = {"batch_id": batch_id, "object_key": key, "file_name": file.filename, "sha256": sha, "scanned_day": day}
-    if VF:                                       # its own intake: no n8n (v1's)
-        import threading
-        threading.Thread(target=_vf_intake, args=(payload,), daemon=True).start()
-        return RedirectResponse(f"/batches/{batch_id}", status_code=303)
-    try:
-        r = httpx.post(N8N_WEBHOOK, json=payload, timeout=15)
+    try:                                         # n8n: split into pages, then one ticket per page (vf: its own workflow)
+        r = httpx.post(N8N_VF_WEBHOOK if VF else N8N_WEBHOOK, json=payload, timeout=15)
         r.raise_for_status()
     except Exception as e:
         return templates.TemplateResponse("upload.html", ctx(request, batches=_recent_batches(), dup=None,
             error=f"Stored in MinIO, but n8n did not accept it ({type(e).__name__}: {e}). "
-                  f"Is the intake workflow published? Run scripts/n8n-setup.sh."), status_code=502)
+                  f"Is the intake workflow published? Run {'scripts/n8n-setup-vf.sh' if VF else 'scripts/n8n-setup.sh'}."),
+            status_code=502)
     return RedirectResponse(f"/batches/{batch_id}", status_code=303)
 
 
 @app.post("/internal/intake/split")
-def internal_split(body: dict):
-    if VF:
-        return JSONResponse({"error": VF_NO_INTAKE}, status_code=403)
+def internal_split(body: dict):          # n8n's intake workflow (vf: n8n/vf-intake.workflow.json → http://vf-ui:8000)
     return intake.split(body["batch_id"], body["object_key"], body["file_name"], body["sha256"], body["scanned_day"])
 
 
 @app.post("/internal/intake/enqueue")
 def internal_enqueue(body: dict):
-    if VF:
-        return JSONResponse({"error": VF_NO_INTAKE}, status_code=403)
     return intake.enqueue(body["batch_id"])
+
+
+@app.post("/internal/vf/sweep")
+def internal_sweep():
+    """n8n's "vf — sweep" schedule: pages still waiting for the AI go back on the queue (worker/vf.py sweep)."""
+    if not VF:
+        return JSONResponse({"error": "vlm-first only"}, status_code=404)
+    from worker import vf
+    return vf.sweep()
+
+
+@app.post("/internal/vf/notify")
+def internal_notify():
+    """n8n's "vf — needs you" schedule: one notice for the bundles that newly need a person (common/notice.py)."""
+    if not VF:
+        return JSONResponse({"error": "vlm-first only"}, status_code=404)
+    from common import notice
+    with db.connect() as c:
+        n = notice.record(c)
+    return {"new": bool(n), **({"id": n["id"], "text": n["text"]} if n else {})}
 
 
 def _batch(batch_id):
@@ -887,6 +905,12 @@ def _v1_pile(batch, page):
         return None
 
 
+def resumable(key):
+    """A page with a real image: v1's render (pages/…) or one uploaded here ({PREFIX}pages/…). A clone's stand-in
+    image isn't: its page is never sent to a worker."""
+    return bool(key) and (key.startswith("pages/") or key.startswith(f"{PREFIX}pages/"))
+
+
 def vf_after_label(batch, page, label):
     """A person's label decides the page's type. If the AI OCR already read the page, it resumes at the Tesseract
     check. A practice-pile label on a page the machine was unsure or wrong about becomes a lesson for the teacher."""
@@ -904,8 +928,8 @@ def vf_after_label(batch, page, label):
             c.execute("""INSERT INTO staging.lesson (batch_id, page_no, label) VALUES (%s, %s, %s)
                          ON CONFLICT (batch_id, page_no) DO UPDATE SET label=EXCLUDED.label, status='waiting',
                            answer=NULL, proposal=NULL, error=NULL""", (batch, page, label))
-        resume = p["read"] and (p["original_path"] or p["image_path"] or "").startswith("pages/")
-        if resume:                          # only pages with a real image are resumed
+        resume = p["read"] and resumable(p["original_path"] or p["image_path"])
+        if resume:                          # only pages with a real image (v1's render, or one uploaded here) are resumed
             c.execute("UPDATE staging.page SET status='queued' WHERE batch_id=%s AND page_no=%s", (batch, page))
     if lesson:                              # after the commit above, so the teacher finds the lesson
         try:
@@ -1514,14 +1538,54 @@ def review_list(batch):
                               JOIN staging.document d ON d.id = bd.document_id
                               LEFT JOIN satellite.sor s ON s.sor_no = b.sor_no
                              WHERE d.batch_id = %s""", (batch,)).fetchall()
+        docs = {}
+        for d in c.execute("""SELECT b.sor_no, d.doc_type::text AS t, d.page_from, p.thumb_upright_path AS thumb
+                                FROM staging.bundle b JOIN staging.bundle_document bd ON bd.bundle_id = b.id
+                                JOIN staging.document d ON d.id = bd.document_id
+                                LEFT JOIN staging.page p ON p.batch_id = d.batch_id AND p.page_no = d.page_from
+                               WHERE d.batch_id = %s ORDER BY d.page_from""", (batch,)):
+            docs.setdefault(d["sor_no"], []).append(d)
     order = {"needs_review": 0, "grouping": 1, "reviewed": 2, "auto_ok": 3, "published": 4}
     out = []
     for r in rows:
         checks = (r["checks"] or {}).get("checks") or {}
+        ds = docs.get(r["sor_no"]) or []
+        kinds = []
+        for d in ds:                                   # Invoice · PO ×4 · Receipt
+            name = {"FP": "Invoice", "PO": "PO", "TTG": "Receipt"}.get(d["t"], KIND.get(d["t"], d["t"]))
+            kinds.append(name)
+        chips = [f"{k} ×{kinds.count(k)}" if kinds.count(k) > 1 else k for k in dict.fromkeys(kinds)]
+        fp = next((d for d in ds if d["t"] == "FP"), ds[0] if ds else None)
         out.append({**r, "reasons": (r["checks"] or {}).get("reasons") or [],
                     "counts": {s: sum(1 for x in checks.values() if x["status"] == s)
-                               for s in ("pass", "accepted", "fail", "unknown")}})
+                               for s in ("pass", "accepted", "fail", "unknown")},
+                    "docs": chips, "thumb": f"/img/{fp['thumb']}" if fp and fp.get("thumb") else None,
+                    "issues": _issues(checks, (r["checks"] or {}).get("reasons") or [], r.get("customer_name"))})
     return sorted(out, key=lambda r: (order.get(r["status"], 9), r["sor_no"]))
+
+
+def _issues(checks, reasons, customer):
+    """A bundle's open problems as short chips for the Review list: (label, 'need' | 'wait')."""
+    out = []
+    short = {"fp_po_total": "PO total ≠ SAMB's order", "dates": "Receipt date", "docs_complete": "A document is missing",
+             "store_named": "Another store is named", "sor_in_satellite": "Not in Satellite"}
+    for k, c in checks.items():
+        st = c.get("status")
+        if st not in ("fail", "unknown", "waiting"):
+            continue
+        if k == "received":
+            out.append(("Waiting for the goods receipt", "wait") if st == "waiting" else
+                       ("Receipt quantities" if st == "fail" else "Receipt rows to pair", "need"))
+        elif k == "calibration":
+            out.append((f"First look: {' '.join(str(customer or 'customer').split()[:2])}", "need"))
+        elif k in short:
+            out.append((short[k], "wait" if st == "waiting" or c.get("ask") else "need"))
+    for x in reasons:
+        if "wait for the AI OCR" in x:
+            out.append(("Waiting for the AI", "wait"))
+        elif "wait for a person" in x:
+            out.append(("A page to confirm", "need"))
+    return out
 
 
 def review_view(batch, sor):
@@ -1796,7 +1860,16 @@ def _calibration_view(so, checks):
 def page_review(request: Request, batch: str | None = None, published: int | None = None):
     batch = batch or _latest_batch()
     rows = review_list(batch) if batch else []
+    with db.connect() as c:
+        batches = c.execute("""SELECT DISTINCT s.id, s.file_name, s.received_at FROM staging.scan_batch s
+                                 JOIN staging.document d ON d.batch_id = s.id ORDER BY s.received_at DESC""").fetchall()
+        fresh = []
+        if VF:                           # n8n's notices: shown once here, then seen
+            from common import notice
+            fresh = notice.unseen(c)
+            notice.mark_seen(c)
     return templates.TemplateResponse("review.html", ctx(request, batch=batch, rows=rows, just_published=published,
+                                                         batches=batches, fresh=fresh,
                                                          ready=sum(1 for r in rows if r["status"] in ("auto_ok", "reviewed"))))
 
 

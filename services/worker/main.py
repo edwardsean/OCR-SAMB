@@ -208,10 +208,20 @@ def on_message(ch, method, props, body):
     try:
         if PIPELINE == "vlm-first":            # the experiment on branch vlm-first (worker/vf.py)
             from worker import vf
+            why = ticket.get("parked") and vf.blocked()
+            if why:                            # back from the waiting room, but the AI still can't be asked: no work
+                vf.park(ticket, why)
+                ch.basic_ack(method.delivery_tag); return
             score = vf.handle(ticket)
+            if score not in ("stale", "done"):
+                did = vf.after(ticket)         # a call the limit stopped waits in q.pages.wait; a failed one retries
+                if did:
+                    print(f"{ticket['batch_id']} p{ticket['page_no']}: {did}", flush=True)
+                if score:
+                    queue.wake_grouper(ticket["batch_id"], f"page {ticket['page_no']} was read")
         else:
             score = handle(ticket)
-        if score == "stale":
+        if score in ("stale", "done"):
             ch.basic_ack(method.delivery_tag); return
         if score and score["ring"]:
             ring_bell(ch, ticket["batch_id"], ticket.get("run", 1))
@@ -236,6 +246,8 @@ def run():
             conn = queue.connect()
             ch = conn.channel()
             queue.declare(ch)
+            if PIPELINE == "vlm-first":
+                queue.declare_wait(ch)
             ch.basic_qos(prefetch_count=1)          # one page at a time per worker
             ch.basic_consume(queue.Q_PAGES, on_message)
             print("worker consuming", queue.Q_PAGES)

@@ -777,15 +777,17 @@ def calibrate(chain, name, by, allowance=None, receipt_shows=None):
                 WHERE coalesce(s.customer_parent, s.customer_code) = %s ORDER BY 1""", (chain,))]
 
 
+ASK_WAIT = "the bundle's checks ask the AI to look again at: "
+
+
 def ask_again(c, bid, page, fields):
-    """Item 11 at the bundle: the page's look-again is owed for these fields (canon names). The page waits for the AI
-    (`python -m worker.vf again` runs it, the page's own look-again asks them: vf.second_look_asks), then the bundle
-    is checked again with what it read."""
+    """Item 11 at the bundle: the page's look-again is owed for these fields (canon names). The page waits for the AI:
+    vf-grouper sends it back to the page workers (grouper/serve.py; the page's own look-again asks them:
+    vf.second_look_asks), then the bundle is checked again with what it read."""
     p = c.execute("SELECT second_look FROM staging.page WHERE batch_id=%s AND page_no=%s", (bid, page)).fetchone()
     s = dict((p or {}).get("second_look") or {})
     want = sorted(set(s.get("bundle_asks") or []) | set(fields))
-    s.update(bundle_asks=want, waiting=s.get("waiting") or "the bundle's checks ask the AI to look again at: "
-             + ", ".join(want))
+    s.update(bundle_asks=want, waiting=s.get("waiting") or ASK_WAIT + ", ".join(want))
     c.execute("UPDATE staging.page SET second_look=%s, outcome='waiting_ai' WHERE batch_id=%s AND page_no=%s",
               (Json(s), bid, page))
 

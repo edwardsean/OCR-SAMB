@@ -1,46 +1,117 @@
 {% extends "base.html" %}
 {% block title %}Review{% endblock %}
 {% block main %}
-  <section class="head">
-    <h1>Review <span class="muted">{{ batch or '' }}</span></h1>
-    <p class="lede">Each bundle's documents are checked against each other and against Satellite (Problem Statement
-      §6.3). Here a person settles what the machine couldn't: confirms a value as printed, says which SO line a
-      customer's row is (once: the product map then knows it), accepts a difference with its reason, and approves the
-      bundle when nothing is left.</p>
-  </section>
-  <section class="rv-publish">
+  <style>
+    .rl { max-width: 1080px; margin: 0 auto; padding-bottom: 40px; }
+    .rl-top { display: flex; justify-content: space-between; align-items: flex-end; gap: 16px; flex-wrap: wrap; margin-bottom: 14px; }
+    .rl-top h1 { margin: 0 0 4px; font-size: 22px; }
+    .rl-top select { padding: 6px 8px; border: 1px solid var(--line); border-radius: 8px; background: var(--panel); color: var(--text); }
+    .tally { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 10px; margin: 6px 0 16px; }
+    .tally a { display: block; text-decoration: none; color: var(--text); border: 1px solid var(--line); border-radius: 12px;
+               background: var(--panel); padding: 10px 14px; }
+    .tally a b { display: block; font-size: 26px; line-height: 1.1; }
+    .tally a span { color: var(--muted); font-size: 13px; }
+    .tally .need b { color: var(--bad); } .tally .wait b { color: var(--warn); } .tally .ready b, .tally .done b { color: var(--ok); }
+    .pub { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; border: 1px solid var(--ok); border-radius: 12px;
+           padding: 10px 14px; margin-bottom: 18px; background: color-mix(in srgb, var(--ok) 8%, transparent); }
+    .pub input { width: 130px; padding: 6px 8px; border: 1px solid var(--line); border-radius: 8px; background: var(--panel); color: var(--text); }
+    .grp { margin: 22px 0 8px; font-size: 13px; font-weight: 700; letter-spacing: .04em; text-transform: uppercase; color: var(--muted); }
+    .cards { display: flex; flex-direction: column; gap: 10px; }
+    .bc { display: grid; grid-template-columns: 58px 1fr auto; gap: 14px; align-items: center; text-decoration: none; color: var(--text);
+          border: 1px solid var(--line); border-radius: 12px; background: var(--panel); padding: 10px 14px; }
+    .bc:hover { border-color: var(--accent); }
+    .bc .th { width: 58px; height: 80px; border: 1px solid var(--line); border-radius: 5px; background: #fff center/cover no-repeat; }
+    .bc .who { font-weight: 650; font-size: 15px; }
+    .bc .sor { font-family: var(--mono); color: var(--muted); font-size: 12px; }
+    .bc .docs { color: var(--muted); font-size: 12px; margin-top: 2px; }
+    .bc .iss { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 7px; }
+    .chip { padding: 3px 9px; border-radius: 99px; font-size: 12px; font-weight: 600; }
+    .chip.need { background: color-mix(in srgb, var(--bad) 15%, transparent); color: var(--bad); }
+    .chip.wait { background: color-mix(in srgb, var(--warn) 16%, transparent); color: var(--warn); }
+    .chip.ok { background: color-mix(in srgb, var(--ok) 14%, transparent); color: var(--ok); }
+    .bc .go { color: var(--accent); font-weight: 600; font-size: 14px; white-space: nowrap; }
+    .btn { border: 1px solid var(--line); background: var(--panel); color: var(--text); border-radius: 8px; padding: 7px 12px;
+           font-size: 13px; cursor: pointer; }
+    .btn.primary { background: var(--accent); border-color: var(--accent); color: #fff; font-weight: 600; }
+    .done-list { border: 1px solid var(--line); border-radius: 12px; background: var(--panel); }
+    .done-list div { display: flex; justify-content: space-between; gap: 12px; padding: 8px 14px; border-top: 1px solid var(--line); font-size: 13px; }
+    .done-list div:first-child { border-top: 0; }
+    .empty { color: var(--muted); font-size: 14px; }
+    .fresh { border: 1px solid var(--bad); border-radius: 12px; padding: 10px 14px; margin-bottom: 14px; font-size: 14px;
+             background: color-mix(in srgb, var(--bad) 8%, transparent); }
+    @media (max-width: 640px) { .tally { grid-template-columns: repeat(2, minmax(0, 1fr)); } .bc { grid-template-columns: 44px 1fr; } .bc .go { display: none; } .bc .th { width: 44px; height: 60px; } }
+  </style>
+
+  {% set need = rows|selectattr('status', 'equalto', 'needs_review')|list %}
+  {% set wait = rows|selectattr('status', 'equalto', 'grouping')|list %}
+  {% set ok = rows|selectattr('status', 'in', ['auto_ok', 'reviewed'])|list %}
+  {% set pubd = rows|selectattr('status', 'equalto', 'published')|list %}
+
+  {% macro card(r) %}
+    <a class="bc" href="/review/{{ r.sor_no }}?batch={{ batch }}">
+      <div class="th" style="background-image:url('{{ r.thumb or '' }}')"></div>
+      <div>
+        <div class="who">{{ r.customer_name or 'Unknown customer' }}</div>
+        <div class="sor">{{ r.sor_no }}</div>
+        <div class="docs">{{ r.docs|join(' · ') }}</div>
+        {% if r.issues %}<div class="iss">{% for label, kind in r.issues %}<span class="chip {{ kind }}">{{ label }}</span>{% endfor %}</div>
+        {% elif r.status in ('auto_ok', 'reviewed') %}<div class="iss"><span class="chip ok">✓ {{ 'Approved by ' ~ r.reviewed_by if r.status == 'reviewed' else 'Every check passed' }}</span></div>{% endif %}
+      </div>
+      <span class="go">{{ 'Review ›' if r.status == 'needs_review' else 'Open ›' }}</span>
+    </a>
+  {% endmacro %}
+
+  <div class="rl">
+    <div class="rl-top">
+      <div><h1>Review</h1><span class="muted small">Each order's documents, checked against Satellite. Only what the checks can't settle needs you.</span></div>
+      {% if batches %}
+      <label class="muted small">Scan
+        <select onchange="location.href='/review?batch=' + this.value">
+          {% for b in batches %}<option value="{{ b.id }}" {{ 'selected' if b.id == batch }}>{{ b.file_name }}</option>{% endfor %}
+        </select></label>
+      {% endif %}
+    </div>
+
+    <div class="tally">
+      <a class="need" href="#need"><b>{{ need|length }}</b><span>need you</span></a>
+      <a class="wait" href="#wait"><b>{{ wait|length }}</b><span>waiting (no action)</span></a>
+      <a class="ready" href="#ready"><b>{{ ok|length }}</b><span>ready to publish</span></a>
+      <a class="done" href="#published"><b>{{ pubd|length }}</b><span>published</span></a>
+    </div>
+
+    {% if fresh %}
+    <div class="fresh"><strong>New since you last looked:</strong>
+      {% for f in fresh %}<a href="/review/{{ f.sor }}?batch={{ f.batch }}">{{ f.customer or f.sor }}</a>{{ '' if loop.last else ' · ' }}{% endfor %}
+    </div>
+    {% endif %}
     {% if just_published is not none %}<p><strong>Published {{ just_published }} bundle{{ '' if just_published == 1 else 's' }}.</strong></p>{% endif %}
-    {% if ready %}
-    <form method="post" action="/review/publish">
+    {% if ok %}
+    <form class="pub" method="post" action="/review/publish" id="pubform">
       <input type="hidden" name="batch" value="{{ batch }}">
-      <strong>{{ ready }} bundle{{ '' if ready == 1 else 's' }} finished</strong> (auto_ok or reviewed): publish them to
-      Satellite's document tables, with one PDF per SOR.
-      <input name="by" placeholder="your name" size="12" required> <button type="submit">Publish</button>
+      <strong>{{ ok|length }} bundle{{ '' if ok|length == 1 else 's' }} ready:</strong>
+      <span class="muted small">write them to Satellite, with one PDF per order (checked once more first)</span>
+      <input name="by" id="pubby" placeholder="your name" required> <button class="btn primary">Publish</button>
     </form>
-    <p class="muted small">They are checked once more first; a bundle with anything left is never published.</p>
-    {% else %}<p class="muted">No finished bundle to publish.</p>{% endif %}
-  </section>
-  <table class="grid">
-    <thead><tr><th>SOR</th><th>Customer</th><th>Status</th><th>Checks</th><th>What is left</th></tr></thead>
-    <tbody>
-    {% for r in rows %}
-      <tr class="{{ 'ok' if r.status in ('auto_ok', 'reviewed', 'published') else 'warn' }}">
-        <td class="mono"><a href="/review/{{ r.sor_no }}?batch={{ batch }}">{{ r.sor_no }}</a></td>
-        <td>{{ r.customer_name or '' }}</td>
-        <td>{{ r.status }}{% if r.reviewed_by %} <span class="muted">by {{ r.reviewed_by }}</span>{% endif %}
-          {% if r.status == 'published' %} · <a href="/documents/{{ r.sor_no }}.pdf">PDF</a>{% endif %}
-          {% if r.hold_reason %}<span class="muted">({{ r.hold_reason }})</span>{% endif %}</td>
-        <td class="mono">✓{{ r.counts.pass }}{% if r.counts.accepted %} ☑{{ r.counts.accepted }}{% endif %}
-          ✗{{ r.counts.fail }} ?{{ r.counts.unknown }}</td>
-        <td class="small">{% for x in r.reasons[:3] %}<div>{{ x[:160] }}{{ '…' if x|length > 160 }}</div>{% endfor %}
-          {% if r.reasons|length > 3 %}<div class="muted">+{{ r.reasons|length - 3 }} more</div>{% endif %}</td>
-      </tr>
-    {% else %}
-      <tr><td colspan="5" class="muted">No bundles in this batch yet.</td></tr>
-    {% endfor %}
-    </tbody>
-  </table>
-  <p class="note">✓ passed · ☑ accepted by a person · ✗ failed · ? can't be decided yet. A quantity read from a table row
-    is never taken on its own (the row doesn't show which column it came from), so quantities wait for a person here
-    until the columns can be told apart.</p>
+    {% endif %}
+
+    <div class="grp" id="need">Needs you</div>
+    <div class="cards">{% for r in need %}{{ card(r) }}{% else %}<p class="empty">Nothing needs you in this scan.</p>{% endfor %}</div>
+
+    {% if wait %}<div class="grp" id="wait">Waiting: no action needed</div>
+    <div class="cards">{% for r in wait %}{{ card(r) }}{% endfor %}</div>{% endif %}
+
+    {% if ok %}<div class="grp" id="ready">Ready to publish</div>
+    <div class="cards">{% for r in ok %}{{ card(r) }}{% endfor %}</div>{% endif %}
+
+    {% if pubd %}<div class="grp" id="published">Published</div>
+    <div class="done-list">{% for r in pubd %}<div><span><a href="/review/{{ r.sor_no }}?batch={{ batch }}">{{ r.customer_name or r.sor_no }}</a>
+      <span class="muted mono small"> · {{ r.sor_no }}</span></span><a href="/documents/{{ r.sor_no }}.pdf">PDF</a></div>{% endfor %}</div>{% endif %}
+  </div>
+  <script>
+    (function () {                                        // the name typed on a bundle's page, remembered here too
+      var i = document.getElementById('pubby'); if (!i) return;
+      try { i.value = localStorage.getItem('rv-name') || ''; } catch (e) {}
+      i.addEventListener('input', function () { try { localStorage.setItem('rv-name', i.value); } catch (e) {} });
+    })();
+  </script>
 {% endblock %}

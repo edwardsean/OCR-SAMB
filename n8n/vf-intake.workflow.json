@@ -1,0 +1,52 @@
+{
+  "id": "sambOcrVfIntake1",
+  "name": "SAMB OCR vlm-first — intake",
+  "active": false,
+  "settings": { "executionOrder": "v1" },
+  "pinData": {},
+  "nodes": [
+    {
+      "id": "5e0f7a10-0001-4b6e-8f11-000000000001",
+      "name": "Scan arrives",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [0, 0],
+      "webhookId": "5e0f7a10-0001-4b6e-8f11-0000000000aa",
+      "parameters": { "httpMethod": "POST", "path": "vf-intake", "responseMode": "onReceived", "options": {} }
+    },
+    {
+      "id": "5e0f7a10-0001-4b6e-8f11-000000000002",
+      "name": "Split into pages",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [260, 0],
+      "parameters": {
+        "method": "POST",
+        "url": "http://vf-ui:8000/internal/intake/split",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify($json.body) }}",
+        "options": { "timeout": 900000 }
+      }
+    },
+    {
+      "id": "5e0f7a10-0001-4b6e-8f11-000000000003",
+      "name": "One ticket per page",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [520, 0],
+      "parameters": {
+        "method": "POST",
+        "url": "http://vf-ui:8000/internal/intake/enqueue",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ batch_id: $json.batch_id }) }}",
+        "options": { "timeout": 120000 }
+      }
+    }
+  ],
+  "connections": {
+    "Scan arrives":     { "main": [[{ "node": "Split into pages",    "type": "main", "index": 0 }]] },
+    "Split into pages": { "main": [[{ "node": "One ticket per page", "type": "main", "index": 0 }]] }
+  }
+}

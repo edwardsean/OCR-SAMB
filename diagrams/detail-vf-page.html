@@ -5157,15 +5157,15 @@
           <text data-detail="fine" x="1405" y="126" class="t-security" font-size="8" text-anchor="middle">Never 'close enough'</text>
         </g>
 
-        <g id="node-gem" data-node-id="gem" data-node-label="AI OCR model" tabindex="0" role="button" aria-label="Focus AI OCR model, Qwen on Groq, or Gemini, " aria-pressed="false" data-node-kind="cloud" data-node-sublabel="Qwen on Groq, or Gemini" data-node-tag="One setting: VF_AI_OCR" data-node-context="">
-          <title>AI OCR model · Qwen on Groq, or Gemini ·  · One setting: VF_AI_OCR</title>
+        <g id="node-gem" data-node-id="gem" data-node-label="AI OCR model" tabindex="0" role="button" aria-label="Focus AI OCR model, Qwen3-VL on Model Studio, " aria-pressed="false" data-node-kind="cloud" data-node-sublabel="Qwen3-VL on Model Studio" data-node-tag="One setting: VF_AI_OCR" data-node-context="">
+          <title>AI OCR model · Qwen3-VL on Model Studio ·  · One setting: VF_AI_OCR</title>
           <rect x="460" y="210" width="170" height="80" rx="6" class="c-mask"/>
           <rect x="460" y="210" width="170" height="80" rx="6" class="c-cloud" stroke-width="1.5"/>
           <g aria-hidden="true" data-semantic-sigil="cloud" class="semantic-sigil s-cloud" transform="translate(466 216) scale(0.6875)">
             <path d="M4.3 12.5h7.3a2.4 2.4 0 0 0 .2-4.8 4 4 0 0 0-7.5-1.3A3.1 3.1 0 0 0 4.3 12.5Z"/>
           </g>
           <text data-node-label="" data-detail-anchor="" x="545" y="242" class="t-primary" font-size="11" font-weight="600" text-anchor="middle">AI OCR model</text>
-          <text data-detail="context" x="545" y="258" class="t-muted" font-size="9" text-anchor="middle">Qwen on Groq, or Gemini</text>
+          <text data-detail="context" x="545" y="258" class="t-muted" font-size="9" text-anchor="middle">Qwen3-VL on Model Studio</text>
           <text data-detail="fine" x="545" y="276" class="t-cloud" font-size="8" text-anchor="middle">One setting: VF_AI_OCR</text>
         </g>
 
@@ -5567,7 +5567,7 @@
           <li>&bull; The AI OCR gets the field names, their meanings and zoomed crops</li>
           <li>&bull; Never Tesseract's reading, never its own first answer</li>
           <li>&bull; Same answer twice, or a changed one, stays ⚠ unless print backs it</li>
-          <li>&bull; Never skipped: if it can't run now, the page waits for it (python -m worker.vf again)</li>
+          <li>&bull; Never skipped: if it can't run now, the page waits for it (q.pages.wait brings it back after a daily limit; vf-grouper re-sends a bundle's question)</li>
         </ul>
       </div>
 

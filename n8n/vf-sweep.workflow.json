@@ -1,0 +1,28 @@
+{
+  "id": "sambOcrVfSweep01",
+  "name": "SAMB OCR vlm-first — sweep",
+  "active": false,
+  "settings": { "executionOrder": "v1" },
+  "pinData": {},
+  "nodes": [
+    {
+      "id": "5e0f7a10-0002-4b6e-8f11-000000000001",
+      "name": "Every 3 hours",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [0, 0],
+      "parameters": { "rule": { "interval": [{ "field": "hours", "hoursInterval": 3 }] } }
+    },
+    {
+      "id": "5e0f7a10-0002-4b6e-8f11-000000000002",
+      "name": "Requeue what waits for the AI",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [260, 0],
+      "parameters": { "method": "POST", "url": "http://vf-ui:8000/internal/vf/sweep", "options": { "timeout": 120000 } }
+    }
+  ],
+  "connections": {
+    "Every 3 hours": { "main": [[{ "node": "Requeue what waits for the AI", "type": "main", "index": 0 }]] }
+  }
+}

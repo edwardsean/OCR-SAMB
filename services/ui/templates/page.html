@@ -47,6 +47,8 @@
   <section class="classify">
     <h2>Phase 3 · What is this page?
       {% if p.type_status == 'decided' %}<span class="tchip t-{{ p.doc_type }} big">{{ p.doc_type }}</span>
+      {% elif p.type_status == 'labelled' %}<span class="tchip t-{{ p.doc_type }} big">{{ p.doc_type }}</span>
+        {% set m = v.get('machine') or {} %}<span class="muted">the machine said {{ m.get('doc_type') if m.get('status') == 'decided' else 'unsure' }}</span>
       {% else %}<span class="tchip t-unsure big">unsure</span> <span class="muted">best guess {{ p.type_guess or '—' }} · shown to a person, never used to link</span>{% endif %}
       <span class="muted">— {{ v.get('reason') }}</span></h2>
     <div class="votes">

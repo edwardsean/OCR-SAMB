@@ -1,7 +1,8 @@
 # -*- coding: utf-8 -*-
 """vlm-first diagrams (branch vlm-first), as built. Usage: python3 vf.py <out_dir> <viewer_template.html>
 
-  vlm-first.html            overview: v1's pages → clone → vf-worker → ocr_vf, the UI, and the learning loop
+  vlm-first.html            overview: v1's pages or n8n's intake → q.pages → vf-worker ×3 → ocr_vf; q.pages.wait,
+                            q.group → vf-grouper, n8n's sweep and needs-you; the UI, and the learning loop
   detail-vf-page.html       one page: prepare → AI OCR reads everything → Jev → Tesseract → check → look again
   detail-vf-teacher.html    a label → lesson → GLM → one change → replay → a person approves → active context
 """
@@ -33,40 +34,61 @@ def write(name, title, f, views, cards, back, back_label):
 
 # ============================================================ OVERVIEW
 f = Flow()
-f.node("admin", "external", 0, 0, "Finance admin", "Labels pages, approves", "changes to Jev's context")
-f.node("v1", "database", 1, 0, "v1 (unchanged)", "Upload → n8n → page images", "Its DB is read-only here",
+N8N, MQ = "http://localhost:5678", "http://localhost:15672/#/queues"
+# row 0: n8n's intake and sweep, and the queues around the page workers (Stage 1 and 2, 2026-09-29)
+f.node("intake", "backend", 1, 0, "n8n: vf-intake", "Webhook /vf-intake", "vf-ui splits · 1 ticket per page", live=N8N)
+f.node("sweep", "backend", 2, 0, "n8n: sweep, every 3 h", "Pages still waiting for the AI", "Batches still grouping", live=N8N)
+f.node("wait", "messagebus", 3, 0, "q.pages.wait", "Daily limit or cap: parked", "TTL 15 min → back to q.pages", live=MQ)
+f.node("qgroup", "messagebus", 5, 0, "q.group", "A wake-up after every page", "Taken together: one round", live=MQ)
+f.node("grouper", "backend", 6, 0, "vf-grouper", "Groups, checks the bundles", "Look-again pages → q.pages",
+       live=UI + "/bundles")
+f.node("admin", "external", 0, 1, "Finance admin", "Labels pages, approves", "changes to Jev's context")
+f.node("v1", "database", 1, 1, "v1 (unchanged)", "Upload → n8n → page images", "Its DB is read-only here",
        link="ocr-pipeline.html")
-f.node("clone", "backend", 2, 0, "Clone", "Page identities + labels", "Nothing v1 computed")
-f.node("qvf", "messagebus", 3, 0, "q.pages · vhost vf", "1 ticket per page", "Separate from v1's queue",
-       live="http://localhost:15672/#/queues")
-f.node("page", "backend", 4, 0, "vf-worker: one page", "AI OCR → Jev → Tesseract", "→ check → look again",
+f.node("clone", "backend", 2, 1, "Clone", "Page identities + labels", "Nothing v1 computed")
+f.node("qvf", "messagebus", 3, 1, "q.pages · vhost vf", "1 ticket per page", "Separate from v1's queue", live=MQ)
+f.node("page", "backend", 4, 1, "vf-worker ×3: one page", "AI OCR → Jev → Tesseract", "→ check → look again",
        link="detail-vf-page.html")
-f.node("gemini", "cloud", 5, 0, "AI OCR model", "Qwen on Groq (VF_AI_OCR)", "or Gemini: one setting")
-f.node("ui", "frontend", 1, 1, "vf UI :8001", "Batch · page · Compare v1", "Acceptance checks", live=UI + "/batches")
-f.node("db", "database", 3, 1, "Postgres · ocr_vf", "page · field_check · model_call", "Shared server, own DB")
-f.node("registry", "database", 5, 1, "Jev's context", "Combined list = union", "of the types' fields",
+f.node("gemini", "cloud", 5, 1, "AI OCR model", "Qwen3-VL on Model Studio", "VF_AI_OCR: one setting")
+f.node("ui", "frontend", 1, 2, "vf UI :8001", "Batch · page · Compare v1", "Acceptance checks", live=UI + "/batches")
+f.node("db", "database", 3, 2, "Postgres · ocr_vf", "page · field_check · model_call", "Shared server, own DB")
+f.node("registry", "database", 5, 2, "Jev's context", "Combined list = union", "of the types' fields",
        link="detail-vf-teacher.html", live=UI + "/context")
-f.node("label", "frontend", 1, 2, "Label screen", "Unsure page → a person", "Resumes the page", live=UI + "/label")
-f.node("jev", "cloud", 5, 2, "Jev (TypeSafe)", "Classifies from the reading", "Replays proposals")
-f.node("lesson", "security", 2, 3, "Lesson → q.lessons", "Practice, machine missed", "Never an exam label",
+f.node("review", "frontend", 0, 3, "Review screen", "A count on the Review tab", "Opening it marks them seen",
+       live=UI + "/review")
+f.node("label", "frontend", 1, 3, "Label screen", "Unsure page → a person", "Resumes the page", live=UI + "/label")
+f.node("jev", "cloud", 5, 3, "Jev (TypeSafe)", "Classifies from the reading", "Replays proposals")
+f.node("notice", "database", 0, 4, "staging.notice", "Bundles newly needs_review", "Unseen until /review opens")
+f.node("needs", "backend", 1, 4, "n8n: needs you", "Every 5 minutes", "New sor + fingerprint only", live=N8N)
+f.node("lesson", "security", 2, 4, "Lesson → q.lessons", "Practice, machine missed", "Never an exam label",
        link="detail-vf-teacher.html")
-f.node("teacher", "cloud", 3, 3, "GLM-4.6V-Flash (Z.ai)", "Explains the label", "Proposes one change",
+f.node("teacher", "cloud", 3, 4, "GLM-4.6V-Flash (Z.ai)", "Explains the label", "Proposes one change",
        link="detail-vf-teacher.html")
-f.node("gate", "security", 4, 3, "Replay gate", "Old vs new context", "No new wrong answer")
-f.node("ctx", "frontend", 5, 3, "Context screen", "A person approves", "or rejects", live=UI + "/context")
+f.node("gate", "security", 4, 4, "Replay gate", "Old vs new context", "No new wrong answer")
+f.node("ctx", "frontend", 5, 4, "Context screen", "A person approves", "or rejects", live=UI + "/context")
 f.edge("admin", "v1", "PDF").edge("v1", "clone", "read-only").edge("clone", "qvf", "tickets")
+f.edge("admin", "intake", "upload on vf UI", route="vh")
+f.edge("intake", "qvf", "split · 1 ticket per page", route="vhv", via=172, into=-60)
+f.edge("sweep", "qvf", "waiting pages", route="vhv", via=160, into=-25)
+f.edge("sweep", "qgroup", "batches still grouping", "dashed", route="vhv", via=30)
 f.edge("qvf", "page", "1 page", "emphasis")
+f.edge("page", "wait", "daily limit: park", "dashed", route="vh", out=-40, lp=(935, 175))
+f.edge("wait", "qvf", "after 15 min", route="vhv", out=15, into=15, lp=(815, 183))
+f.edge("page", "qgroup", "after every page", route="vh", out=40, lp=(1015, 130))
+f.edge("qgroup", "grouper")
+f.edge("grouper", "qvf", "pages to look again", route="vhv", via=195, into=60)
 f.edge("page", "gemini", "ask", route="hvh", out=-18, into=-18)
 f.edge("gemini", "page", "answer", "dashed", route="hvh", out=18, into=18)
 f.edge("registry", "page", "field list + context", "emphasis", route="hvh", via=1082, into=30)
 f.edge("page", "db", "page row + checks", route="vh", out=-45)
 f.edge("page", "jev", "reading → type", route="vh", out=45, into=-18)
-f.edge("db", "ui", "reads").edge("admin", "ui", "uses", route="vh").edge("ui", "label", "unsure pages")
-f.edge("label", "lesson", "practice, missed", route="vh")
+f.edge("db", "ui", "reads").edge("admin", "ui", "uses", route="vh", out=40).edge("ui", "label", "unsure pages")
+f.edge("label", "lesson", "practice, missed", route="hv")
+f.edge("needs", "notice").edge("notice", "review", "unseen: a count")
 f.edge("lesson", "teacher", "vf-teacher").edge("teacher", "gate", "one change").edge("gate", "ctx", "passed", "emphasis")
 f.edge("gate", "jev", "replay", "dashed", route="vh", out=20, into=18)
 f.edge("ctx", "registry", "approved", "emphasis", route="right", via=1297)
-f.frame("vf UI (port 8001)", ["ui", "label"], tcls="t-frontend")
+f.frame("vf UI (port 8001)", ["ui", "label", "review"], tcls="t-frontend")
 f.frame("Learning loop: nothing changes until a person approves", ["lesson", "teacher", "gate", "ctx"],
         tcls="t-security")
 write("vlm-first.html", "vlm-first: AI OCR reads everything, Jev classifies from it", f,
@@ -79,13 +101,26 @@ write("vlm-first.html", "vlm-first: AI OCR reads everything, Jev classifies from
    {"id": "learning", "label": "Learning loop", "focus": ["label", "lesson", "teacher", "gate", "ctx", "registry", "jev"],
     "note": "A person's practice label on a page the machine missed becomes a lesson, and wakes the teacher service "
             "(q.lessons → vf-teacher, one lesson at a time). The teacher proposes one change; "
-            "it is replayed old vs new, and only a person makes it active."}],
+            "it is replayed old vs new, and only a person makes it active."},
+   {"id": "queue", "label": "On the queue", "focus": ["intake", "sweep", "qvf", "page", "wait", "qgroup", "grouper"],
+    "note": "n8n's intake has vf-ui split an upload and put one ticket per page on q.pages. Three vf-workers take them, "
+            "one worker per page. A page whose AI call the daily limit or cap stopped waits on q.pages.wait and comes back "
+            "after 15 minutes; a failed call is tried 3 times. After every page the worker wakes vf-grouper on q.group: "
+            "it groups the batch, checks its bundles and sends back the pages a bundle asked to look again. Every 3 hours "
+            "n8n's sweep re-queues what still waits and wakes vf-grouper for batches still grouping."},
+   {"id": "needs-you", "label": "Needs you", "focus": ["needs", "notice", "review", "ui"],
+    "note": "Every 5 minutes n8n's needs-you schedule records the bundles that newly need a person (needs_review, a "
+            "sor + fingerprint no earlier notice had) as one notice. The UI shows the unseen ones as a count on the "
+            "Review tab; opening /review lists them and marks them seen."}],
   [("emerald", "Built and running (branch vlm-first)",
     ["Own database ocr_vf, queue vhost vf, images under vf/: v1 is untouched",
-     "The AI OCR is one setting (VF_AI_OCR): Qwen on Groq now, Gemini or others possible",
+     "The AI OCR is one setting (VF_AI_OCR): Qwen3-VL-Plus on Alibaba Model Studio now (free quota), Groq, Gemini or others possible",
      "One combined field list: 29 per-type fields → 18 + 2 clues for Jev",
      "Jev's context is versioned; the combined list = the union of the types' fields",
-     "Label → lesson → GLM → replay → a person approves"]),
+     "Label → lesson → GLM → replay → a person approves",
+     "3 vf-workers on q.pages; the AI's daily cap is reserved per call, so they can't overspend it",
+     "q.pages.wait parks a page the daily limit stopped (15 min); vf-grouper groups and checks off the page workers",
+     "n8n: intake (webhook), sweep every 3 h, needs-you every 5 min → a count on the Review tab"]),
    ("cyan", "Measured: dry run, 19 pages",
     ["v1's stored readings stood in for Gemini (today's quota was used up)",
      "All 7 FPs right; every TTG/PO unsure (v1's readings have no title)",
@@ -97,9 +132,9 @@ write("vlm-first.html", "vlm-first: AI OCR reads everything, Jev classifies from
      "The look-again is blind: never Tesseract's reading",
      "A value goes to a person only after the AI OCR has looked again"]),
    ("rose", "Waiting for",
-    ["Groq's daily tokens (they refill ~8K an hour): 6 reads and 17 look-agains still waiting",
-     "A free Z.ai key (ZAI_API_KEY) for the teacher",
-     "More labels from Finance: only 3 practice labels today"])],
+    ["Model Studio's free quota: 1M tokens per model for 90 days (~6K a read, ~3K a look-again)",
+     "More labels from Finance: 10 practice labels today",
+     "Later: a teacher for the AI OCR's knowledge of each document type, from Review"])],
   back="ocr-pipeline.html", back_label="← v1 overview")
 
 # ============================================================ ONE PAGE
@@ -111,7 +146,7 @@ f.node("jev", "backend", 3, 0, "Jev classifies", "Only the AI's reading", "Conte
 f.node("dec", "security", 4, 0, "Decide", "≥ 0.85; FP: QR or layout", "Both from the image")
 f.node("tess", "backend", 5, 0, "Tesseract reads", "After the type is known", "Never earlier")
 f.node("chk", "security", 6, 0, "Check each value", "Printed · QR · then the 7a rules", "Never 'close enough'")
-f.node("gem", "cloud", 2, 1, "AI OCR model", "Qwen on Groq, or Gemini", "One setting: VF_AI_OCR")
+f.node("gem", "cloud", 2, 1, "AI OCR model", "Qwen3-VL on Model Studio", "One setting: VF_AI_OCR")
 f.node("jevapi", "cloud", 3, 1, "Jev (TypeSafe)", "Choice over 8 types", "Text only, no image")
 f.node("held", "messagebus", 4, 1, "Unsure: held", "No Tesseract reading", "Waits for a label")
 f.node("zoom", "security", 6, 1, "Zoomed Tesseract look", "No reading may disagree", "At the value's spot")
@@ -164,7 +199,8 @@ write("detail-vf-page.html", "vlm-first: one page, in the order you designed", f
     ["The AI OCR gets the field names, their meanings and zoomed crops",
      "Never Tesseract's reading, never its own first answer",
      "Same answer twice, or a changed one, stays ⚠ unless print backs it",
-     "Never skipped: if it can't run now, the page waits for it (python -m worker.vf again)"]),
+     "Never skipped: if it can't run now, the page waits for it (q.pages.wait brings it back after a daily limit; "
+     "vf-grouper re-sends a bundle's question)"]),
    ("violet", "Why Tesseract waits",
     ["Your design: Tesseract only checks, after the type is known",
      "Only a quick orientation check (90° or 270°) runs earlier, during preparation"])],

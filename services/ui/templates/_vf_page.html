@@ -28,11 +28,11 @@
         <p class="big">{{ jv.choice }} <span class="muted">{{ jv.confidence }}</span></p>
         <p class="note">{% for t, pr in (jv.get('probabilities') or {})|dictsort(by='value', reverse=true) %}{% if pr >= 0.01 %}{{ t }} {{ pr }} · {% endif %}{% endfor %}</p>
       {% else %}<p class="muted">{{ jv.get('skipped') or jv.get('error') or '—' }}</p>{% endif %}
-      <h3>Decision</h3>
+      <h3>{{ "The machine's decision" if p.type_status == 'labelled' else 'Decision' }}</h3>
       <p><strong>{{ m.get('status') or p.type_status }}</strong> {{ m.get('doc_type') or '' }} — {{ m.get('reason') or v.get('reason') }}</p>
       <p class="note">Jev decides at ≥ 0.85. An SOR QR code means FP; an FP also needs the QR code or the FP layout
         ({{ v.get('layout') }}; ≥ 0.70) — both come from the image, never from the AI.</p>
-      {% if vfp.label %}<p>Labelled by a person: <strong>{{ vfp.label.label }}</strong> <span class="muted">({{ vfp.label.pile }} pile)</span></p>{% endif %}
+      {% if vfp.label %}<p>Labelled by a person: <strong>{{ vfp.label.label }}</strong> <span class="muted">({{ vfp.label.pile }} pile){% if p.type_status == 'labelled' %} · the label decides: the page is a {{ p.doc_type }}{% else %} · not applied yet{% endif %}</span></p>{% endif %}
       {% if vfp.lesson %}<p>Lesson for the teacher: <strong>{{ vfp.lesson.status }}</strong>{% if vfp.lesson.error %} <span class="muted">{{ vfp.lesson.error }}</span>{% endif %} · <a href="/context">Jev context</a></p>{% endif %}
     </div>
   </div>

@@ -23,11 +23,17 @@ services:
   vf-worker:
     <<: *py
     image: samb-ocr-worker:latest   # built by v1; same requirements
-    command: python -m worker.main
-    deploy: { replicas: 1 }         # model-bound, and the daily call cap can't race with one worker
-    environment:
+    command: python -m worker.main  # q.pages; a page the daily limit stopped waits in q.pages.wait, then comes back
+    deploy: { replicas: 3 }         # 3 pages at a time. The AI's daily cap is reserved per call in one transaction
+    environment:                    # (vf.reserve), so workers can't overspend it. ~360 MB each (Satellite's SOs)
       <<: *pyenv
       OMP_THREAD_LIMIT: "1"
+
+  vf-grouper:
+    <<: *py
+    image: samb-ocr-worker:latest
+    command: python -m grouper.serve   # q.group: group the batch, check its bundles, send pages back to look again
+    deploy: { replicas: 1 }         # batches are serialised by their own lock; one consumer takes wake-ups together
 
   vf-teacher:
     <<: *py
@@ -40,7 +46,7 @@ services:
     image: samb-ocr-ui:latest
     command: uvicorn ui.app:app --host 0.0.0.0 --port 8000
     ports: ["8001:8000"]
-    volumes: [./services:/app, ./tests:/app/tests:ro, ./testdata:/app/testdata:ro,
+    volumes: [./services:/app, ./tests:/app/tests:ro, ./testdata:/app/testdata:ro, ./n8n:/app/n8n:ro,
               "../../../7000356304 - 7000356499.pdf:/data/sample.pdf:ro"]
     environment:
       <<: *pyenv

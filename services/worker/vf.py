@@ -20,7 +20,12 @@
   Nothing goes to a person before the AI OCR has read the page and looked again. When a call can't run (skipped to
   save tokens, the daily budget is used up, or it failed), the page WAITS for it (outcome waiting_ai): a failed read
   leaves the page unclassified (type_status NULL, never "unsure": the Label screen is for pages Jev couldn't decide);
-  a look-again not run stores second_look = {"waiting": why}. `again` runs what is waiting.
+  a look-again not run stores second_look = {"waiting": why}.
+
+  On the queue (worker/main.py, several vf-workers): a page whose call the daily limit stopped is parked on
+  q.pages.wait and comes back by itself (`after`); a failed call is tried MAX_TRIES times. After every page the
+  worker wakes vf-grouper (q.group), which groups the batch, checks the bundles and sends back to q.pages the pages a
+  bundle asked to look again (grouper/serve.py). `again` does the same by hand.
 
   The AI OCR is VF_AI_OCR: "gemini" (common/models/vlm.py) or provider:model through any OpenAI-compatible vision
   model (common/models/openai_vlm.py), e.g. groq:qwen/qwen3.8-27b. A reading is tied to the model that made it.
@@ -29,8 +34,10 @@
       --v1-reading      dry run: instead of calling Gemini, use v1's stored reading renamed to the combined list
                         (no boxes, no second look). For trying the flow on days the Gemini quota is used up.
       --no-second-look  read and check only; the pages wait for their look-again
-  python -m worker.vf again <batch> [<pages>]   run what waits for the AI OCR: look-agains not run yet and failed
-                        reads. The reading and Jev's answer are reused. Stops when the daily budget is used up.
+  python -m worker.vf again <batch> [<pages>]   send what waits for the AI OCR back to the page workers (q.pages):
+                        look-agains not run yet and failed reads. The reading and Jev's answer are reused. Usually not
+                        needed: a bundle's question reaches a worker through vf-grouper, and a call the daily limit
+                        stopped comes back from the waiting room (q.pages.wait) by itself.
   python -m worker.vf shadow <batch> <pages>    what today's rules would change (✅ lost or gained, outcomes, keys,
                         new look-again questions), from stored data. Writes nothing, calls no model: measure a rule
                         change before adopting it; adopt with `python -m grouper.group <batch> --recheck`.
@@ -63,6 +70,7 @@ AI_OCR = os.environ.get("VF_AI_OCR", "gemini")                      # gemini, or
 AI_PROVIDER = "gemini" if AI_OCR == "gemini" else openai_vlm.spec_parts(AI_OCR)[0]
 DAILY_CAP = int(os.environ.get("VF_AI_OCR_DAILY_CAP", "40" if AI_OCR == "gemini" else "150"))
 REQUIRED = {code: [f["name"] for f in d["header"] if f["source"] == "6.1"] for code, d in DOCS.items()}
+NO_TIME_WAIT = 3600                                                  # seconds, after a daily-limit refusal naming no time
 PREP_COLS = ("rotation", "osd_conf", "skew_angle", "black_ratio", "dark_band_ratio", "speckle_ratio", "qr_text",
              "layout_score")
 
@@ -93,32 +101,60 @@ def ai_left():
     return DAILY_CAP - used
 
 
+def reserve(purpose, bid, n):
+    """Count and claim one call of today's cap in one transaction, under a lock per provider: page workers running
+    side by side can never spend the same last call. The claim is a ledger row ('pending') that the call's answer
+    completes. Raises OutOfBudget at the cap."""
+    with db.connect() as c:
+        c.execute("SELECT pg_advisory_xact_lock(hashtext(%s))", (f"ai-budget:{AI_PROVIDER}",))
+        used = c.execute("SELECT count(*) AS n FROM staging.model_call WHERE provider=%s AND pacific_day=%s",
+                         (AI_PROVIDER, pacific_day())).fetchone()["n"]
+        if used >= DAILY_CAP:
+            raise OutOfBudget(f"vlm-first's daily cap for {AI_PROVIDER} ({DAILY_CAP}) is used up")
+        return c.execute("""INSERT INTO staging.model_call (pacific_day, provider, model, purpose, batch_id, page_no,
+                                                            ok, error)
+                            VALUES (%s, %s, %s, %s, %s, %s, false, 'pending') RETURNING id""",
+                         (pacific_day(), AI_PROVIDER, AI_OCR, purpose, bid, n)).fetchone()["id"]
+
+
+def settle_call(call_id, ok, meta=None, error=None):
+    meta = meta or {}
+    with db.connect() as c:
+        c.execute("""UPDATE staging.model_call SET ok=%s, model=coalesce(%s, model), ms=%s, tokens=%s, error=%s
+                     WHERE id=%s""",
+                  (ok, meta.get("model"), meta.get("ms"),
+                   Json({k: meta.get(k) for k in ("tokens_in", "tokens_out", "tokens_thinking")}), error, call_id))
+
+
 def refused_for():
     """When the provider's last answer was a daily-limit refusal: the seconds of its wait that haven't passed, else 0.
-    Asking before then only fails, and each failure counts against the cap: 166 uploaded pages would use it up."""
+    Asking before then only fails, and each failure counts against the cap: 166 uploaded pages would use it up.
+    A refusal that names no time counts as NO_TIME_WAIT."""
     with db.connect() as c:
         r = c.execute("""SELECT extract(epoch FROM now() - at) AS ago, ok, error FROM staging.model_call
                           WHERE provider=%s AND (ok OR error LIKE 'DailyLimit%%') ORDER BY at DESC LIMIT 1""",
                       (AI_PROVIDER,)).fetchone()
-    wait = r and not r["ok"] and seconds_until(r["error"])
-    return max(0.0, wait - float(r["ago"])) if wait else 0.0
+    if not r or r["ok"]:
+        return 0.0
+    wait = seconds_until(r["error"]) or NO_TIME_WAIT    # a refusal with no time (Model Studio's free quota): an hour
+    return max(0.0, wait - float(r["ago"]))
 
 
 def ai_call(purpose, bid, n, call, *args):
-    """One AI OCR call, counted in the ledger and stopped at vlm-first's daily cap for this provider. While the
-    provider's last refusal still says to wait, the page waits without a call (`again` picks it up)."""
-    if ai_left() <= 0:
-        raise OutOfBudget(f"vlm-first's daily cap for {AI_PROVIDER} ({DAILY_CAP}) is used up")
+    """One AI OCR call, counted in the ledger and stopped at vlm-first's daily cap for this provider (reserved before
+    the call: several page workers share the cap). While the provider's last refusal still says to wait, the page
+    waits without a call: its worker parks it on q.pages.wait (park)."""
     wait = refused_for()
     if wait:
         raise openai_vlm.DailyLimit(f"{AI_OCR}: daily limit reached (its last refusal), "
                                     f"try again in {int(wait // 60)}m{wait % 60:.1f}s")
+    call_id = reserve(purpose, bid, n)
     try:
         out, meta = call(*args)
     except Exception as e:
-        ledger(AI_PROVIDER, purpose, bid, n, False, {"model": AI_OCR}, f"{type(e).__name__}: {e}"[:300])
+        settle_call(call_id, False, {"model": AI_OCR}, f"{type(e).__name__}: {e}"[:300])
         raise
-    ledger(AI_PROVIDER, purpose, bid, n, True, meta)
+    settle_call(call_id, True, meta)
     return out, meta
 
 
@@ -567,10 +603,25 @@ def outcome(type_status, doc_type, res, looked=True):
 # ---------------------------------------------------------------------------------------------- one page
 
 def handle(ticket, v1_reading=None, second_look=True):
+    """One page, by one worker at a time: a second ticket for the same page (a label, a bundle's question and a retry
+    can each send one) waits for the first, then finds the page read and does nothing. Grouping is the caller's:
+    the queue worker wakes vf-grouper, `once` regroups itself."""
     bid, n = ticket["batch_id"], ticket["page_no"]
     run = ticket.get("run", 1)
     if run != v1.current_run(bid):
         return "stale"
+    with db.connect(autocommit=True) as lock:
+        lock.execute("SELECT pg_advisory_lock(hashtext(%s), %s)", (f"page:{bid}", n))
+        try:
+            p = lock.execute("SELECT status FROM staging.page WHERE batch_id=%s AND page_no=%s", (bid, n)).fetchone()
+            if p and p["status"] == "read":
+                return "done"                         # another ticket's worker finished it meanwhile
+            return _handle(ticket, bid, n, run, v1_reading, second_look)
+        finally:
+            lock.execute("SELECT pg_advisory_unlock(hashtext(%s), %s)", (f"page:{bid}", n))
+
+
+def _handle(ticket, bid, n, run, v1_reading, second_look):
     with db.connect() as c:
         prev = c.execute("SELECT * FROM staging.page WHERE batch_id=%s AND page_no=%s", (bid, n)).fetchone()
         ctx_v, ctx = context.ensure(c, classify.JEV_QUESTION["doc_type"]["criteria"], classify.KEYWORDS,
@@ -690,13 +741,13 @@ def handle(ticket, v1_reading=None, second_look=True):
             verify.store(c, bid, n, fields, res)
     if not saved:
         return None
-    regroup(bid)
     return v1.tick(bid, run)
 
 
 def regroup(bid):
-    """Phase 6 after every page: grouping is cheap and re-runnable, so a page joins its bundle as soon as its keys are
-    resolved. A grouping failure never fails the page."""
+    """Phase 6 after a page, for runs outside the queue (`once`): grouping is cheap and re-runnable, so a page joins its
+    bundle as soon as its keys are resolved. A grouping failure never fails the page. (On the queue, vf-grouper
+    does this: grouper/serve.py.)"""
     try:
         from grouper import group
         group.run(bid)
@@ -728,6 +779,7 @@ def once(bid, pages, use_v1_reading=False, second_look=True):
         t0 = time.time()
         handle({"batch_id": bid, "page_no": n, "run": run, "image_key": p["original_path"] or p["image_path"]},
                v1_reading=readings.get(n) if use_v1_reading else None, second_look=second_look)
+        regroup(bid)
         with db.connect() as c:
             r = c.execute("""SELECT type_status, doc_type::text AS t, type_votes->>'reason' AS why, outcome,
                                     extract_status, extract_error, second_look->>'waiting' AS waits
@@ -755,31 +807,111 @@ def seconds_until(text):
     return m and int(m.group(1) or 0) * 3600 + int(m.group(2) or 0) * 60 + float(m.group(3))
 
 
-def again(bid, pages=None, patience=3600):
-    """Run what waits for the AI OCR, one page at a time. At the provider's daily limit, wait for it to refill when it
-    says it will within `patience` seconds (Groq refills its daily tokens continuously), else stop."""
+# ---------------------------------------------------------------------------------------------- the queue's side
+
+MAX_TRIES = 3                  # a call that failed (not a limit) is tried this many times from the waiting room
+LIMITS = ("DailyLimit", "OutOfBudget")
+
+
+def blocked():
+    """Why no AI OCR call can be made right now (today's cap is used up, or the provider's last refusal still
+    stands), else None. Checked before any work on a parked page: waiting it out costs one query, not a page run."""
+    if ai_left() <= 0:
+        return f"OutOfBudget: vlm-first's daily cap for {AI_PROVIDER} ({DAILY_CAP}) is used up"
+    wait = refused_for()
+    return f"DailyLimit: {int(wait // 60)} min left of the provider's refusal" if wait else None
+
+
+def retry_of(bid, n):
+    """After a page's run: ('limit', why) when it waits because the daily limit or cap stopped a call, ('failed', why)
+    when a call failed otherwise, else None. A page waiting for a bundle's question, a person or nothing is None."""
+    with db.connect() as c:
+        r = c.execute("""SELECT extract_status, extract_error, second_look->>'waiting' AS waits FROM staging.page
+                          WHERE batch_id=%s AND page_no=%s""", (bid, n)).fetchone()
+    return r and retry_kind(r["extract_status"], r["extract_error"], r["waits"])
+
+
+def retry_kind(extract_status, extract_error, waits):
+    """Pure: ('limit' | 'failed', why) for a page whose reading failed or whose look-again call failed, else None."""
+    why = extract_error if extract_status == "failed" else waits if waits and "the call failed" in waits else None
+    if not why:
+        return None
+    return ("limit" if any(w in why for w in LIMITS) else "failed"), why
+
+
+def park(ticket, why):
+    """Put a page in the waiting room (q.pages.wait): it comes back to q.pages by itself after queue.WAIT_MS. The page
+    stays 'queued' while it has a ticket, so nothing else sends it (vf-grouper sends only pages that are 'read')."""
+    from common import queue
+    with db.connect() as c:
+        c.execute("UPDATE staging.page SET status='queued' WHERE batch_id=%s AND page_no=%s",
+                  (ticket["batch_id"], ticket["page_no"]))
+    queue.send(queue.Q_WAIT, [{**ticket, "parked": why[:200]}])
+
+
+def after(ticket):
+    """The worker's step after a page ran: a call the limit stopped waits and is tried again (never counted); a failed
+    call is tried MAX_TRIES times, then the page stays waiting for `again` or the sweep. Returns what was done."""
+    r = retry_of(ticket["batch_id"], ticket["page_no"])
+    if not r:
+        return None
+    kind, why = r
+    tries = ticket.get("tries", 0) + (kind == "failed")
+    if tries >= MAX_TRIES:
+        return f"gave up after {tries} failed calls: {why[:120]}"
+    park({**ticket, "tries": tries}, why)
+    return f"parked ({kind}): {why[:120]}"
+
+
+def enqueue(bid, pages, waits=None, tries=0):
+    """Send pages to q.pages: each set 'queued' first (only those that are 'read': a page with a ticket keeps its one),
+    and tickets published after the commit. waits = only pages whose look-again waits for this reason (its start).
+    Returns the pages sent."""
+    from common import queue
+    with db.connect() as c:
+        rows = c.execute("""UPDATE staging.page p SET status='queued' FROM staging.scan_batch b
+                             WHERE b.id = p.batch_id AND p.batch_id=%s AND p.page_no = ANY(%s) AND p.status='read'
+                               AND (%s::text IS NULL OR starts_with(p.second_look->>'waiting', %s::text))
+                         RETURNING p.page_no, coalesce(p.original_path, p.image_path) AS key, b.run""",
+                         (bid, list(pages), waits, waits)).fetchall()
+    queue.send(queue.Q_PAGES, [{"batch_id": bid, "page_no": r["page_no"], "run": r["run"], "image_key": r["key"],
+                                **({"tries": tries} if tries else {})}
+                               for r in sorted(rows, key=lambda r: r["page_no"])])
+    return sorted(r["page_no"] for r in rows)
+
+
+def sweep():
+    """n8n's safety net ("vf — sweep", every 3 hours; /internal/vf/sweep): every page still waiting for the AI OCR
+    with no ticket goes back on q.pages, and each batch with a bundle still waiting (grouping) regroups. A page whose
+    calls failed gets ONE more try per sweep (tries = MAX_TRIES - 1), so a page the AI can't answer costs at most one
+    call per sweep. Nothing is sent while the AI is refused (its parked pages come back by themselves)."""
+    from common import queue
+    why = blocked()
+    if why:
+        return {"skipped": why}
+    with db.connect() as c:
+        batches = [r["id"] for r in c.execute("SELECT id FROM staging.scan_batch ORDER BY received_at")]
+        grouping = [r["batch_id"] for r in c.execute("""
+            SELECT DISTINCT d.batch_id FROM staging.bundle b JOIN staging.bundle_document bd ON bd.bundle_id = b.id
+              JOIN staging.document d ON d.id = bd.document_id WHERE b.status = 'grouping'""")]
+    sent = {}
+    for bid in batches:
+        todo = waiting(bid)
+        pages = enqueue(bid, todo, tries=MAX_TRIES - 1) if todo else []
+        if pages:
+            sent[bid] = pages
+    for bid in grouping:
+        queue.wake_grouper(bid, "the sweep: a bundle still waits")
+    return {"sent": sent, "regrouped": grouping}
+
+
+def again(bid, pages=None):
+    """What waits for the AI OCR goes back on the queue, for the page workers (they wait out a daily limit by
+    themselves). Returns the pages sent."""
     todo = waiting(bid, pages)
-    print(f"waiting for the AI OCR: {todo or 'nothing'}", flush=True)
-    while todo:
-        n = todo.pop(0)
-        once(bid, [n])
-        if not waiting(bid, [n]):
-            continue
-        with db.connect() as c:
-            r = c.execute("SELECT second_look, extract_error FROM staging.page WHERE batch_id=%s AND page_no=%s",
-                          (bid, n)).fetchone()
-        why = f"{(r['second_look'] or {}).get('waiting') or ''} {r['extract_error'] or ''}"
-        if "OutOfBudget" in why:
-            print("stopped: vlm-first's own daily cap is used up", flush=True)
-            return
-        if "DailyLimit" in why:
-            wait = seconds_until(why)
-            if wait is None or wait > patience:
-                print(f"stopped: the provider's daily limit ({why.strip()[:160]})", flush=True)
-                return
-            print(f"page {n}: the daily limit refills in {wait / 60:.0f} min; waiting", flush=True)
-            time.sleep(wait + 30)
-            todo.insert(0, n)                        # the same page again, first
+    sent = enqueue(bid, todo) if todo else []
+    print(f"waiting for the AI OCR: {todo or 'nothing'} · sent to {len(sent)} page worker tickets: {sent}", flush=True)
+    return sent
 
 
 if __name__ == "__main__":
