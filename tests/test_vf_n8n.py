@@ -71,3 +71,20 @@ def test_the_sweep_sends_nothing_while_the_ai_is_refused(monkeypatch):
     monkeypatch.setattr(queue, "send", lambda q, m: sent.append(q))
     monkeypatch.setattr(vf, "blocked", lambda: "DailyLimit: 40 min left")
     assert vf.sweep() == {"skipped": "DailyLimit: 40 min left"} and sent == []
+
+
+def test_fetching_review_never_marks_a_notice_seen():
+    """Only a browser showing /review marks notices seen (its POST /notices/seen after load): the screen tests once
+    marked n8n's first notice seen before anyone had looked."""
+    import httpx
+    ui = os.environ.get("UI_URL", "http://ui:8000")
+    with db.connect() as c:
+        nid = c.execute("INSERT INTO staging.notice (items, text) VALUES ('[]', 'test: never seen by a fetch') "
+                        "RETURNING id").fetchone()["id"]
+    try:
+        assert httpx.get(f"{ui}/review", timeout=60).status_code == 200
+        with db.connect() as c:
+            assert c.execute("SELECT seen_at FROM staging.notice WHERE id=%s", (nid,)).fetchone()["seen_at"] is None
+    finally:
+        with db.connect() as c:
+            c.execute("DELETE FROM staging.notice WHERE id=%s", (nid,))

@@ -233,6 +233,16 @@ def internal_sweep():
     return vf.sweep()
 
 
+@app.post("/notices/seen")
+def notices_seen():
+    """Sent by /review's page after it loads in a browser: a script or a test fetching the page never marks a notice
+    seen (the screen tests once did, before anyone had looked)."""
+    from common import notice
+    with db.connect() as c:
+        notice.mark_seen(c)
+    return Response(status_code=204)
+
+
 @app.post("/internal/vf/notify")
 def internal_notify():
     """n8n's "vf — needs you" schedule: one notice for the bundles that newly need a person (common/notice.py)."""
@@ -1864,10 +1874,9 @@ def page_review(request: Request, batch: str | None = None, published: int | Non
         batches = c.execute("""SELECT DISTINCT s.id, s.file_name, s.received_at FROM staging.scan_batch s
                                  JOIN staging.document d ON d.batch_id = s.id ORDER BY s.received_at DESC""").fetchall()
         fresh = []
-        if VF:                           # n8n's notices: shown once here, then seen
+        if VF:                           # n8n's notices; the page marks them seen once a browser shows it (/notices/seen)
             from common import notice
             fresh = notice.unseen(c)
-            notice.mark_seen(c)
     return templates.TemplateResponse("review.html", ctx(request, batch=batch, rows=rows, just_published=published,
                                                          batches=batches, fresh=fresh,
                                                          ready=sum(1 for r in rows if r["status"] in ("auto_ok", "reviewed"))))

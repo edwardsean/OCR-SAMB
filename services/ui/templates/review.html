@@ -80,7 +80,7 @@
     </div>
 
     {% if fresh %}
-    <div class="fresh"><strong>New since you last looked:</strong>
+    <div class="fresh" hx-post="/notices/seen" hx-trigger="load" hx-swap="none"><strong>New since you last looked:</strong>
       {% for f in fresh %}<a href="/review/{{ f.sor }}?batch={{ f.batch }}">{{ f.customer or f.sor }}</a>{{ '' if loop.last else ' · ' }}{% endfor %}
     </div>
     {% endif %}
