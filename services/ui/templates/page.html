@@ -17,6 +17,7 @@
     <section class="alert">Not read yet (status <span class="pill s-{{ p.status }}">{{ p.status }}</span>). The worker hasn't picked up its ticket.{% if p.error %} Last error: <span class="mono">{{ p.error }}</span>{% endif %}</section>
     <section class="img"><img style="max-width:520px;width:100%" src="/img/{{ p.original_path }}"></section>
   {% else %}
+  {% if fixv %}{% include "_fix_page.html" %}{% endif %}
   <div class="three">
     <section class="img">
       <h2>1 · As scanned</h2>

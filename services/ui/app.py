@@ -8,6 +8,7 @@ import time
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone, timedelta
 
+import cv2
 import httpx
 from fastapi import FastAPI, File, Form, Request, UploadFile
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, Response
@@ -57,8 +58,8 @@ if VF:
 
 EXPECTED_TABLES = 20      # 19 from the base schema + staging.type_label (006)
 if VF:
-    EXPECTED_TABLES += 9  # + context_version, lesson, model_call (010), field_confirmation (011), satellite.sor_item
-                          # (012), line_match (013), bundle_decision (014), notice (018), reading_trial (019)
+    EXPECTED_TABLES += 10  # + context_version, lesson, model_call (010), field_confirmation (011), satellite.sor_item
+                          # (012), line_match (013), bundle_decision (014), notice (018), reading_trial (019), extract_example (020)
 
 SVC = os.environ.get("SERVICE_PREFIX", "vf")      # this stack's service names: vf-* on main, rtm-* in the worktree
 # (name, role, how to probe, console link on the host)
@@ -894,13 +895,15 @@ def api_phase2(batch_id: str):
 
 
 @app.get("/batches/{batch_id}/pages/{page_no}", response_class=HTMLResponse)
-def page_page(request: Request, batch_id: str, page_no: int):
+def page_page(request: Request, batch_id: str, page_no: int, fix: str | None = None, back: str | None = None,
+              fixed: str | None = None):
     with db.connect() as c:
         b = c.execute("SELECT id, file_name, file_path, page_total, status FROM staging.scan_batch WHERE id=%s",
                       (batch_id,)).fetchone()
         p = c.execute("SELECT * FROM staging.page WHERE batch_id=%s AND page_no=%s", (batch_id, page_no)).fetchone()
         pc = verify.load(c, batch_id, page_no) if p else None
         vfp = _vf_page(c, p) if VF and p else None
+        fixv = _fix_view(c, p, pc) if VF and p else None
     ticket = None
     if b and p:
         ticket = json.dumps({"batch_id": batch_id, "page_no": page_no, "image_key": p["image_path"],
@@ -913,7 +916,169 @@ def page_page(request: Request, batch_id: str, page_no: int):
         for level, names in (DECIDES.get(p["doc_type"]) or {}).items():
             roles.update({n: level for n in names})
     return templates.TemplateResponse("page.html", ctx(request, batch_id=batch_id, b=b, p=p, page_no=page_no,
-                                      ticket=ticket, words=words, size=size, pc=pc, vfp=vfp, roles=roles))
+                                      ticket=ticket, words=words, size=size, pc=pc, vfp=vfp, roles=roles,
+                                      fixv=fixv, fix=fix, back=_safe_back(back), fixed=fixed))
+
+
+ROLE_ORDER = {"keys": 0, "page": 1, "bundle": 2, "support": 3, None: 4}
+ROLE_SAYS = {"keys": "links the page to its order", "page": "the invoice's own amount",
+             "bundle": "checked against Satellite", "support": "Satellite settles it", None: "kept as read"}
+
+
+def _safe_back(back):
+    """Where to return after a fix: only a path on this UI (never another site)."""
+    return back if back and back.startswith("/") and not back.startswith("//") else None
+
+
+def _fix_view(c, p, pc):
+    """The page viewer (read-then-map, Stage 2a): the paper with a box on every value read, and the type's fields
+    beside it, those that decide first. A person corrects a field by marking where it is printed; only for a page
+    whose type is known and whose reading is finished."""
+    from common import knowledge, satellite
+    from common.fields import DECIDES, TYPE_MAP
+    t = p.get("doc_type")
+    if t not in DOCS or p.get("type_status") not in ("decided", "labelled") or not p.get("fields"):
+        return None
+    canon = {v: k for k, v in TYPE_MAP.get(t, {}).items()}
+    fa, checks = p.get("fields_all") or {}, (pc or {}).get("header") or {}
+    roles = {n: lvl for lvl, names in (DECIDES.get(t) or {}).items() for n in names}
+    people = {r["field"] for r in c.execute("SELECT field FROM staging.field_confirmation WHERE batch_id=%s AND "
+                                            "page_no=%s", (p["batch_id"], p["page_no"]))}
+    fields = []
+    for f in DOCS[t]["header"]:
+        if f.get("source") == "check":
+            continue
+        name, cur, ck = f["name"], (p["fields"].get(f["name"]) or {}), checks.get(f["name"]) or {}
+        fields.append({"name": name, "label": f.get("label") or name, "desc": f.get("desc"), "value": cur.get("value"),
+                       "box": (fa.get(canon.get(name, name)) or {}).get("box"),
+                       "verdict": ck.get("verdict") or ("empty" if cur.get("value") in (None, "") else "check"),
+                       "by": ck.get("by"), "role": roles.get(name), "says": ROLE_SAYS[roles.get(name)],
+                       "person": name in people})
+    fields.sort(key=lambda x: ROLE_ORDER[x["role"]])
+    lines = p["fields"].get("lines") or []
+    keys, boxes = satellite.row_keys(t, lines), (p.get("mapping") or {}).get("rows") or []
+    cols = [f["name"] for f in DOCS[t]["lines"]]
+    by_id = {x.get("id"): x for x in p.get("transcript") or []}
+
+    def copied(i):                                   # the row's cells as the AI OCR copied them, in order
+        w = boxes[i] if i < len(boxes) else {}
+        out = []
+        for bid in (w or {}).get("blocks") or [(w or {}).get("block")]:
+            blk = by_id.get(bid) or {}
+            out += [str(c).strip() for c in blk.get("cells") or [] if str(c).strip()] or \
+                ([blk["text"]] if blk.get("text") else [])
+        return out
+    rows = [{"i": i + 1, "key": keys[i], "text": r.get("row_text"),
+             "box": (boxes[i] or {}).get("box") if i < len(boxes) else None, "copied": copied(i),
+             "cells": [(col, r.get(col), f"lines[{keys[i]}].{col}" in people) for col in cols]}
+            for i, r in enumerate(lines)]
+    so = None
+    chain = knowledge.chain_of_page(c, p["batch_id"], p["page_no"])
+    if chain:
+        so = c.execute("""SELECT s.customer_name FROM staging.document d JOIN staging.bundle_document bd
+                            ON bd.document_id = d.id JOIN staging.bundle b ON b.id = bd.bundle_id
+                            JOIN satellite.sor s ON s.sor_no = b.sor_no
+                           WHERE d.batch_id=%s AND %s BETWEEN d.page_from AND d.page_to LIMIT 1""",
+                       (p["batch_id"], p["page_no"])).fetchone()
+    units = knowledge.pick_units(p.get("transcript") or [], p.get("ocr_words") or [],
+                                 _png_size(p["upright_path"])) if p.get("transcript") else []
+    units.sort(key=lambda u: -(u["box"][2] - u["box"][0]) * (u["box"][3] - u["box"][1]))   # small ones drawn on top
+    return {"image": p["upright_path"], "type": t, "fields": fields, "rows": rows, "notes": p.get("notes") or [],
+            "customer": (so or {}).get("customer_name"), "chain": chain, "units": units,
+            "ready": p.get("outcome") != "waiting_ai" and p.get("status") == "read"}
+
+
+@app.get("/crop/{batch}/{page_no}/row/{key}")
+def row_crop(batch: str, page_no: int, key: str):
+    """A table row as printed: the band of the page its copy's blocks cover, across the whole width (so its columns
+    show), for Review's receipt rows. 404 when the page has no copy with boxes (read in one step)."""
+    from common import satellite
+    from worker import main as v1
+    with db.connect() as c:
+        p = c.execute("SELECT doc_type::text AS t, upright_path, fields, mapping FROM staging.page WHERE batch_id=%s "
+                      "AND page_no=%s", (batch, page_no)).fetchone()
+    if not p or not p["fields"]:
+        return Response(status_code=404)
+    lines = p["fields"].get("lines") or []
+    boxes = (p["mapping"] or {}).get("rows") or []
+    keys = satellite.row_keys(p["t"], lines)
+    box = next(((boxes[i] or {}).get("box") for i, k in enumerate(keys) if k == key and i < len(boxes)), None)
+    if not box:
+        return Response(status_code=404)
+    img = v1.load(p["upright_path"])
+    h, w = img.shape[:2]
+    y0, y1 = max(0, box[0] * h // 1000 - 8), min(h, box[2] * h // 1000 + 8)
+    ok, png = cv2.imencode(".png", img[y0:y1, :])
+    return Response(png.tobytes(), media_type="image/png") if ok else Response(status_code=404)
+
+
+@app.get("/api/keycheck")
+def api_keycheck(field: str, value: str):
+    """Before a person saves a key (the value that links a page to its order): does Satellite know it? A warning in
+    the page viewer, never a refusal (the order may not be in Satellite's export yet)."""
+    v = value.strip()
+    if not v or v == "(not printed)":
+        return {"known": None}
+    with db.connect() as c:
+        if field in ("sor", "no_ref"):
+            sor = v if v.upper().startswith("SOR") else "SOR" + re.sub(r"\D", "", v)
+            r = c.execute("SELECT sor_no, customer_name FROM satellite.sor WHERE sor_no=%s", (sor.upper(),)).fetchone()
+            return {"known": bool(r), "says": f"{r['sor_no']} · {r['customer_name']}" if r else
+                    f"no order in Satellite has the SOR {sor.upper()}: this field is an SOR number, not a PO number"}
+        if field in ("purchase_order_no", "nomor_cpo"):
+            rs = c.execute("SELECT sor_no, customer_name FROM satellite.sor WHERE cpo_no=%s LIMIT 3", (v,)).fetchall()
+            return {"known": bool(rs), "says": (" · ".join(f"{r['sor_no']} ({r['customer_name']})" for r in rs)
+                                               if rs else f"no order in Satellite has the PO number {v}")}
+    return {"known": None}
+
+
+@app.get("/api/region/{batch}/{page_no}")
+def api_region(batch: str, page_no: int, box: str):
+    """What a region marked on the paper holds: Tesseract's words, the AI OCR's copy there, and a suggested value
+    (print first). box = ymin,xmin,ymax,xmax on 0-1000."""
+    from common import knowledge
+    try:
+        region = [max(0, min(1000, int(float(v)))) for v in box.split(",")]
+        assert len(region) == 4 and region[2] > region[0] and region[3] > region[1]
+    except (ValueError, AssertionError):
+        return JSONResponse({"error": "box must be ymin,xmin,ymax,xmax on 0-1000"}, status_code=400)
+    with db.connect() as c:
+        p = c.execute("SELECT transcript, ocr_words, upright_path FROM staging.page WHERE batch_id=%s AND page_no=%s",
+                      (batch, page_no)).fetchone()
+    if not p:
+        return JSONResponse({"error": "no such page"}, status_code=404)
+    return {**knowledge.region_contents(region, p["transcript"] or [], p["ocr_words"] or [],
+                                        _png_size(p["upright_path"])), "region": region}
+
+
+@app.post("/page/fix")
+def page_fix(batch: str = Form(...), page: int = Form(...), field: str = Form(...), value: str = Form(...),
+             by: str = Form(...), region: str = Form(""), shown: str = Form(""), row_key: str = Form(""),
+             back: str = Form("")):
+    """A correction made on the page viewer: the value as printed, and where (a region marked on the paper). The page
+    is fixed at once (field_confirmation, then re-checked and regrouped, as a Review answer), and the correction is
+    kept as an example for the knowledge (staging.extract_example)."""
+    from common import knowledge
+    if not by.strip() or not value.strip():
+        return JSONResponse({"error": "say who you are, and the value as printed"}, status_code=400)
+    try:
+        reg = [int(float(v)) for v in region.split(",")] if region.strip() else None
+        reg = reg if reg and len(reg) == 4 else None
+    except ValueError:
+        reg = None
+    with db.connect() as c:
+        c.execute("""INSERT INTO staging.field_confirmation (batch_id, page_no, field, value, confirmed_by, row_key, shown)
+                     VALUES (%s, %s, %s, %s, %s, %s, %s)
+                     ON CONFLICT (batch_id, page_no, field) DO UPDATE SET value=EXCLUDED.value, row_key=EXCLUDED.row_key,
+                       shown=EXCLUDED.shown, confirmed_by=EXCLUDED.confirmed_by, confirmed_at=now()""",
+                  (batch, page, field, value.strip(), by.strip(), row_key or None, shown or None))
+        knowledge.save_example(c, batch, page, field, value.strip(), shown, by.strip(), "marked" if reg else "typed",
+                               reg, row_key or None)
+    from worker import vf
+    vf.recheck(batch, page)
+    _regroup(batch)
+    to = _safe_back(back) or f"/batches/{batch}/pages/{page}"
+    return RedirectResponse(to + ("&" if "?" in to else "?") + f"fixed={field}#fixer", status_code=303)
 
 
 def _png_size(key):
@@ -1969,6 +2134,10 @@ def review_confirm(batch: str = Form(...), sor: str = Form(...), page: int = For
                      ON CONFLICT (batch_id, page_no, field) DO UPDATE SET value=EXCLUDED.value, row_key=EXCLUDED.row_key,
                        shown=EXCLUDED.shown, confirmed_by=EXCLUDED.confirmed_by, confirmed_at=now()""",
                   (batch, page, field, value.strip(), by.strip(), row_key or None, shown or None))
+        if VF:                                       # kept as an example for the knowledge (found in the page's copy)
+            from common import knowledge
+            knowledge.save_example(c, batch, page, field, value.strip(), shown, by.strip(), "typed",
+                                   row_key=row_key or None)
     from worker import vf
     vf.recheck(batch, page)
     _regroup(batch)

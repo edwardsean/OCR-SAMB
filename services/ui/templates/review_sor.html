@@ -61,8 +61,13 @@
     .fix form + form { margin-top: 14px; }
     .crop { max-width: 100%; border: 1px solid var(--line); border-radius: 6px; background: #fff; margin: 6px 0; display: block; }
     .fixrow { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
-    .fixrow input[name=value] { padding: 7px 10px; border: 1px solid var(--line); border-radius: 8px; font-family: var(--mono);
-                                background: var(--panel); color: var(--text); min-width: 180px; }
+    .fixrow input[name=value] { padding: 9px 11px; border: 1px solid var(--line); border-radius: 8px; font-family: var(--mono);
+                                background: var(--panel); color: var(--text); flex: 1 1 240px; min-width: 200px; font-size: 15px; }
+    .fixrow input[name=value]:focus { outline: 2px solid var(--accent); border-color: var(--accent); }
+    .fixrow .lab { font-size: 12px; color: var(--muted); flex-basis: 100%; }
+    .btn.pick { border-color: var(--accent); color: var(--accent); font-weight: 600; text-decoration: none; }
+    .btn.pick:hover { background: color-mix(in srgb, var(--accent) 10%, transparent); }
+    .rowcrop { max-width: 100%; border: 1px solid var(--line); border-radius: 6px; background: #fff; margin: 4px 0 8px; display: block; }
 
     .qrows { display: flex; flex-direction: column; gap: 8px; margin: 8px 0 6px; }
     .qrow { border: 1px solid var(--line); border-radius: 10px; padding: 10px 12px; }
@@ -149,6 +154,7 @@
             {% for x in it.qty_fix %}
             <div class="qrow{{ ' pack' if x.pack }}">
               <div class="what">{{ x.desc or 'a row' }}<span class="fine"> · receipt page {{ x.page }}, row {{ x.i + 1 }}{% if x.line %} · SAMB's line {{ x.line }}{% endif %}</span></div>
+              {% if x.key %}<img class="rowcrop" src="/crop/{{ batch }}/{{ x.page }}/row/{{ x.key|urlencode }}" alt="the row as printed" loading="lazy" onerror="this.style.display='none'">{% endif %}
               <div class="nums">
                 <span>read <b class="mono">{{ x.qty or 'nothing' }}{{ ' ' ~ x.uom if x.uom and x.uom not in (x.qty or '') else '' }}</b>{% if x.pieces is not none %}
                   <span class="fine">→ {{ '%g' % x.pieces }} pcs</span>{% endif %}</span>
@@ -162,10 +168,12 @@
                 <input type="hidden" name="batch" value="{{ batch }}"><input type="hidden" name="sor" value="{{ v.sor }}">
                 <input type="hidden" name="page" value="{{ x.page }}"><input type="hidden" name="field" value="lines[{{ x.key }}].qty">
                 <input type="hidden" name="row_key" value="{{ x.key }}"><input type="hidden" name="shown" value="{{ x.qty or '' }}"><input type="hidden" name="by">
-                <input name="value" placeholder="received, with its unit: 2 CTN, 48 PCS" required>
+                <span class="lab">Received, as printed on the receipt (with its unit)</span>
+                <input name="value" placeholder="e.g. 2 CTN or 48 PCS" required>
                 {% if x.per and x.per > 1 %}<button type="button" class="btn" data-fill="{{ '%g' % (x.want / x.per) }} CTN" title="what Satellite recorded">{{ '%g' % (x.want / x.per) }} CTN</button>{% endif %}
                 <button type="button" class="btn" data-fill="0">0 (nothing received)</button>
                 <button class="btn primary">Save</button>
+                <a class="btn pick" href="/batches/{{ batch }}/pages/{{ x.page }}?fix={{ ('lines[' ~ x.key ~ '].qty')|urlencode }}&back={{ ('/review/' ~ v.sor ~ '?batch=' ~ batch)|urlencode }}">Pick it on the page ›</a>
               </form>
               {% elif not x.line %}
               <form method="post" action="/review/pair" class="fixrow js-by">
@@ -237,10 +245,12 @@
               <div class="fine">Page {{ f.page }} · {{ f.label }} · read as <b class="mono">{{ f.value if f.value is not none else 'nothing' }}</b></div>
               <img class="crop" src="/crop/{{ batch }}/{{ f.page }}/{{ f.name }}" alt="" loading="lazy" onerror="this.style.display='none'">
               <div class="fixrow">
-                <input name="value" placeholder="as printed" required>
-                <button type="button" class="btn" data-fill="(not printed)">Not printed on this page</button>
+                <span class="lab">{{ f.label }}, as printed</span>
+                <input name="value" placeholder="type it, or pick it on the page" required>
                 {% for val, why in f.suggest %}<button type="button" class="btn" data-fill="{{ val }}" title="{{ why }}">{{ val }}</button>{% endfor %}
+                <button type="button" class="btn" data-fill="(not printed)">Not printed on this page</button>
                 <button class="btn primary">Save</button>
+                <a class="btn pick" href="/batches/{{ batch }}/pages/{{ f.page }}?fix={{ f.name|urlencode }}&back={{ ('/review/' ~ v.sor ~ '?batch=' ~ batch)|urlencode }}">Pick it on the page ›</a>
               </div>
             </form>
             {% endfor %}
@@ -249,7 +259,7 @@
 
         {% elif it.kind == 'page' %}
           <h2>Page {{ it.page }}: confirm its {{ it.fields|map(attribute='label')|join(', ') }}</h2>
-          <p class="sub">The AI read it, but nothing else could confirm it. Look at the page and type it as printed.</p>
+          <p class="sub">The AI read it, but nothing else could confirm it. Pick it on the page, or type it as printed.</p>
           {% for f in it.fields %}
           <form method="post" action="/review/confirm" class="js-by">
             <input type="hidden" name="batch" value="{{ batch }}"><input type="hidden" name="sor" value="{{ v.sor }}">
@@ -257,11 +267,13 @@
             <input type="hidden" name="shown" value="{{ f.value if f.value is not none else '' }}"><input type="hidden" name="by">
             <img class="crop" src="/crop/{{ batch }}/{{ it.page }}/{{ f.name }}" alt="" loading="lazy" onerror="this.style.display='none'">
             <div class="fixrow">
-              <input name="value" placeholder="as printed" required>
+              <span class="lab">{{ f.label }}, as printed</span>
+              <input name="value" placeholder="type it, or pick it on the page" required>
               {% if f.value is not none %}<button type="button" class="btn suggest" data-fill="{{ f.value }}">{{ f.value }} (the AI's reading)</button>{% endif %}
               {% for val, why in f.suggest %}<button type="button" class="btn" data-fill="{{ val }}" title="{{ why }}">{{ val }}</button>{% endfor %}
               <button type="button" class="btn" data-fill="(not printed)">Not printed</button>
               <button class="btn primary">Save</button>
+              <a class="btn pick" href="/batches/{{ batch }}/pages/{{ it.page }}?fix={{ f.name|urlencode }}&back={{ ('/review/' ~ v.sor ~ '?batch=' ~ batch)|urlencode }}">Pick it on the page ›</a>
             </div>
           </form>
           {% endfor %}
