@@ -314,7 +314,7 @@ def run_one(lesson):
             trial = None
             if change.get("kind") == "new_field":    # the AI OCR must read the new field before the replay means much
                 try:
-                    reading, _ = vf.ai_call("read_all", bid, n, vf.read_all, png, context.vlm_schema(new))
+                    reading = vf.read_fields(bid, n, new)   # one step: the image again; two: the transcript
                 except Exception as e:
                     return later(f"AI OCR: {type(e).__name__}: {e}"[:300])
                 trial = {n: reading}

@@ -43,12 +43,13 @@ def spec_parts(spec):
 
 
 def _image(png_bytes):
-    """(data URL, width, height). Shrinks a page only if it's too big to send."""
+    """(data URL, width, height of the image SENT). Shrinks a page only if it's too big to send."""
     im = Image.open(io.BytesIO(png_bytes))
     w, h = im.size
     if len(png_bytes) > MAX_IMAGE_BYTES:
         im = im.convert("L")
         im.thumbnail((2000, 2000))
+        w, h = im.size                    # the size actually sent: a pixel box is on this image, not the original
         b = io.BytesIO(); im.save(b, "PNG", optimize=True)
         png_bytes = b.getvalue()
     return "data:image/png;base64," + base64.b64encode(png_bytes).decode(), w, h
@@ -175,6 +176,58 @@ def extract_all(png_bytes, schema, spec):
     colnames = list(schema["properties"].get("lines", {}).get("items", {}).get("properties", {}))
     out["lines"] = [{c: _text(r.get(c)) for c in colnames} for r in raw.get("lines") or [] if isinstance(r, dict)]
     return out, meta
+
+
+def transcribe(png_bytes, spec):
+    """Step 1 of read-then-map: the page copied whole, no field list (vlm.TRANSCRIBE). Returns (blocks, meta):
+    blocks [{id, kind, text, cells?, box [ymin, xmin, ymax, xmax] 0-1000 or None, about?}] in the model's order.
+    Shape only here; common/transcript.py checks the content."""
+    url, w, h = _image(png_bytes)
+    content = [{"type": "text", "text": vlm.TRANSCRIBE}, {"type": "image_url", "image_url": {"url": url}}]
+    text, meta = _post(spec, content, max_tokens=TRANSCRIBE_TOKENS)
+    try:
+        raw = _json(text)
+    except json.JSONDecodeError:            # a long page's answer broken somewhere (or cut at max_tokens): keep every
+        raw = {"blocks": salvage_blocks(text)}          # whole block before the break, and say so
+        meta = {**meta, "salvaged": len(raw["blocks"])}
+        if not raw["blocks"]:
+            raise
+    if (meta.get("tokens_out") or 0) >= TRANSCRIBE_TOKENS - 16:
+        meta = {**meta, "cut": True}                    # the model stopped at the limit: the page's end is missing
+    blocks = []
+    for b in raw.get("blocks") or [] if isinstance(raw, dict) else []:
+        if not isinstance(b, dict):
+            continue
+        cells = b.get("cells")
+        blocks.append({"id": _text(b.get("id")), "kind": _text(b.get("kind")) or "printed",
+                       "text": _text(b.get("text")) or "",
+                       "cells": [("" if c is None else str(c)) for c in cells] if isinstance(cells, list) else None,
+                       "box": _box(b.get("box"), w, h), "about": _text(b.get("about"))})
+    return blocks, meta
+
+
+TRANSCRIBE_TOKENS = 12000
+
+
+def salvage_blocks(text):
+    """The complete block objects in a broken answer, in order: each '{"id": …}' that parses on its own."""
+    out, dec = [], json.JSONDecoder()
+    for m in re.finditer(r'\{\s*"id"\s*:', text or ""):
+        try:
+            obj, _ = dec.raw_decode(text, m.start())
+        except json.JSONDecodeError:
+            continue
+        if isinstance(obj, dict):
+            out.append(obj)
+    return out
+
+
+def map_text(prompt, spec):
+    """Step 2 of read-then-map: a text-only call (the transcript and the field list are in the prompt). Returns
+    (the answer's JSON object, meta)."""
+    text, meta = _post(spec, [{"type": "text", "text": prompt}], max_tokens=4096)
+    raw = _json(text)
+    return (raw if isinstance(raw, dict) else {}), meta
 
 
 def second_look(png_bytes, asks, crops, spec):

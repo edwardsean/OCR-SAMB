@@ -116,6 +116,44 @@ def locate(img, words, source, labels, box=None):
     return None, None
 
 
+INK_PAD = 6                   # pixels kept around the ink when a box is tightened
+INK_SPECK = 12                # pieces of ink smaller than this (pixels) are scan noise
+
+
+def ink_rect(img, rect):
+    """A box tightened to the ink inside it, with table ruling removed: a transcript block is a whole line or table
+    cell ("NOMER ORDER | PO.2026.09.32029", borders and blank space included), and Tesseract zoomed on a cell with its
+    borders reads nothing (7000363700-03 p9). Lines running most of the box's width or height are borders, not text.
+    Returns the rect unchanged when nothing is left inside."""
+    x0, y0, x1, y1 = rect
+    h, w = img.shape[:2]
+    x0, y0, x1, y1 = max(0, x0), max(0, y0), min(w, x1), min(h, y1)
+    crop = img[y0:y1, x0:x1]
+    if crop.size == 0:
+        return rect
+    gray = crop if crop.ndim == 2 else cv2.cvtColor(crop, cv2.COLOR_BGR2GRAY)
+    ink = (gray < 128).astype("uint8") * 255
+    ch, cw = ink.shape
+    lines = cv2.morphologyEx(ink, cv2.MORPH_OPEN, cv2.getStructuringElement(cv2.MORPH_RECT, (max(15, int(cw * 0.6)), 1))) | \
+        cv2.morphologyEx(ink, cv2.MORPH_OPEN, cv2.getStructuringElement(cv2.MORPH_RECT, (1, max(15, int(ch * 0.8)))))
+    text = cv2.subtract(ink, cv2.dilate(lines, np.ones((3, 3), "uint8")))
+    n, _, stats, _ = cv2.connectedComponentsWithStats((text > 0).astype("uint8"), 8)
+    pieces = [tuple(int(v) for v in st) for st in stats[1:] if st[4] >= INK_SPECK]      # smaller: scan noise
+    tall = sorted(bh for _, _, bw, bh, area in pieces if area >= 40)
+    letter = tall[len(tall) // 2] if tall else 0      # how tall a character is here
+    keep = []
+    for x, y, bw, bh, area in pieces:
+        if bh <= 3 and bw >= 2 * bh + 2:
+            continue                                  # a flat dash: a border broken up by the 1-bit scan
+        if bw <= 4 and letter and bh < 0.5 * letter:
+            continue                                  # a short thin dash (p9's right border); a "1" is letter-tall
+        keep.append((x, y, x + bw, y + bh))
+    if not keep:
+        return rect
+    return (max(x0, x0 + min(k[0] for k in keep) - INK_PAD), max(y0, y0 + min(k[1] for k in keep) - INK_PAD),
+            min(x1, x0 + max(k[2] for k in keep) + INK_PAD), min(y1, y0 + max(k[3] for k in keep) + INK_PAD))
+
+
 def reread(img, rect):
     """What Tesseract reads at this spot, zoomed: one line (psm 7) and a block (psm 6)."""
     x0, y0, x1, y1 = rect

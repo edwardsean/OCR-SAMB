@@ -194,3 +194,32 @@ ul.plain { list-style: none; padding: 0; margin: 0; } ul.plain li { padding: 4px
 /* phase 5: per-value verdict on line items */
 .grid td.cell-ok { background: color-mix(in srgb, var(--ok) 14%, transparent); }
 .grid td.cell-check { background: color-mix(in srgb, var(--warn) 16%, transparent); }
+
+/* read, then map: what the AI OCR copied and what the text model mapped (_read_steps.html) */
+details.step { margin-top: 10px; border-top: 1px solid var(--line); padding-top: 8px; }
+details.step > summary { cursor: pointer; font-weight: 600; font-size: 14px; }
+details.step > summary span { font-weight: 400; color: var(--muted); }
+.copy { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 14px; margin-top: 10px; }
+.sheet { position: relative; align-self: start; border: 1px solid var(--line); background: #fff; }
+.sheet img { display: block; width: 100%; height: auto; }
+.sheet svg { position: absolute; inset: 0; width: 100%; height: 100%; }
+.sheet rect { fill: transparent; stroke-width: 2; vector-effect: non-scaling-stroke; }
+.sheet rect.used { stroke-width: 3.5; }
+.sheet rect.hot { fill: rgba(255, 200, 0, .35); stroke-width: 4; }
+.k-printed { stroke: #2457c5; } .k-table_header { stroke: #6b3fa0; } .k-table_row { stroke: #178a4c; }
+.k-handwriting { stroke: #d97706; } .k-stamp { stroke: #be185d; } .k-mark { stroke: #c2362f; }
+.blist { max-height: 85vh; overflow: auto; font-size: 12.5px; border: 1px solid var(--line); border-radius: 8px; }
+.blist div { display: grid; grid-template-columns: 38px 88px 1fr; gap: 6px; padding: 4px 8px; border-top: 1px solid var(--line); }
+.blist div:first-child { border-top: 0; }
+.blist div:hover, .blist div.hot { background: color-mix(in srgb, var(--warn) 14%, transparent); }
+.blist .id { font-family: var(--mono); color: var(--muted); }
+.blist .kind { font-size: 11px; font-weight: 600; }
+.blist .used { color: var(--ok); font-weight: 600; }
+.kinds { display: flex; flex-wrap: wrap; gap: 10px; font-size: 12px; margin-top: 6px; }
+.kinds i { display: inline-block; width: 12px; height: 12px; border: 2px solid; margin-right: 4px; vertical-align: -2px; }
+.res { font-size: 12px; font-weight: 600; white-space: nowrap; }
+.res.kept { color: var(--ok); } .res.moved { color: var(--warn); } .res.dropped { color: var(--bad); }
+td s { color: var(--bad); }
+@media (max-width: 760px) { .copy { grid-template-columns: 1fr; } }
+.notes-box { border: 1px solid var(--warn); border-radius: 10px; padding: 8px 12px; margin: 8px 0; background: color-mix(in srgb, var(--warn) 8%, transparent); }
+.notes-box p { margin: 3px 0; } .notes-box b { color: var(--warn); }

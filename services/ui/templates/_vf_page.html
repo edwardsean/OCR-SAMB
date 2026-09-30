@@ -8,8 +8,14 @@
     {% else %}<span class="pill">not read yet</span>{% endif %}
     {% if p.extract_status == 'failed' %}<span class="mono muted"> AI OCR failed: {{ p.extract_error }}</span>{% endif %}
   </h2>
-  <p class="note">Order on this page: prepare the image → AI OCR reads every field on the combined list → Jev classifies
-    from that reading → {% if p.classical_text %}Tesseract reads the page (after classification) → each value checked → look again{% else %}<strong>no Tesseract reading yet</strong> (it runs only after the page's type is decided or labelled){% endif %}.</p>
+  <p class="note">Order on this page: prepare the image → {% if p.transcript %}the AI OCR copies the whole page (handwriting,
+    stamps and marks too) → a text model maps the copy onto the combined list and writes notes{% else %}AI OCR reads every field on the combined list{% endif %}
+    → Jev classifies from that reading → {% if p.classical_text %}Tesseract reads the page (after classification) → each value checked → look again{% else %}<strong>no Tesseract reading yet</strong> (it runs only after the page's type is decided or labelled){% endif %}.</p>
+  {% if vfp.notes %}
+  <div class="notes-box"><strong>Notes on this page</strong> <span class="muted small">(the AI's description, not checked)</span>
+    {% for n in vfp.notes %}<p class="small"><b>{{ n.kind }}</b> {{ n.text or '' }}{% if n.about %} <span class="muted">· {{ n.about }}</span>{% endif %}</p>{% endfor %}</div>
+  {% endif %}
+  {% if vfp.detail %}{% with d = vfp.detail, pg = p.page_no, opened = false %}{% include "_read_steps.html" %}{% endwith %}{% endif %}
 
   <div class="two">
     <div>

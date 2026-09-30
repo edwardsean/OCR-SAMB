@@ -57,9 +57,10 @@ if VF:
 
 EXPECTED_TABLES = 20      # 19 from the base schema + staging.type_label (006)
 if VF:
-    EXPECTED_TABLES += 8  # + context_version, lesson, model_call (010), field_confirmation (011), satellite.sor_item
-                          # (012), line_match (013), bundle_decision (014), notice (018)
+    EXPECTED_TABLES += 9  # + context_version, lesson, model_call (010), field_confirmation (011), satellite.sor_item
+                          # (012), line_match (013), bundle_decision (014), notice (018), reading_trial (019)
 
+SVC = os.environ.get("SERVICE_PREFIX", "vf")      # this stack's service names: vf-* on main, rtm-* in the worktree
 # (name, role, how to probe, console link on the host)
 SERVICES = [
     ("postgres",  "Shared with v1 · database ocr_vf", "probe", None),
@@ -67,10 +68,10 @@ SERVICES = [
     ("minio",     "Shared with v1 · reads v1's page renders, writes vf/", "probe", "http://localhost:9001"),
     ("n8n",       "Shared with v1 · vf's intake, sweep (3 h) and needs-you (5 min) workflows",
                   "http://n8n:5678/healthz", "http://localhost:5678"),
-    ("vf-worker", "vlm-first page workers ×3: q.pages (q.pages.wait while the AI refuses)", "http://vf-worker:8080/health", None),
-    ("vf-grouper", "q.group: group, check bundles, send pages back to look again", "http://vf-grouper:8080/health", None),
-    ("vf-teacher", "Teacher: q.lessons, one lesson at a time", "http://vf-teacher:8080/health", None),
-    ("vf-ui",     "This UI",                          "self",  None),
+    (f"{SVC}-worker", "vlm-first page workers ×3: q.pages (q.pages.wait while the AI refuses)", f"http://{SVC}-worker:8080/health", None),
+    (f"{SVC}-grouper", "q.group: group, check bundles, send pages back to look again", f"http://{SVC}-grouper:8080/health", None),
+    (f"{SVC}-teacher", "Teacher: q.lessons, one lesson at a time", f"http://{SVC}-teacher:8080/health", None),
+    (f"{SVC}-ui",     "This UI",                          "self",  None),
 ] if VF else [
     ("postgres",  "Staging + Satellite schema",   "probe",  None),
     ("rabbitmq",  "q.pages · q.group",            "probe",  "http://localhost:15672"),
@@ -124,15 +125,39 @@ def status():
         "TYPESAFE_API_KEY (Jev, phase 3)": bool(os.environ.get("TYPESAFE_API_KEY")),
         "GEMINI_API_KEY (VLM, phase 4)": bool(os.environ.get("GEMINI_API_KEY")),
     }
+    usage = []
     if VF:                                  # presence only, never the values
         keys["GROQ_API_KEY (vlm-first AI OCR)"] = bool(os.environ.get("GROQ_API_KEY"))
+        keys["DASHSCOPE_API_KEY (Model Studio)"] = bool(os.environ.get("DASHSCOPE_API_KEY"))
         keys["ZAI_API_KEY (vlm-first teacher)"] = bool(os.environ.get("ZAI_API_KEY"))
+        usage = _model_usage()
     checks = [
         (f"All {len(SERVICES)} services healthy", all(r["ok"] for r in rows), f"{sum(r['ok'] for r in rows)} / {len(rows)}"),
         (f"{EXPECTED_TABLES} tables in satellite + staging", len(tables) == EXPECTED_TABLES, f"{len(tables)} found"),
     ]
-    return {"services": rows, "tables": tables, "model_keys": keys, "checks": checks,
+    return {"services": rows, "tables": tables, "model_keys": keys, "checks": checks, "usage": usage,
             "all_ok": all(c[1] for c in checks)}
+
+
+def _model_usage():
+    """Per model: calls today against its cap, and tokens used since the first call (Model Studio's free quota is
+    1M tokens per model for 90 days, so the running total matters, not only today's)."""
+    try:
+        from worker import vf
+        with db.connect(connect_timeout=3) as c:
+            rows = c.execute("""SELECT model, count(*) FILTER (WHERE pacific_day = %s) AS today,
+                                       coalesce(sum((tokens->>'tokens_in')::bigint), 0)
+                                         + coalesce(sum((tokens->>'tokens_out')::bigint), 0) AS tokens,
+                                       min(at)::date AS since
+                                  FROM staging.model_call WHERE model = ANY(%s) GROUP BY model""",
+                             (vf.pacific_day(), list(vf.CAPS))).fetchall()
+        got = {r["model"]: r for r in rows}
+        return [{"model": m, "cap": cap, "today": int((got.get(m) or {}).get("today") or 0),
+                 "tokens": int((got.get(m) or {}).get("tokens") or 0),
+                 "since": str((got.get(m) or {}).get("since") or "") or None}          # plain JSON for /api/status
+                for m, cap in vf.CAPS.items()]
+    except Exception:
+        return []
 
 
 def ctx(request, **kw):
@@ -176,6 +201,7 @@ def _recent_batches(limit=20):
 
 
 PREFIX = os.environ.get("STORAGE_PREFIX", "")
+PAGE_KEY = re.compile(r"^(?:[a-z0-9]+/)?pages/")      # page renders: v1's pages/…, vf's vf/pages/… (any prefix)
 
 
 @app.get("/upload", response_class=HTMLResponse)
@@ -231,6 +257,35 @@ def internal_sweep():
         return JSONResponse({"error": "vlm-first only"}, status_code=404)
     from worker import vf
     return vf.sweep()
+
+
+@app.get("/trial/{batch}", response_class=HTMLResponse)
+def page_trial(request: Request, batch: str, variant: str | None = None, open: int | None = None,
+               only: int | None = None):
+    """Read-then-map (the mentor's two steps) beside each page's own reading, through today's checks. Nothing the
+    pipeline uses changes: the trial lives in staging.reading_trial (python -m worker.vf trial)."""
+    from worker import vf
+    with db.connect() as c:
+        variants = [r["variant"] for r in c.execute(
+            "SELECT DISTINCT variant FROM staging.reading_trial WHERE batch_id=%s ORDER BY 1", (batch,))]
+        variant = variant or (variants[0] if variants else None)
+        trials = {r["page_no"]: dict(r) for r in c.execute(
+            "SELECT * FROM staging.reading_trial WHERE batch_id=%s AND variant=%s", (batch, variant))}
+        pages = {r["page_no"]: dict(r) for r in c.execute(
+            "SELECT * FROM staging.page WHERE batch_id=%s AND page_no = ANY(%s)", (batch, list(trials)))}
+    rows = [vf.compare_trial(batch, n, trials[n], pages[n]) for n in sorted(trials) if n in pages
+            and (only is None or n == only)]
+    open = open or only
+    tally = {"pages": len(rows), "ok_old": sum(len(r["ok"][0]) for r in rows if r.get("checkable")),
+             "ok_new": sum(len(r["ok"][1]) for r in rows if r.get("checkable")),
+             "notes": sum(len(r["notes"]) for r in rows), "errors": sum(1 for r in rows if r.get("error")),
+             "flipped": sum(1 for r in rows if (r.get("flips") or {}).get("fields") or (r.get("flips") or {}).get("cells")),
+             "vl_tokens": sum(int((r["meta"].get("transcribe") or {}).get("tokens_in") or 0)
+                              + int((r["meta"].get("transcribe") or {}).get("tokens_out") or 0) for r in rows),
+             "map_tokens": sum(int((r["meta"].get(k) or {}).get("tokens_in") or 0)
+                               + int((r["meta"].get(k) or {}).get("tokens_out") or 0) for r in rows for k in ("map", "map2"))}
+    return templates.TemplateResponse("trial.html", ctx(request, batch=batch, variant=variant, variants=variants,
+                                                        rows=rows, tally=tally, open=open))
 
 
 @app.post("/notices/seen")
@@ -873,7 +928,7 @@ def _png_size(key):
 
 @app.get("/img/{key:path}")
 def image(key: str):
-    if not (key.startswith("pages/") or key.startswith("vf/pages/")):
+    if not PAGE_KEY.match(key):
         return Response(status_code=404)
     try:
         obj = storage.client().get_object(storage.bucket(), key)
@@ -916,9 +971,9 @@ def _v1_pile(batch, page):
 
 
 def resumable(key):
-    """A page with a real image: v1's render (pages/…) or one uploaded here ({PREFIX}pages/…). A clone's stand-in
-    image isn't: its page is never sent to a worker."""
-    return bool(key) and (key.startswith("pages/") or key.startswith(f"{PREFIX}pages/"))
+    """A page with a real image: v1's render (pages/…) or an uploaded page's (vf/pages/…, read by a worktree whose own
+    prefix differs). A clone's stand-in image isn't: its page is never sent to a worker."""
+    return bool(key and PAGE_KEY.match(key))
 
 
 def vf_after_label(batch, page, label):
@@ -976,8 +1031,13 @@ def _vf_page(c, p):
                    "row": {f["name"]: ((p["fields"].get(f["name"]) or {}).get("value")) for f in t["header"]}}
     filled = sum(1 for n, f in (p.get("fields_all") or {}).items()
                  if n != "lines" and isinstance(f, dict) and f.get("value") not in (None, ""))
+    detail = None
+    if p.get("transcript"):                          # read, then mapped: what each step produced
+        from worker import vf
+        detail = vf.trial_detail(p, p)
     return {"fields": fields, "lesson": lesson, "label": label, "calls": calls, "mapping": mapping, "filled": filled,
-            "type_names": {v: k for k, v in TYPE_MAP.get(p["doc_type"], {}).items()}}
+            "type_names": {v: k for k, v in TYPE_MAP.get(p["doc_type"], {}).items()}, "detail": detail,
+            "notes": p.get("notes") or []}
 
 
 def _vf_bent_passes(r, name, kind, f):

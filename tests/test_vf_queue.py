@@ -16,23 +16,28 @@ PROVIDER = "test-queue"
 BID = "test-vf-queue"
 
 
+SPEC = PROVIDER + ":vision"
+
+
 @pytest.fixture
 def vf(monkeypatch):
     from worker import vf
-    monkeypatch.setattr(vf, "AI_PROVIDER", PROVIDER)
+    monkeypatch.setattr(vf, "AI_OCR", SPEC)
+    monkeypatch.setattr(vf, "AI_MAP", SPEC)
+    monkeypatch.setattr(vf, "CAPS", {SPEC: 150})
     yield vf
     with db.connect() as c:
         c.execute("DELETE FROM staging.model_call WHERE provider=%s", (PROVIDER,))
 
 
 def test_workers_side_by_side_never_spend_past_the_cap(vf, monkeypatch):
-    monkeypatch.setattr(vf, "DAILY_CAP", 3)
+    monkeypatch.setattr(vf, "CAPS", {SPEC: 3})
     made, refused, start = [], [], threading.Barrier(8)
 
     def worker(i):
         start.wait()                                 # all eight ask at the same moment
         try:
-            vf.ai_call("read_all", BID, i, lambda: (made.append(i), {}) and ({}, {"ms": 5}))
+            vf.ai_call("second_look", BID, i, lambda: (made.append(i), {}) and ({}, {"ms": 5}))
         except vf.OutOfBudget:
             refused.append(i)
     threads = [threading.Thread(target=worker, args=(i,)) for i in range(8)]
@@ -48,8 +53,9 @@ def test_a_refusal_that_names_no_time_waits_an_hour(vf):
     """Model Studio's 'Free Quota Only' refusal says no time: without a wait, every page would call and be refused."""
     with db.connect() as c:
         c.execute("""INSERT INTO staging.model_call (at, pacific_day, provider, model, purpose, ok, error)
-                     VALUES (now() - interval '10 minutes', current_date, %s, 'x', 'read_all', false,
-                             'DailyLimit: dashscope:x: free quota used up (AllocationQuota.FreeTierOnly)')""", (PROVIDER,))
+                     VALUES (now() - interval '10 minutes', current_date, %s, %s, 'read_all', false,
+                             'DailyLimit: dashscope:x: free quota used up (AllocationQuota.FreeTierOnly)')""",
+                  (PROVIDER, SPEC))
     assert 49 * 60 < vf.refused_for() <= 50 * 60
     assert vf.blocked().startswith("DailyLimit")
 

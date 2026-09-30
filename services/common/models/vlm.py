@@ -97,6 +97,53 @@ def read(png_bytes):
     return _call([{"text": prompt}, _image_part(png_bytes)], schemas.READ)
 
 
+# ---------------------------------------------------------------------------------------------- read, then map
+# The mentor's two steps (2026-09-29): the AI OCR copies EVERYTHING on the page with no field list (handwriting,
+# stamps and marks included: a sketch on an invoice may be the only sign of a rejection), then a text model maps that
+# copy onto the field list and collects notes. A prompt's text is part of its version: change one, bump its _V
+# (tests/test_vf_transcript.py fails otherwise), so stored transcripts and mappings are never silently reused.
+TRANSCRIBE_V = 1
+TRANSCRIBE = """You are copying ONE scanned page of Indonesian business paperwork exactly as it appears.
+Do not interpret it, do not summarise it, do not fill in any form. Copy EVERYTHING on the page:
+- every printed line: letterhead, titles, labels with their values, remarks, footers;
+- every table: its header row, then each row, cell by cell in column order (an empty cell is "");
+- handwriting (numbers, words), stamps with their text, dates written by hand;
+- marks and sketches, described in square brackets, with what they touch: [tick], [cross over the row],
+  [circle around "2"], [strike-through over "10"], [arrow from "5" to "3"], [signature].
+Rules, strictly:
+- Copy characters exactly as printed, with their separators ("1.126.011,00", "04-Sep-2026", "4505832724").
+- A number cut off at the page's edge stays cut ("1.078.330,"): never complete it.
+- A character you cannot read is [?]. Never guess, never correct, never add what is not on the page.
+- Reading order: top to bottom, left to right. One printed line = one block; one table row = one block.
+Answer with ONE JSON object:
+{"blocks": [{"id": "b1", "kind": "printed" | "table_header" | "table_row" | "handwriting" | "stamp" | "mark",
+             "text": "the block's text", "cells": ["...", "..."] (table_header and table_row only),
+             "box": {"x0": 0, "y0": 0, "x1": 0, "y1": 0} (0-1000 of the page's width and height),
+             "about": "b12" (handwriting, stamp, mark: the block it is written on or next to, if any)}]}"""
+
+MAP_V = 3
+MAP = """Below is the complete transcript of ONE scanned page of Indonesian accounts-receivable paperwork for
+PT Sarana Abadi Makmur Bersama (SAMB): one block per line, as [id] kind (x0-x1, y0-y1 on 0-1000) text.
+It could be SAMB's sales invoice (Faktur Penjualan), a customer's goods receipt, a purchase order, a delivery note,
+a tax invoice, a payment document or a later page of one. You are NOT asked what kind it is.
+Task 1 - fields: for each field in the list that is on this page, give the block it is in and ONLY the value's own
+characters exactly as they appear in that block, never its label or the rest of the line
+(block "NO.PO : AH9Q69089 DIV : T" -> "text": "AH9Q69089"): {"block": "b7", "text": "...", "value": "normalised"}.
+Use null for a field that is not on this page. One printed value goes to one field. Use only the transcript: never
+infer, never compute, never fill from general knowledge. document_title is the document's own name as printed
+(e.g. PURCHASE ORDER, RECEIVING NOTE, FAKTUR PENJUALAN, BUKTI PENERIMAAN BARANG), never a company's name or its
+letterhead. value: amounts as plain decimals with "." as the decimal
+point and no thousands separators ("1.126.011,00" -> "1126011.00"); dates YYYY-MM-DD; identifiers exactly as
+printed without spaces.
+Task 2 - lines: one entry per item row of a table: {"row": "<the row's block id>", <line columns>: the cell's text
+exactly as in the row, or null}.
+Task 3 - notes: everything handwritten, stamped or marked, and printed remarks a person should know about (a return,
+a rejection, a quantity crossed out or corrected): {"kind": "handwriting" | "stamp" | "mark" | "remark" |
+"signature", "text": "what it says or shows", "blocks": ["b14"], "about": "what it seems to concern, e.g. row b14 qty"}.
+A signature is only {"kind": "signature", "blocks": [...]}.
+Answer with ONE JSON object: {"fields": {<field>: {...} or null}, "lines": [...], "notes": [...]}."""
+
+
 # ---------------------------------------------------------------------------------------------- vlm-first
 READ_ALL = """
 This page could be any of SAMB's paperwork: SAMB's own sales invoice (Faktur Penjualan), a customer's goods receipt

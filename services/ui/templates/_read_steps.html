@@ -1,0 +1,72 @@
+{# What the AI OCR copied and what the text model mapped, for one page: d = vf.trial_detail(..), pg = the page
+   number, opened = start open. Used by the trial screen and the page view. #}
+      {% if d.blocks %}
+      <details class="step" {{ 'open' if opened }}>
+        <summary>① What the AI OCR copied <span>· {{ d.blocks|length }} blocks, no field list: everything on the page</span></summary>
+        <div class="kinds">
+          {% for c, lbl in [('#2457c5','printed'),('#6b3fa0','table header'),('#178a4c','table row'),('#d97706','handwriting'),('#be185d','stamp'),('#c2362f','mark / sketch')] %}
+          <span><i style="border-color: {{ c }}"></i>{{ lbl }}</span>{% endfor %}
+          <span class="muted">· a thicker box: a value or row was taken from it · hover a line to find it on the page</span>
+        </div>
+        <div class="copy" data-page="{{ pg }}">
+          <div class="sheet">
+            <img loading="lazy" src="/img/{{ d.image }}" alt="page {{ pg }}">
+            <svg viewBox="0 0 1000 1000" preserveAspectRatio="none">
+              {% for b in d.blocks %}{% if b.box %}
+              <rect data-b="{{ b.id }}" class="k-{{ b.kind }} {{ 'used' if b.used }}" x="{{ b.box[1] }}" y="{{ b.box[0] }}"
+                    width="{{ b.box[3] - b.box[1] }}" height="{{ b.box[2] - b.box[0] }}"><title>[{{ b.id }}] {{ b.kind }}: {{ b.text }}</title></rect>
+              {% endif %}{% endfor %}
+            </svg>
+          </div>
+          <div class="blist">
+            {% for b in d.blocks %}
+            <div data-b="{{ b.id }}"><span class="id">{{ b.id }}</span>
+              <span class="kind k-{{ b.kind }}" style="stroke:none">{{ b.kind|replace('_', ' ') }}{% if b.about %} <span class="muted">on {{ b.about }}</span>{% endif %}</span>
+              <span>{{ b.text }}{% if not b.box %} <span class="muted">(no position)</span>{% endif %}{% if b.used %} <span class="used">→ {{ b.used|join(', ') }}</span>{% endif %}</span></div>
+            {% endfor %}
+          </div>
+        </div>
+      </details>
+      {% endif %}
+
+      {% if d.mapped or d.rows %}
+      <details class="step" {{ 'open' if opened }}>
+        <summary>② What the text model mapped <span>· pass A, before Jev, no knowledge · {{ d.mapped|length }} fields, {{ d.rows|length }} rows</span></summary>
+        <table class="d">
+          <tr><th>Field</th><th>Block it named</th><th>What it copied</th><th>Its value</th><th>Grounding</th><th>Kept as printed</th></tr>
+          {% for m in d.mapped %}
+          <tr><td>{{ m.field }}</td><td class="mono">{{ m.block or '—' }}</td><td class="mono">{{ m.text or '—' }}</td>
+              <td class="mono">{{ m.value if m.value is not none else '—' }}</td>
+              <td><span class="res {{ 'kept' if m.result == 'kept' else ('moved' if m.result.startswith('moved') else 'dropped') }}">{{ m.result }}</span></td>
+              <td class="mono">{{ m.source or '—' }}</td></tr>
+          {% endfor %}
+        </table>
+        {% if d.rows %}
+        <table class="d">
+          <tr><th>Row</th><th>The copied row</th><th>Values it gave (struck through: not in that row, refused)</th></tr>
+          {% for w in d.rows %}
+          <tr><td class="mono">{{ w.row or '—' }}</td><td class="small">{{ w.printed or '(no such block)' }}</td>
+              <td class="small">{% for c, v, kept in w.cells if c != 'row_text' %}<span class="muted">{{ c }}</span> {% if kept %}<b>{{ v }}</b>{% else %}<s>{{ v }}</s>{% endif %}{{ '' if loop.last else ' · ' }}{% endfor %}</td></tr>
+          {% endfor %}
+        </table>
+        {% endif %}
+        {% if d.twice %}
+        <p class="small">Mapped twice and merged: the table above is the first run's answer.
+          {% if d.conflicts %}<span class="res dropped">The runs disagreed, so left empty:</span>
+            {% for c in d.conflicts %}{{ c.field or (c.row ~ ' ' ~ c.column) }} ({{ c['values']|join(' vs ') }}){{ '' if loop.last else ', ' }}{% endfor %}.{% endif %}
+          {% if d.one_run %}<span class="res moved">Found by one run only (kept, it is on the page):</span> {{ d.one_run|join(', ') }}.{% endif %}
+          {% if not d.conflicts and not d.one_run %}<span class="res kept">Both runs agreed on every field.</span>{% endif %}</p>
+        {% endif %}
+        <p class="small muted">Pass B (after Jev, with what people taught for this type and customer) isn't built yet: nothing has been learned, so every value here is pass A.</p>
+      </details>
+      {% endif %}
+<script>
+  document.querySelectorAll('.copy:not([data-wired])').forEach(function (box) {   // a line of the copy <-> its box
+    box.dataset.wired = '1';
+    function hot(id, on) { box.querySelectorAll('[data-b="' + id + '"]').forEach(function (e) { e.classList.toggle('hot', on); }); }
+    box.querySelectorAll('.blist [data-b], svg rect[data-b]').forEach(function (e) {
+      e.addEventListener('mouseenter', function () { hot(e.dataset.b, true); });
+      e.addEventListener('mouseleave', function () { hot(e.dataset.b, false); });
+    });
+  });
+</script>

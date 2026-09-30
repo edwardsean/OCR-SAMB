@@ -56,7 +56,7 @@ import psycopg
 from psycopg.rows import dict_row
 from psycopg.types.json import Json
 
-from common import context, db, gates, satellite, verify
+from common import context, db, gates, satellite, transcript, verify
 from common import keys as keymod
 from common.fields import DECIDES, DOCS, TYPE_MAP, decides, lift, project
 from common.models import openai_vlm, vlm
@@ -67,8 +67,14 @@ PREP_VERSION = 1
 JEV_DECIDE = 0.85
 PREFIX = os.environ.get("STORAGE_PREFIX", "")
 AI_OCR = os.environ.get("VF_AI_OCR", "gemini")                      # gemini, or provider:model
-AI_PROVIDER = "gemini" if AI_OCR == "gemini" else openai_vlm.spec_parts(AI_OCR)[0]
+AI_MAP = os.environ.get("VF_AI_MAP") or AI_OCR                       # the text model that maps a transcript (provider:model)
 DAILY_CAP = int(os.environ.get("VF_AI_OCR_DAILY_CAP", "40" if AI_OCR == "gemini" else "150"))
+MAP_CAP = int(os.environ.get("VF_AI_MAP_DAILY_CAP", "300"))
+CAPS = {AI_OCR: DAILY_CAP, **({AI_MAP: MAP_CAP} if AI_MAP != AI_OCR else {})}   # per model: each has its own quota
+READER = os.environ.get("VF_READER", "one_step")   # two_step: the mentor's transcribe, then map (read_then_map)
+MAP_TWICE = os.environ.get("VF_MAP_TWICE", "1") != "0"   # map each transcript twice and merge (transcript.merge)
+STARTING = {"read_all", "transcribe"}      # a page's first call; everything else finishes a page already started
+TEXT_PURPOSES = {"map"}                    # calls that go to the text model
 REQUIRED = {code: [f["name"] for f in d["header"] if f["source"] == "6.1"] for code, d in DOCS.items()}
 NO_TIME_WAIT = 3600                                                  # seconds, after a daily-limit refusal naming no time
 PREP_COLS = ("rotation", "osd_conf", "skew_angle", "black_ratio", "dark_band_ratio", "speckle_ratio", "qr_text",
@@ -94,46 +100,69 @@ def ledger(provider, purpose, bid, n, ok, meta=None, error=None):
                    Json({k: meta.get(k) for k in ("tokens_in", "tokens_out", "tokens_thinking")}), error))
 
 
-def ai_left():
-    with db.connect() as c:
-        used = c.execute("SELECT count(*) AS n FROM staging.model_call WHERE provider=%s AND pacific_day=%s",
-                         (AI_PROVIDER, pacific_day())).fetchone()["n"]
-    return DAILY_CAP - used
+def spec_for(purpose):
+    """The model a call goes to: the text model maps, the AI OCR (vision) does everything else."""
+    return AI_MAP if purpose in TEXT_PURPOSES else AI_OCR
 
 
-def reserve(purpose, bid, n):
-    """Count and claim one call of today's cap in one transaction, under a lock per provider: page workers running
-    side by side can never spend the same last call. The claim is a ledger row ('pending') that the call's answer
-    completes. Raises OutOfBudget at the cap."""
+def cap_of(spec):
+    return CAPS.get(spec, DAILY_CAP)
+
+
+def finish_reserve(spec):
+    """Calls kept back from a page's first call, so pages already started can still finish (their look-again, the
+    store question): an unfinished page holds its whole bundle."""
+    return max(3, cap_of(spec) // 10)
+
+
+def used_today(c, spec):
+    return c.execute("SELECT count(*) AS n FROM staging.model_call WHERE model=%s AND pacific_day=%s",
+                     (spec, pacific_day())).fetchone()["n"]
+
+
+def ai_left(spec=None):
+    spec = spec or AI_OCR
     with db.connect() as c:
-        c.execute("SELECT pg_advisory_xact_lock(hashtext(%s))", (f"ai-budget:{AI_PROVIDER}",))
-        used = c.execute("SELECT count(*) AS n FROM staging.model_call WHERE provider=%s AND pacific_day=%s",
-                         (AI_PROVIDER, pacific_day())).fetchone()["n"]
-        if used >= DAILY_CAP:
-            raise OutOfBudget(f"vlm-first's daily cap for {AI_PROVIDER} ({DAILY_CAP}) is used up")
+        return cap_of(spec) - used_today(c, spec)
+
+
+def reserve(purpose, bid, n, spec=None):
+    """Count and claim one call of today's cap for this MODEL, in one transaction under a lock per model: page workers
+    running side by side can never spend the same last call, and each model's quota is its own (a Model Studio model
+    whose free quota ended never blocks another). The claim is a ledger row ('pending') that the answer completes.
+    A page's first call stops finish_reserve() short of the cap. Raises OutOfBudget."""
+    spec = spec or spec_for(purpose)
+    cap = cap_of(spec)
+    with db.connect() as c:
+        c.execute("SELECT pg_advisory_xact_lock(hashtext(%s))", (f"ai-budget:{spec}",))
+        used = used_today(c, spec)
+        if used >= cap or (purpose in STARTING and used >= cap - finish_reserve(spec)):
+            raise OutOfBudget(f"vlm-first's daily cap for {spec} ({cap}) is used up"
+                              + ("" if used >= cap else f" for new pages ({finish_reserve(spec)} kept to finish pages)"))
         return c.execute("""INSERT INTO staging.model_call (pacific_day, provider, model, purpose, batch_id, page_no,
                                                             ok, error)
                             VALUES (%s, %s, %s, %s, %s, %s, false, 'pending') RETURNING id""",
-                         (pacific_day(), AI_PROVIDER, AI_OCR, purpose, bid, n)).fetchone()["id"]
+                         (pacific_day(), spec.partition(":")[0], spec, purpose, bid, n)).fetchone()["id"]
 
 
 def settle_call(call_id, ok, meta=None, error=None):
+    """The claim's answer. The row keeps the model it was reserved for (the ledger is counted per model)."""
     meta = meta or {}
     with db.connect() as c:
-        c.execute("""UPDATE staging.model_call SET ok=%s, model=coalesce(%s, model), ms=%s, tokens=%s, error=%s
-                     WHERE id=%s""",
-                  (ok, meta.get("model"), meta.get("ms"),
-                   Json({k: meta.get(k) for k in ("tokens_in", "tokens_out", "tokens_thinking")}), error, call_id))
+        c.execute("UPDATE staging.model_call SET ok=%s, ms=%s, tokens=%s, error=%s WHERE id=%s",
+                  (ok, meta.get("ms"), Json({k: meta.get(k) for k in ("tokens_in", "tokens_out", "tokens_thinking")}),
+                   error, call_id))
 
 
-def refused_for():
-    """When the provider's last answer was a daily-limit refusal: the seconds of its wait that haven't passed, else 0.
+def refused_for(spec=None):
+    """When this model's last answer was a daily-limit refusal: the seconds of its wait that haven't passed, else 0.
     Asking before then only fails, and each failure counts against the cap: 166 uploaded pages would use it up.
     A refusal that names no time counts as NO_TIME_WAIT."""
+    spec = spec or AI_OCR
     with db.connect() as c:
         r = c.execute("""SELECT extract(epoch FROM now() - at) AS ago, ok, error FROM staging.model_call
-                          WHERE provider=%s AND (ok OR error LIKE 'DailyLimit%%') ORDER BY at DESC LIMIT 1""",
-                      (AI_PROVIDER,)).fetchone()
+                          WHERE model=%s AND (ok OR error LIKE 'DailyLimit%%') ORDER BY at DESC LIMIT 1""",
+                      (spec,)).fetchone()
     if not r or r["ok"]:
         return 0.0
     wait = seconds_until(r["error"]) or NO_TIME_WAIT    # a refusal with no time (Model Studio's free quota): an hour
@@ -141,18 +170,19 @@ def refused_for():
 
 
 def ai_call(purpose, bid, n, call, *args):
-    """One AI OCR call, counted in the ledger and stopped at vlm-first's daily cap for this provider (reserved before
-    the call: several page workers share the cap). While the provider's last refusal still says to wait, the page
-    waits without a call: its worker parks it on q.pages.wait (park)."""
-    wait = refused_for()
+    """One model call, counted in the ledger and stopped at vlm-first's daily cap for its model (reserved before the
+    call: several page workers share the cap). While the model's last refusal still says to wait, the page waits
+    without a call: its worker parks it on q.pages.wait (park)."""
+    spec = spec_for(purpose)
+    wait = refused_for(spec)
     if wait:
-        raise openai_vlm.DailyLimit(f"{AI_OCR}: daily limit reached (its last refusal), "
+        raise openai_vlm.DailyLimit(f"{spec}: daily limit reached (its last refusal), "
                                     f"try again in {int(wait // 60)}m{wait % 60:.1f}s")
-    call_id = reserve(purpose, bid, n)
+    call_id = reserve(purpose, bid, n, spec)
     try:
         out, meta = call(*args)
     except Exception as e:
-        settle_call(call_id, False, {"model": AI_OCR}, f"{type(e).__name__}: {e}"[:300])
+        settle_call(call_id, False, None, f"{type(e).__name__}: {e}"[:300])
         raise
     settle_call(call_id, True, meta)
     return out, meta
@@ -627,6 +657,8 @@ def _handle(ticket, bid, n, run, v1_reading, second_look):
         ctx_v, ctx = context.ensure(c, classify.JEV_QUESTION["doc_type"]["criteria"], classify.KEYWORDS,
                                     classify.JEV_TYPES)
     fv = context.fields_version(ctx) + "@" + AI_OCR           # a reading belongs to the list AND the model that made it
+    if READER == "two_step":                                   # … and, read then mapped, to the transcript and mapper
+        fv = two_step_versions(ctx)[2]
     fv_saved = fv if v1_reading is None else "dry-run"   # a dry-run reading is never reused as if Gemini made it
 
     up, prep, up_key, thumb_key, prep_flags = prepare(ticket, prev, bid, n)                        # 1
@@ -634,11 +666,20 @@ def _handle(ticket, bid, n, run, v1_reading, second_look):
     title = (prev or {}).get("fp_title")             # the printed-title witness, looked for at most once per page
     x = {"fields_all": None, "extract_status": None, "extract_error": None, "vlm_meta": {}}      # 2
     earlier = None                                   # this reading's earlier look-again, if the reading is reused
+    two = {"notes": (prev or {}).get("notes"), "mapping": (prev or {}).get("mapping")}
     if prev and prev["fields_all"] and prev["fields_version"] == fv:
         x.update(fields_all=prev["fields_all"], extract_status="done", vlm_meta=prev["vlm_meta"] or {})
         earlier = prev["second_look"]
     elif v1_reading is not None:
         x.update(fields_all=v1_reading, extract_status="done", vlm_meta={"read": {"model": "v1 reading (dry run)"}})
+    elif READER == "two_step":
+        try:
+            fa, meta, _, notes, mapping = read_then_map(bid, n, up, ctx, prev)
+            x.update(fields_all=fa, extract_status="done", vlm_meta={"read": meta})
+            two.update(notes=notes, mapping=mapping)
+            earlier = carry_over((prev or {}).get("second_look"), fa)
+        except Exception as e:
+            x.update(extract_status="failed", extract_error=f"{type(e).__name__}: {e}"[:500])
     else:
         try:
             fa, meta = ai_call("read_all", bid, n, read_all, v1.png_bytes(up), context.vlm_schema(ctx))
@@ -683,6 +724,8 @@ def _handle(ticket, bid, n, run, v1_reading, second_look):
         dt = cls["doc_type"]
         work = enhance.mask_bands(up, *enhance.measure(up)[2:])
         _, rd = enhance.read(work)
+        if READER == "two_step" and two["mapping"] and fields_all:   # boxes on Tesseract's own words, now it has read
+            transcript.snap_boxes(fields_all, two["mapping"], rd.get("ocr_words"), up.shape)
         with db.connect() as c:
             sos, confirmed, day = satellite.load(c), satellite.confirmations(c, bid, n), scan_day_of(c, bid)
         fields, res, zev = page_verdicts(dt, fields_all, rd, prep["qr_text"], up, ctx, sos, confirmed,
@@ -720,7 +763,7 @@ def _handle(ticket, bid, n, run, v1_reading, second_look):
               type_status=%(type_status)s, doc_type=%(doc_type)s, type_guess=%(type_guess)s,
               doc_type_conf=%(doc_type_conf)s, type_votes=%(type_votes)s, context_version=%(cv)s,
               zoom=%(zoom)s, second_look=%(second_look)s, outcome=%(outcome)s, verify_version=%(vv)s,
-              ship_to=%(ship_to)s, fp_title=%(fp_title)s,
+              ship_to=%(ship_to)s, fp_title=%(fp_title)s, notes=%(notes)s, mapping=%(mapping)s,
               error=NULL, read_at=now()
             WHERE batch_id=%(bid)s AND page_no=%(n)s AND status <> 'read'
               AND EXISTS (SELECT 1 FROM staging.scan_batch WHERE id=%(bid)s AND run=%(run)s)
@@ -735,6 +778,8 @@ def _handle(ticket, bid, n, run, v1_reading, second_look):
              **cls, "type_votes": Json(cls["type_votes"]), "cv": ctx_v,
              "zoom": Json(zev) if zev else None, "second_look": Json(sl) if sl else None, "outcome": oc,
              "ship_to": Json(ship_to) if ship_to is not None else None, "fp_title": title,
+             "notes": Json(two["notes"]) if two["notes"] is not None else None,
+             "mapping": Json(two["mapping"]) if two["mapping"] is not None else None,
              "vv": verify.VERIFY_VERSION if res else None,
              "up": up_key, "thumb": thumb_key, "bid": bid, "n": n, "run": run}).fetchone()
         if saved:
@@ -807,6 +852,329 @@ def seconds_until(text):
     return m and int(m.group(1) or 0) * 3600 + int(m.group(2) or 0) * 60 + float(m.group(3))
 
 
+# ---------------------------------------------------------------------------------------------- read, then map
+# The mentor's two steps (2026-09-29; common/transcript.py): the AI OCR copies the whole page, a text model maps the
+# copy onto the field list and collects notes. Stage 1a: a TRIAL only (staging.reading_trial), measured beside the
+# page's own reading before anything adopts it.
+
+def transcribe_png(png):
+    if AI_OCR == "gemini":
+        raise NotImplementedError("read-then-map needs an OpenAI-compatible model: VF_AI_OCR=provider:model")
+    return openai_vlm.transcribe(png, AI_OCR)
+
+
+def map_blocks(blocks, schema, hints=None):
+    heads, cols = openai_vlm._field_list(schema)
+    return openai_vlm.map_text(transcript.map_prompt(blocks, heads, cols, hints), AI_MAP)
+
+
+def mapped(raw, blocks, schema, words, img, ctx):
+    """The text model's answer → (fields_all, mapping, notes), grounded, boxes snapped to print (or tightened to the
+    value's ink when Tesseract didn't read it), amounts normalised."""
+    shape = img.shape
+    props = schema["properties"]
+    names = [k for k in props if k != "lines"]
+    cols = [c for c in props.get("lines", {}).get("items", {}).get("properties", {}) if c != "row_text"]
+    kinds = {n: ((ctx.get("fields") or {}).get(n) or {}).get("kind") for n in names}
+    fa, mapping, notes = transcript.to_fields_all(raw, blocks, names, cols, kinds)
+    transcript.snap_boxes(fa, mapping, words, shape)
+    h, w = shape[:2]
+    for name, where in mapping.get("fields", {}).items():       # still a whole block or cell: its ink, no borders
+        f = fa.get(name)
+        if f and f.get("box") and where.get("box_by") == "block":
+            r = zoom.ink_rect(img, zoom.by_ai_box(f["box"], shape))
+            f["box"] = [int(r[1] * 1000 / h), int(r[0] * 1000 / w), int(r[3] * 1000 / h), int(r[2] * 1000 / w)]
+            where["box_by"] = "ink"
+    normalise_amounts(fa, ctx)
+    return fa, mapping, notes
+
+
+def flips(a, b):
+    """Where two mappings of one transcript disagree: the text model's own noise (a gate's gain must beat it)."""
+    out = [k for k in set(a) | set(b) if k != "lines"
+           and verify.flat((a.get(k) or {}).get("value")) != verify.flat((b.get(k) or {}).get("value"))]
+    ra, rb = a.get("lines") or [], b.get("lines") or []
+    cells = sum(1 for x, y in zip(ra, rb) for c in set(x) | set(y)
+                if c != "row_text" and verify.flat(x.get(c)) != verify.flat(y.get(c))) + abs(len(ra) - len(rb))
+    return {"fields": sorted(out), "cells": cells}
+
+
+def first_reading(p):
+    """The page's own reading as the AI OCR first gave it: kept look-again answers put back to their first answer
+    (the trial has no look-again yet, so it is compared with the first reading, not the finished one)."""
+    fa = json.loads(json.dumps(p["fields_all"] or {}))
+    for c, r in ((p.get("second_look") or {}).get("results") or {}).items():
+        if r.get("kept_second") and c in fa:
+            fa[c] = r.get("first")
+    return fa
+
+
+def trial(bid, pages, variant=None, twice=True):
+    """Read then map these pages into staging.reading_trial, beside their own reading; the page itself is untouched.
+    A transcript already made for a page (any variant, same transcript version) is reused, so comparing two text
+    models costs one image read. twice: map a second time to measure the text model's flip rate."""
+    variant = variant or f"map@{AI_MAP}"
+    with db.connect() as c:
+        _, ctx = context.ensure(c, classify.JEV_QUESTION["doc_type"]["criteria"], classify.KEYWORDS, classify.JEV_TYPES)
+    schema = context.vlm_schema(ctx)
+    tv = transcript.transcript_version(AI_OCR, PREP_VERSION)
+    mv = transcript.map_version(context.fields_version(ctx), tv, AI_MAP)
+    done = []
+    for n in pages:
+        with db.connect() as c:
+            p = c.execute("SELECT upright_path, ocr_words FROM staging.page WHERE batch_id=%s AND page_no=%s",
+                          (bid, n)).fetchone()
+            old = c.execute("""SELECT transcript, meta FROM staging.reading_trial WHERE batch_id=%s AND page_no=%s
+                                 AND versions->>'transcript' = %s AND transcript IS NOT NULL LIMIT 1""",
+                            (bid, n, tv)).fetchone()
+            mine = c.execute("""SELECT mapping->'raw' AS raw, versions->>'map' AS map, meta->'map' AS meta
+                                  FROM staging.reading_trial WHERE batch_id=%s AND page_no=%s AND variant=%s
+                                   AND mapping ? 'raw'""", (bid, n, variant)).fetchone()
+        old_raw = dict(mine) if mine else None
+        if not p or not p["upright_path"]:
+            print(f"page {n}: not prepared yet"); continue
+        up, meta, err = v1.load(p["upright_path"]), {}, None
+        blocks = fa = mapping = notes = None
+        try:
+            if old:
+                blocks, meta["transcribe"] = old["transcript"], {"reused": True}
+            else:
+                raw_blocks, meta["transcribe"] = ai_call("transcribe", bid, n, transcribe_png, v1.png_bytes(up))
+                blocks = transcript.normalise_blocks(raw_blocks)
+            if old_raw and old_raw.get("map") == mv:        # this mapping already made: the first run, no call
+                raw, meta["map"] = old_raw["raw"], old_raw.get("meta") or {"reused": True}
+            else:
+                raw, meta["map"] = ai_call("map", bid, n, map_blocks, blocks, schema)
+            first = mapped(raw, blocks, schema, p["ocr_words"], up, ctx)
+            fa, mapping, notes = first
+            if twice:                                       # a second run, merged: agreements and single finds kept,
+                raw2, meta["map2"] = ai_call("map", bid, n, map_blocks, blocks, schema)   # disagreements left empty
+                second = mapped(raw2, blocks, schema, p["ocr_words"], up, ctx)
+                fa, mapping, notes = transcript.merge(first, second)
+                mapping["flips"] = flips(first[0], second[0])
+                mapping["raw2"] = raw2
+            mapping["raw"] = raw                  # the text model's own answers: a grounding fix re-runs with no call
+        except Exception as e:
+            err = f"{type(e).__name__}: {e}"[:500]
+        with db.connect() as c:
+            c.execute("""INSERT INTO staging.reading_trial (batch_id, page_no, variant, transcript, fields_all, notes,
+                                                            mapping, versions, meta, error)
+                         VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
+                         ON CONFLICT (batch_id, page_no, variant) DO UPDATE SET transcript=EXCLUDED.transcript,
+                           fields_all=EXCLUDED.fields_all, notes=EXCLUDED.notes, mapping=EXCLUDED.mapping,
+                           versions=EXCLUDED.versions, meta=EXCLUDED.meta, error=EXCLUDED.error, created_at=now()""",
+                      (bid, n, variant, Json(blocks) if blocks is not None else None,
+                       Json(fa) if fa is not None else None, Json(notes) if notes is not None else None,
+                       Json(mapping) if mapping is not None else None, Json({"transcript": tv, "map": mv}),
+                       Json(meta), err))
+        filled = sum(1 for k, f in (fa or {}).items() if k != "lines" and f)
+        print(f"page {n}: " + (f"error {err}" if err else
+              f"{len(blocks)} blocks, {filled} fields, {len((fa or {}).get('lines') or [])} rows, {len(notes)} notes, "
+              f"{len(mapping['dropped'])} dropped, flips {mapping.get('flips')}"), flush=True)
+        done.append(n)
+    return done
+
+
+def reground(bid, variant=None):
+    """The trial's stored text-model answers (mapping.raw) grounded again with today's code: a grounding fix measured
+    with no model call. Pages whose raw answer wasn't kept are left as they are."""
+    with db.connect() as c:
+        _, ctx = context.ensure(c, classify.JEV_QUESTION["doc_type"]["criteria"], classify.KEYWORDS, classify.JEV_TYPES)
+        rows = c.execute("""SELECT t.page_no, t.variant, t.transcript, t.mapping, p.upright_path, p.ocr_words
+                              FROM staging.reading_trial t JOIN staging.page p USING (batch_id, page_no)
+                             WHERE t.batch_id=%s AND (%s::text IS NULL OR t.variant=%s)
+                               AND t.mapping ? 'raw'""", (bid, variant, variant)).fetchall()
+    schema = context.vlm_schema(ctx)
+    for r in rows:
+        raw, raw2 = r["mapping"]["raw"], r["mapping"].get("raw2")
+        img = v1.load(r["upright_path"])
+        first = mapped(raw, r["transcript"], schema, r["ocr_words"], img, ctx)
+        fa, mapping, notes = first
+        if raw2:
+            second = mapped(raw2, r["transcript"], schema, r["ocr_words"], img, ctx)
+            fa, mapping, notes = transcript.merge(first, second)
+            mapping["flips"], mapping["raw2"] = flips(first[0], second[0]), raw2
+        mapping["raw"] = raw
+        with db.connect() as c:
+            c.execute("UPDATE staging.reading_trial SET fields_all=%s, mapping=%s, notes=%s WHERE batch_id=%s "
+                      "AND page_no=%s AND variant=%s", (Json(fa), Json(mapping), Json(notes), bid, r["page_no"],
+                                                       r["variant"]))
+    return len(rows)
+
+
+def two_step_versions(ctx):
+    """(transcript version, the mapping's version as the trial records it, the page's fields_version)."""
+    tv = transcript.transcript_version(AI_OCR, PREP_VERSION)
+    mv = transcript.map_version(context.fields_version(ctx), tv, AI_MAP)
+    return tv, mv, mv + ("#x2" if MAP_TWICE else "")
+
+
+def read_then_map(bid, n, up, ctx, prev):
+    """Step 2, the mentor's way: the AI OCR's copy of the page (reused from the page or a trial when the same image,
+    model and prompt made it; else transcribed and saved at once), then the text model's mapping (reused from a trial
+    with the same version; else mapped, twice and merged). Returns (fields_all, meta, transcript, notes, mapping).
+    Tesseract hasn't read the page yet: boxes are tightened to the value's ink now, to its words after step 5."""
+    tv, mv, _ = two_step_versions(ctx)
+    schema, meta = context.vlm_schema(ctx), {}
+    with db.connect() as c:
+        tr = c.execute("""SELECT transcript, mapping FROM staging.reading_trial WHERE batch_id=%s AND page_no=%s
+                            AND versions->>'transcript' = %s AND transcript IS NOT NULL
+                          ORDER BY (versions->>'map' = %s) DESC LIMIT 1""", (bid, n, tv, mv)).fetchone()
+        same_map = c.execute("""SELECT 1 FROM staging.reading_trial WHERE batch_id=%s AND page_no=%s
+                                  AND versions->>'map' = %s AND mapping ? 'raw'""", (bid, n, mv)).fetchone()
+    if prev and prev.get("transcript") and prev.get("transcript_version") == tv:
+        blocks, meta["transcribe"] = prev["transcript"], {"reused": "page"}
+    elif tr:
+        blocks, meta["transcribe"] = tr["transcript"], {"reused": "trial"}
+    else:
+        raw_blocks, meta["transcribe"] = ai_call("transcribe", bid, n, transcribe_png, v1.png_bytes(up))
+        blocks = transcript.normalise_blocks(raw_blocks)
+    with db.connect() as c:                          # saved at once: a paid transcription survives a failed mapping
+        c.execute("""UPDATE staging.page SET transcript=%s, transcript_version=%s, transcript_status='done'
+                     WHERE batch_id=%s AND page_no=%s""", (Json(blocks), tv, bid, n))
+    old = (tr["mapping"] if tr and same_map else None) or {}
+    raw = old.get("raw")
+    if raw is None:
+        raw, meta["map"] = ai_call("map", bid, n, map_blocks, blocks, schema)
+    first = mapped(raw, blocks, schema, None, up, ctx)
+    fa, mapping, notes = first
+    if MAP_TWICE:
+        raw2 = old.get("raw2")
+        if raw2 is None:
+            raw2, meta["map2"] = ai_call("map", bid, n, map_blocks, blocks, schema)
+        second = mapped(raw2, blocks, schema, None, up, ctx)
+        fa, mapping, notes = transcript.merge(first, second)
+        mapping["raw2"] = raw2
+    mapping["raw"] = raw
+    return fa, meta, blocks, notes, mapping
+
+
+def read_fields(bid, n, ctx):
+    """A page's reading with a given context (the teacher's new-field trial): one step, the AI OCR reads the image
+    again; two steps, the stored transcript is mapped again (a text call, no image)."""
+    with db.connect() as c:
+        prev = c.execute("SELECT * FROM staging.page WHERE batch_id=%s AND page_no=%s", (bid, n)).fetchone()
+    up = v1.load(prev["upright_path"])
+    if READER != "two_step":
+        return ai_call("read_all", bid, n, read_all, v1.png_bytes(up), context.vlm_schema(ctx))[0]
+    return read_then_map(bid, n, up, ctx, prev)[0]
+
+
+def carry_over(second, fields_all):
+    """A look-again made for an earlier reading, kept where the new reading gives the same first answer (so it is
+    never paid for twice); its kept answer is put back in. Answers to other first answers are dropped: the new
+    reading's value is new, and the look-again rule decides afresh whether it is asked."""
+    if not second:
+        return None
+    res = {}
+    for c, r in (second.get("results") or {}).items():
+        now = fields_all.get(c)
+        if now and verify.flat((r.get("first") or {}).get("source_text")) == verify.flat(now.get("source_text")):
+            res[c] = r
+            if r.get("kept_second") and r.get("second"):
+                fields_all[c] = {**now, "value": r["second"].get("value"), "source_text": r["second"].get("source_text")}
+    keep = {k: second[k] for k in ("bundle_asks",) if second.get(k)}
+    return {"asked": sorted(res), "results": res, **keep} if res or keep else None
+
+
+def evaluate_reading(bid, n, fields_all):
+    """The page's checks on a given reading (the trial's, or its own first one): what recompute() would say with no
+    look-again, no store answer, nothing stored. For the trial report."""
+    with db.connect() as c:
+        p = c.execute("SELECT * FROM staging.page WHERE batch_id=%s AND page_no=%s", (bid, n)).fetchone()
+        if (not p or p["type_status"] not in ("decided", "labelled") or p["classical_text"] is None
+                or fields_all is None):
+            return None
+        _, ctx = context.ensure(c, classify.JEV_QUESTION["doc_type"]["criteria"], classify.KEYWORDS,
+                                classify.JEV_TYPES)
+        sos, confirmed, day = satellite.load(c), satellite.confirmations(c, bid, n), scan_day_of(c, bid)
+    dt = p["doc_type"]
+    rd = {"classical_text": p["classical_text"], "ocr_words": p["ocr_words"] or []}
+    fields, res, _ = page_verdicts(dt, fields_all, rd, p["qr_text"], v1.load(p["upright_path"]), ctx, sos,
+                                   confirmed, scan_day=day, ship_to=p.get("ship_to"))
+    asks = second_look_asks(dt, res, ctx) if res else []
+    return {"doc_type": dt, "fields": fields, "res": res, "asks": [c for c, _ in asks],
+            "outcome": outcome(p["type_status"], dt, res, not asks),
+            "keys": keymod.derive(dt, fields, rd["classical_text"], p["qr_text"], res["header"] if res else None)
+            if fields else {}}
+
+
+def trial_detail(trial_row, page_row):
+    """What each step produced, for the trial screen (pure, from stored data):
+    blocks  the AI OCR's copy of the page, in order, each with the fields/rows that ended up taken from it;
+    mapped  the text model's own answer per field (the block it named, what it copied, its value) and what grounding
+            did with it: kept, moved to the block that really prints it, or dropped (and why);
+    rows    its table rows, each cell with the value it gave and whether grounding kept it."""
+    blocks = trial_row.get("transcript") or []
+    mapping = trial_row.get("mapping") or {}
+    raw = mapping.get("raw") or {}
+    fa = trial_row.get("fields_all") or {}
+    moved = set(mapping.get("moved") or [])
+    dropped = {d.get("field"): d for d in mapping.get("dropped") or [] if d.get("field")}
+    cell_dropped = {(d.get("row"), d.get("column")) for d in mapping.get("dropped") or [] if d.get("column")}
+    used = {}
+    for name, w in (mapping.get("fields") or {}).items():
+        used.setdefault(w.get("block"), []).append(name)
+    for i, w in enumerate(mapping.get("rows") or [], 1):
+        used.setdefault(w.get("block"), []).append(f"row {i}")
+    answer = raw.get("fields") if isinstance(raw.get("fields"), dict) else {}
+    mapped = []
+    for name, m in sorted(answer.items()):
+        if m in (None, "", {}):
+            continue
+        m = m if isinstance(m, dict) else {"value": m}
+        f = fa.get(name)
+        if f:
+            final = (mapping.get("fields") or {}).get(name, {}).get("block")
+            result = f"moved to {final}" if name in moved else "kept"
+        else:
+            result = "dropped: " + (dropped.get(name) or {}).get("why", "not on the page")
+        mapped.append({"field": name, "block": m.get("block"), "text": m.get("text"), "value": m.get("value"),
+                       "result": result, "source": (f or {}).get("source_text"), "ok": bool(f)})
+    by_id = {b.get("id"): b for b in blocks}
+    rows = []
+    for r in raw.get("lines") or []:
+        if not isinstance(r, dict):
+            continue
+        b = by_id.get(r.get("row"))
+        cells = [(c, v, (r.get("row"), c) not in cell_dropped) for c, v in r.items() if c != "row" and v not in (None, "")]
+        rows.append({"row": r.get("row"), "printed": transcript.block_text(b) if b else None, "cells": cells})
+    return {"image": page_row.get("upright_path"),
+            "blocks": [{"id": b.get("id"), "kind": b.get("kind"), "box": b.get("box"), "about": b.get("about"),
+                        "text": " | ".join(str(c) for c in b["cells"]) if b.get("cells") else (b.get("text") or ""),
+                        "used": used.get(b.get("id"), [])} for b in blocks],
+            "mapped": mapped, "rows": rows, "conflicts": mapping.get("conflicts") or [],
+            "one_run": mapping.get("one_run") or [], "twice": bool(mapping.get("raw2"))}
+
+
+def compare_trial(bid, n, trial_row, page_row):
+    """One page: the page's own first reading beside the trial's, both through today's checks (evaluate_reading).
+    What the trial report shows: outcome, keys, the values print backs, every value that differs, the rows'
+    quantities, notes, what the text model's answer lost to grounding, flips, tokens."""
+    old = evaluate_reading(bid, n, first_reading(page_row))
+    new = evaluate_reading(bid, n, trial_row["fields_all"]) if trial_row.get("fields_all") else None
+    out = {"page": n, "type": page_row.get("doc_type"), "type_status": page_row.get("type_status"),
+           "error": trial_row.get("error"), "notes": trial_row.get("notes") or [],
+           "dropped": (trial_row.get("mapping") or {}).get("dropped") or [],
+           "flips": (trial_row.get("mapping") or {}).get("flips"), "meta": trial_row.get("meta") or {},
+           "blocks": len(trial_row.get("transcript") or []), "detail": trial_detail(trial_row, page_row)}
+    if not old or not new:
+        return {**out, "checkable": False}
+
+    def ok(r):
+        return sorted(k for k, v in ((r["res"] or {}).get("header") or {}).items() if (v or {}).get("verdict") == "ok")
+
+    def key(r):
+        return {k: (v.get("value"), v.get("confirmed_by")) for k, v in (r["keys"] or {}).items()}
+    of, nf = old["fields"] or {}, new["fields"] or {}
+    diffs = [(k, (of.get(k) or {}).get("value"), (nf.get(k) or {}).get("value")) for k in sorted(set(of) | set(nf))
+             if k != "lines" and verify.flat((of.get(k) or {}).get("value")) != verify.flat((nf.get(k) or {}).get("value"))]
+    qty = next((c for c in ("qty", "qty_crt") if any(c in r for r in (of.get("lines") or []) + (nf.get("lines") or []))), "qty")
+    rows = lambda f: [{"text": (r.get("row_text") or "")[:90], "qty": r.get(qty)} for r in f.get("lines") or []]
+    return {**out, "checkable": True, "outcome": (old["outcome"], new["outcome"]), "links": (key(old), key(new)),
+            "ok": (ok(old), ok(new)), "diffs": diffs, "rows": (rows(of), rows(nf))}
+
+
 # ---------------------------------------------------------------------------------------------- the queue's side
 
 MAX_TRIES = 3                  # a call that failed (not a limit) is tried this many times from the waiting room
@@ -816,10 +1184,13 @@ LIMITS = ("DailyLimit", "OutOfBudget")
 def blocked():
     """Why no AI OCR call can be made right now (today's cap is used up, or the provider's last refusal still
     stands), else None. Checked before any work on a parked page: waiting it out costs one query, not a page run."""
-    if ai_left() <= 0:
-        return f"OutOfBudget: vlm-first's daily cap for {AI_PROVIDER} ({DAILY_CAP}) is used up"
-    wait = refused_for()
-    return f"DailyLimit: {int(wait // 60)} min left of the provider's refusal" if wait else None
+    for spec in CAPS:                    # a page needs every model: the AI OCR, and the text model that maps
+        if ai_left(spec) <= 0:
+            return f"OutOfBudget: vlm-first's daily cap for {spec} ({cap_of(spec)}) is used up"
+        wait = refused_for(spec)
+        if wait:
+            return f"DailyLimit: {int(wait // 60)} min left of {spec}'s refusal"
+    return None
 
 
 def retry_of(bid, n):
@@ -922,3 +1293,9 @@ if __name__ == "__main__":
         again(sys.argv[2], pages_arg(sys.argv[3]) if len(sys.argv) > 3 else None)
     elif sys.argv[1] == "shadow":
         shadow(sys.argv[2], pages_arg(sys.argv[3]))
+    elif sys.argv[1] == "reground":          # reground <batch>: the stored answers, grounded again (no call)
+        print(reground(sys.argv[2]), "pages grounded again")
+    elif sys.argv[1] == "trial":             # trial <batch> <pages> [--variant name] [--once]
+        rest = sys.argv[4:]
+        trial(sys.argv[2], pages_arg(sys.argv[3]),
+              rest[rest.index("--variant") + 1] if "--variant" in rest else None, "--once" not in rest)

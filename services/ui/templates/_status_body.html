@@ -25,6 +25,22 @@
   </table>
 </section>
 
+{% if s.usage %}
+<section>
+  <h2>AI models</h2>
+  <table class="grid">
+    <thead><tr><th>Model</th><th>Calls today</th><th>Tokens used</th></tr></thead>
+    <tbody>
+    {% for u in s.usage %}
+      <tr><td class="mono">{{ u.model }}</td><td>{{ u.today }} of {{ u.cap }}</td>
+          <td>{{ '{:,}'.format(u.tokens) }}{% if u.since %} <span class="muted">since {{ u.since }}</span>{% endif %}</td></tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  <p class="note">Each model has its own cap and quota (Model Studio's free quota: 1M tokens per model for 90 days).</p>
+</section>
+{% endif %}
+
 <div class="two">
   <section>
     <h2>Tables <span class="count">{{ s.tables|length }}</span></h2>
