@@ -56,7 +56,7 @@ import psycopg
 from psycopg.rows import dict_row
 from psycopg.types.json import Json
 
-from common import context, db, gates, satellite, transcript, verify
+from common import context, db, gates, satellite, transcript, verify, wiki
 from common import keys as keymod
 from common.fields import DECIDES, DOCS, TYPE_MAP, decides, lift, project
 from common.models import openai_vlm, vlm
@@ -74,7 +74,7 @@ CAPS = {AI_OCR: DAILY_CAP, **({AI_MAP: MAP_CAP} if AI_MAP != AI_OCR else {})}   
 READER = os.environ.get("VF_READER", "one_step")   # two_step: the mentor's transcribe, then map (read_then_map)
 MAP_TWICE = os.environ.get("VF_MAP_TWICE", "1") != "0"   # map each transcript twice and merge (transcript.merge)
 STARTING = {"read_all", "transcribe"}      # a page's first call; everything else finishes a page already started
-TEXT_PURPOSES = {"map"}                    # calls that go to the text model
+TEXT_PURPOSES = {"map", "map_b"}           # calls that go to the text model (map_b: pass B, with knowledge)
 REQUIRED = {code: [f["name"] for f in d["header"] if f["source"] == "6.1"] for code, d in DOCS.items()}
 NO_TIME_WAIT = 3600                                                  # seconds, after a daily-limit refusal naming no time
 PREP_COLS = ("rotation", "osd_conf", "skew_angle", "black_ratio", "dark_band_ratio", "speckle_ratio", "qr_text",
@@ -693,7 +693,7 @@ def _handle(ticket, bid, n, run, v1_reading, second_look):
            "type_votes": {"reason": "not read by the AI OCR yet"}}         # nothing to classify: waits, not unsure
     if x["fields_all"] is not None:
         old = (prev or {}).get("type_votes") or {}
-        state = jev_state(x["fields_all"], ctx)
+        state = jev_state(wiki.pass_a(x["fields_all"], two["mapping"]), ctx)   # Jev: pass A only, never knowledge
         if old.get("context_version") == ctx_v and old.get("fields_version") == fv_saved and old.get("jev", {}).get("choice"):
             jev = old["jev"]
         else:
@@ -715,6 +715,19 @@ def _handle(ticket, bid, n, run, v1_reading, second_look):
             votes["reason"] = reason
         cls = {"type_status": status, "doc_type": doc_type, "type_guess": guess or doc_type,
                "doc_type_conf": jev.get("confidence"), "type_votes": votes}
+
+    kwait = None                                     # 4b: pass B, the text model again with what people taught
+    if (READER == "two_step" and x["fields_all"] is not None and cls["type_status"] in ("decided", "labelled")
+            and cls["doc_type"] in DOCS):
+        from worker import learn
+        try:
+            fa_k, map_k, _ = learn.step(bid, n, cls["doc_type"], x["fields_all"], two["mapping"], prep["qr_text"],
+                                        ctx, up)
+            earlier = wiki.forget(earlier, wiki.changed(x["fields_all"], fa_k, sorted((set(fa_k) | set(x["fields_all"])) - {"lines"})))
+            x["fields_all"], two["mapping"] = fa_k, map_k
+        except Exception as e:                       # pass A's reading stands meanwhile; the page waits for the call
+            kwait = f"the call failed: pass B: {type(e).__name__}: {e}"[:300]
+            x["fields_all"], two["mapping"] = wiki.undo(x["fields_all"], two["mapping"])
 
     rd, res, zev, sl, looked = {}, None, None, None, True                                        # 5, 6, 7
     ship_to = (prev or {}).get("ship_to")            # the store question's answer (S4), kept across re-runs
@@ -745,6 +758,8 @@ def _handle(ticket, bid, n, run, v1_reading, second_look):
                                                  second=sl, zoom_cache=zev, scan_day=day, ship_to=ship_to)
             else:
                 sl, looked = {**(sl or {}), "waiting": wait}, False
+    if kwait:
+        sl, looked = {**(sl or {}), "waiting": kwait}, False
     oc = outcome(cls["type_status"], cls["doc_type"], res, looked)                               # 8
     keys = keymod.derive(cls["doc_type"], fields, rd.get("classical_text"), prep["qr_text"],
                          (res or {}).get("header") if res else None) if fields else {}
@@ -1033,6 +1048,8 @@ def read_then_map(bid, n, up, ctx, prev):
         c.execute("""UPDATE staging.page SET transcript=%s, transcript_version=%s, transcript_status='done'
                      WHERE batch_id=%s AND page_no=%s""", (Json(blocks), tv, bid, n))
     old = (tr["mapping"] if tr and same_map else None) or {}
+    if not old and ((prev or {}).get("mapping") or {}).get("version") == mv:
+        old = prev["mapping"]                        # the page's own mapping, same version: no call
     raw = old.get("raw")
     if raw is None:
         raw, meta["map"] = ai_call("map", bid, n, map_blocks, blocks, schema)
@@ -1045,7 +1062,7 @@ def read_then_map(bid, n, up, ctx, prev):
         second = mapped(raw2, blocks, schema, None, up, ctx)
         fa, mapping, notes = transcript.merge(first, second)
         mapping["raw2"] = raw2
-    mapping["raw"] = raw
+    mapping["raw"], mapping["version"] = raw, mv
     return fa, meta, blocks, notes, mapping
 
 

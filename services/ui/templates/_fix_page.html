@@ -5,7 +5,8 @@
 <section class="fixer" id="fixer">
   <h2>The page and its fields
     <span class="muted small">hover the paper to see what can be picked · Fix a field, then click its value on the paper</span></h2>
-  {% if fixed %}<p class="fx-saved">✓ Saved. The page was checked again with your answer, and your correction is kept as an example to learn from.</p>{% endif %}
+  {% if fixed %}<div class="fx-saved">✓ Saved. The page was checked again with your answer.
+    <div hx-get="/partials/lesson?batch={{ batch_id|urlencode }}&page={{ page_no }}&field={{ fixed|urlencode }}" hx-trigger="load" hx-swap="outerHTML"></div></div>{% endif %}
   <div class="fx-grid">
     <div class="fx-paper">
     <div class="fx-zoom"><button type="button" class="btn tiny" id="fx-zout" title="Zoom out">−</button>

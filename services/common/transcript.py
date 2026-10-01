@@ -84,7 +84,8 @@ def render(blocks):
 def map_prompt(blocks, heads, cols, hints=None):
     """The text model's prompt: the task, the field list (heads/cols from openai_vlm._field_list), what people taught
     for this page's type and customer (pass B only), and the transcript."""
-    taught = f"\n\nLEARNED FROM PEOPLE for this document type (use each only where its label is printed on this page):\n{hints}" \
+    taught = ("\n\nLEARNED FROM PEOPLE for this document type (use each only where this page shows what it names: "
+              f"its label, its column or its place):\n{hints}") \
         if hints else ""
     return (f"{vlm.MAP}\n\nFIELDS (key: meaning):\n{heads}\n\nLINE ITEM COLUMNS: {cols}{taught}\n\n"
             f"TRANSCRIPT:\n{render(blocks)}")

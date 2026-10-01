@@ -16,6 +16,7 @@ FLOWS = Path("/app/n8n")
     ("vf-intake", ["/internal/intake/split", "/internal/intake/enqueue"]),
     ("vf-sweep", ["/internal/vf/sweep"]),
     ("vf-notify", ["/internal/vf/notify"]),
+    ("vf-lint", ["/internal/vf/lint"]),
 ])
 def test_each_workflow_calls_vlm_first_never_v1(name, calls):
     w = json.loads((FLOWS / f"{name}.workflow.json").read_text())

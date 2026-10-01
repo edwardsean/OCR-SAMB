@@ -1,0 +1,140 @@
+// SAMB OCR · 6 of 6 · STEP 6 IN DETAIL: checking each value, and who confirms it. Written for non-technical readers.
+// For maintainers, the code behind it: common/fields.py (DOCS, DECIDES), common/verify.py, worker/vf.py (check,
+// page_verdicts, to_ask, page_settled), common/satellite.py (settle, settle_record), common/gates.py,
+// grouper/crosscheck.py (check_bundle, decide).
+
+title Checking each value: what matters on each document, and who confirms it
+direction down
+
+Colours [shape: document, color: gray, icon: info, label: "How to read the colours. Green: checked against the paper. Purple: Satellite (SAMB's order records) confirms or corrects it. Yellow: checked later, once all papers of the order are together. Blue: the AI reads it again. Orange: a person decides. Gray: just stored, never stops anything. Red: a known weak spot"]
+
+Page read [shape: oval, color: gray, icon: file-text, label: "A scanned page. We already know what kind of document it is, and the AI has filled in its fields. Now each value must be confirmed by something other than the AI"]
+
+Against print [color: green, label: "1. Is it printed on the paper?"] {
+  Own text [icon: type, label: "Step 1: does the value match the text the AI says it copied? Example: '111.586' must be stored as 111586"]
+  Cut [icon: scissors, label: "Step 2: is an amount cut off at the edge of the scan, like '1.078.330,'? Then the paper can't confirm it, because the last digits are missing"]
+  QR [icon: maximize, label: "Step 3: on SAMB's invoice, the order number must match the QR code"]
+  Whole page [icon: search, label: "Step 4: did Tesseract, a second reader that only reads printed text, find the same text on the page?"]
+  Zoomed [icon: zoom-in, label: "Step 5: not found? Tesseract reads that one spot again, zoomed in"]
+  Verdict [shape: diamond, label: "Each value is now either confirmed by the paper, or not confirmed (with the reason)"]
+}
+
+Witnesses [color: gray, label: "2. Who else can confirm or correct it"] {
+  Person first [color: orange, icon: user-check, label: "A person's answer always wins, if someone already gave one"]
+  Satellite settle [color: purple, icon: database, label: "Satellite, SAMB's order records, can confirm or correct some values. Which ones depends on the document: see below"]
+  Rules 7a [color: green, icon: shield, label: "Safety rules take away a confirmation that can't be trusted. For example: an invoice amount must be printed in full, and a quantity in a table is never confirmed just because the number appears on its line"]
+  FP record 7b [color: purple, icon: database, label: "On SAMB's invoice, once we know its order, the amounts and product lines are taken from Satellite, because the invoice was printed from that order"]
+}
+
+Which type [shape: diamond, label: "What kind of document is it?"]
+
+FP Faktur Penjualan [icon: file, label: "SAMB's invoice (Faktur Penjualan)"] {
+  FP sor [color: purple, icon: key, label: "MOST IMPORTANT: the order number (SOR). It ties the invoice to its order. It is confirmed when the paper or the QR code shows it"]
+  FP sor backup [color: purple, icon: database, label: "If the order number can't be read: Satellite looks for the one order that matches other things on the page, like the customer's PO number, the total and the customer"]
+  FP sor known [shape: diamond, color: purple, label: "Is the order number confirmed now? The amounts can only be checked against Satellite once we know which order this invoice belongs to"]
+  FP no sor [color: green, icon: alert-circle, label: "Not yet: Satellite can't check the amounts. They count only if the paper shows them in full and DPP + PPN = Total. Otherwise the AI reads them again, then a person decides"]
+  FP amounts [color: purple, icon: dollar-sign, label: "MUST BE RIGHT: the amounts (DPP, PPN, Total). Each is compared with what the order said when the invoice was printed. It must match to the exact rupiah and sen: no difference at all is allowed, because the invoice was printed from that order"]
+  FP amounts same [color: green, icon: check, label: "The same: confirmed"]
+  FP amounts clear [color: orange, icon: user-check, label: "Different, and the paper clearly shows its own amount in full (Tesseract read every digit, like 1.126.011,00): a person decides. Maybe the order was changed after printing"]
+  FP amounts unclear [color: purple, icon: database, label: "Different, but only the AI read it, or it is cut off or unreadable: Satellite's amount is used. The AI's reading is kept for reference"]
+  FP support [color: purple, icon: link, label: "CHECKED BY SATELLITE: the customer's PO number (Nomor CPO) and the customer code. Satellite corrects them by itself. A person is asked only when the paper clearly says something else"]
+  FP filled [color: purple, icon: list, label: "FILLED IN FROM SATELLITE: the customer name and the product lines (code, name, cartons and pieces)"]
+  FP kept [color: gray, icon: archive, label: "JUST STORED: the packaging (Kemasan)"]
+}
+
+PO Customer [icon: shopping-cart, label: "Customer's purchase order (PO)"] {
+  PO key [color: purple, icon: key, label: "MOST IMPORTANT: the PO number. It ties the PO to SAMB's order. It is confirmed when Tesseract also reads it on the paper"]
+  PO key backup [color: purple, icon: database, label: "If only the AI read it: Satellite must have exactly one order with this PO number, and no other order whose number is one character different. That way a one-digit misread can't link to the wrong order. If there is such a near match, the products or the store printed on the page must point to the right one"]
+  PO totals [color: yellow, icon: dollar-sign, label: "CHECKED LATER: the Total and PPN. Once the order's papers are together, they are compared with SAMB's order, allowing a few rupiah of rounding"]
+  PO rows [color: gray, icon: list, label: "JUST STORED: the product lines. They are only used to explain why a total doesn't match"]
+  PO kept [color: gray, icon: archive, label: "JUST STORED: vendor code, vendor name and customer name"]
+}
+
+TTG Tanda Terima [icon: inbox, label: "Customer's goods receipt (Tanda Terima)"] {
+  TTG keys [color: purple, icon: key, label: "MOST IMPORTANT: the order number (No Ref, when the receipt prints it) or the PO number. One of the two is enough to tie the receipt to its order. They are checked the same way as a PO number. On AEON's receipts, the receipt number is the PO number"]
+  TTG date [color: yellow, icon: calendar, label: "CHECKED LATER: the receipt date. It should be the same as the date SAMB's warehouse recorded the delivery. More than 7 days apart: a person checks it"]
+  TTG rows [color: yellow, icon: list, label: "CHECKED LATER: the quantity received on each line. It is compared with what SAMB's warehouse recorded as received. Less than ordered is a rejection (tolakan), shown with the reason"]
+  TTG kept [color: gray, icon: archive, label: "JUST STORED: receipt number, vendor number, customer name, and each line's product code, description and unit"]
+}
+
+Other types [color: gray, label: "Other papers"] {
+  FPJ [icon: file-text, label: "Tax invoice (Faktur Pajak): nothing is checked yet. That comes in a later stage"]
+  No list [icon: file, label: "Next pages of a document, delivery notes and payment papers have nothing to fill in. A next page simply joins the page before it. A page we can't place goes to a person"]
+}
+
+Page settled [shape: diamond, color: green, label: "Is everything that MUST be right now confirmed? That is the number that ties the page to its order, and on an invoice also the amounts"]
+Look again [color: blue, icon: refresh-cw, label: "The AI reads just those values again, without seeing its first answer. The new answer only counts if Tesseract also finds it on the paper"]
+Clear [shape: oval, color: green, label: "Done: the page joins the other papers of its order"]
+Needs person [shape: oval, color: orange, label: "A person checks it, with that part of the page shown zoomed in"]
+
+After linking [color: yellow, label: "3. Once all papers of the order are together"] {
+  Order side [icon: shopping-cart, label: "The PO's total is compared with SAMB's order"]
+  Delivery side [icon: truck, label: "The receipt's quantities are compared with what SAMB's warehouse recorded, product by product"]
+  Store named [icon: map-pin, label: "If a page names a store, it must be this order's store"]
+  Dates check [icon: calendar, label: "The dates must be in a sensible order, and the receipt date must match the warehouse's date"]
+  Bundle ask [color: blue, icon: refresh-cw, label: "A number that doesn't match and that only the AI read: the AI reads it again first"]
+}
+
+Bundle status [shape: diamond, label: "Did every page and every check pass?"]
+Grouping wait [shape: oval, color: gray, label: "Still waiting, for the AI or for the warehouse record. Nobody needs to act yet"]
+Auto ok [shape: oval, color: green, label: "Ready to publish. No person needed"]
+Review [shape: oval, color: orange, label: "Goes to the Review screen, with one card for each thing that doesn't match. A page linked to the wrong order ends up here, because its numbers don't fit"]
+
+Gaps [color: red, label: "Known weak spots"] {
+  Gap print key [icon: alert-triangle, label: "WEAK SPOT 1: if Tesseract and the AI misread the same digit of a PO number, the page links right away, without the extra checks above. Both readers have misread the same character before (S10232 read as 510232)"]
+  Gap same order [icon: alert-triangle, label: "WEAK SPOT 2: Boots sends one order to ten stores, with the same total and the same products. If such a PO is misread and names no store, no check would notice. Planned fix: always do the extra checks, and ask a person when the store can't tell"]
+}
+
+Page read > Own text
+Own text > Cut
+Cut > QR
+QR > Whole page
+Whole page > Zoomed: not found
+Whole page > Verdict: found
+Zoomed > Verdict
+Verdict > Person first
+Person first > Satellite settle
+Satellite settle > Rules 7a
+Rules 7a > FP record 7b
+FP record 7b > Which type
+Which type > FP sor: SAMB's invoice
+Which type > PO key: customer's PO
+Which type > TTG keys: goods receipt
+Which type > FPJ: tax invoice
+Which type > No list: other papers
+FP sor > FP sor backup: can't be read
+FP sor > FP sor known: read
+FP sor backup > FP sor known
+FP sor known > FP no sor: no
+FP sor known > FP amounts: yes
+FP amounts > FP amounts same: same
+FP amounts > FP amounts clear: different, clearly printed
+FP amounts > FP amounts unclear: different, only the AI read it
+FP amounts > FP support
+FP support > FP filled
+FP filled > FP kept
+PO key > PO key backup: only the AI read it
+PO key backup > PO totals
+PO totals > PO rows
+PO rows > PO kept
+TTG keys > TTG date
+TTG date > TTG rows
+TTG rows > TTG kept
+FP kept > Page settled
+PO kept > Page settled
+TTG kept > Page settled
+Page settled > Clear: yes
+Page settled > Look again: not yet
+Look again > Clear: confirmed now
+Look again > Needs person: still not confirmed
+Clear > Order side
+Order side > Delivery side
+Delivery side > Store named
+Store named > Dates check
+Dates check > Bundle ask: a number doesn't match
+Dates check > Bundle status
+Bundle status > Grouping wait: still waiting
+Bundle status > Auto ok: yes
+Bundle status > Review: no
+PO key --> Gap print key: misread by both readers
+Store named --> Gap same order: no store named

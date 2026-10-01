@@ -1,0 +1,101 @@
+// SAMB OCR · 1 of 6 · ONE PAGE, from upload to done. Written for non-technical readers.
+// For maintainers: worker/vf.py (handle, read_then_map), common/transcript.py, worker/learn.py (step), common/verify.py,
+// common/gates.py, common/satellite.py; queues in worker/main.py; n8n workflows in n8n/.
+
+title One page: from upload to done
+direction down
+
+Colours [shape: document, color: gray, icon: info, label: "How to read the colours. Blue: an AI does it. Green: simple rules or a non-AI program. Purple: what people taught the system. Orange: a person decides. Gray: storage or waiting"]
+
+Upload [shape: oval, icon: upload, color: gray, label: "Finance uploads a scanned PDF on the website"]
+
+Intake [color: gray, icon: layers, label: "Splitting the PDF into pages"] {
+  n8n vf intake [icon: git-branch, label: "The PDF is split into single pages"]
+  q pages [shape: cylinder, icon: inbox, label: "The pages wait in line"]
+  Page worker [icon: cpu, label: "Three page readers each take one page at a time"]
+}
+
+Step1 Prepare [color: green, icon: image, label: "Step 1: clean up the image. Turn it upright, straighten it, cover dark scan bands, and read the QR code"]
+
+Read then map [color: blue, label: "Step 2: reading the page"] {
+  Step2a Transcribe [icon: eye, label: "Step 2a: the AI reader copies everything on the page: printed text, tables cell by cell, handwriting, stamps and marks, and notes where each one is"]
+  Transcript saved [shape: cylinder, color: gray, label: "The copy is saved right away, so a paid AI copy is never lost"]
+  Step2b Pass A [icon: type, label: "Step 2b: a text AI fills in the list of fields from that copy. It does this twice; where the two answers disagree, the field is left empty"]
+  Grounding [color: green, icon: check, label: "A value is kept only if it really appears in the copy, so the AI can't make one up"]
+  Notes [shape: document, color: gray, label: "Notes: handwriting, stamps and remarks, described by the AI. For people to read, never used as proof"]
+}
+
+Step3 Jev [color: blue, icon: tag, label: "Step 3: Jev, an AI, says what kind of document this is, using only what was read"]
+Step4 Decide [shape: diamond, color: green, label: "Step 4: is Jev sure enough (85% or more)? SAMB's invoice also needs its QR code, its layout or its printed title"]
+Unsure [color: orange, icon: help-circle, label: "Not sure: a person picks the type on the Label screen"]
+
+Knowledge step [color: purple, label: "Using what people taught"] {
+  Step4a Customer [icon: users, label: "Step 4a: which customer is this from? Known from its order, or from what the page says. Otherwise 'don't know'"]
+  Step4b Knowledge lookup [icon: book, label: "Step 4b: look up the tips people taught for this kind of document, for any customer and for this customer"]
+  Pass B [icon: type, label: "Tips about the text, like a label, a column, a place on the page, or 'not printed': the text AI fills in again with the tips. Only the fields the tips talk about are replaced"]
+  Visual claims [icon: crop, label: "Tips about handwriting or stamps: the AI reader looks at that part of the image again"]
+}
+
+Step5 Tesseract [color: green, icon: file-text, label: "Step 5: Tesseract reads the whole page. It is a second, independent reader that only reads printed text"]
+Step6 Check [color: green, label: "Step 6: checking each value"] {
+  Verify [icon: check-square, label: "Step 6: is each value also on the paper, according to Tesseract or the QR code? (Every document's fields in detail: diagram 6)"]
+  Zoom [icon: zoom-in, label: "Not found: Tesseract reads that spot again, zoomed in"]
+  Gates 7a [icon: shield, label: "Safety rules take away a confirmation that can't be trusted, for example an amount cut off at the edge of the scan"]
+  Satellite 7b [icon: database, label: "Satellite, SAMB's order records, confirms or corrects what it can. A person's answer always wins"]
+}
+
+Step7 Look again [color: blue, icon: refresh-cw, label: "Step 7: for an important value only the AI read, the AI reads it again without seeing its first answer. The new answer is kept only if Tesseract then finds it on the paper"]
+Step7b Store question [color: blue, icon: map-pin, label: "If a PO number could belong to orders for different stores, the AI is asked which store the goods go to"]
+
+Step8 Outcome [shape: diamond, color: green, label: "Step 8: the result for this page"]
+Clear [shape: oval, color: green, label: "Done: everything important is confirmed"]
+Waiting AI [shape: oval, color: gray, label: "Waiting for the AI: a read or a second look is still to do"]
+Needs person [shape: oval, color: orange, label: "A person checks it: still not confirmed after the second look"]
+Held unsure [shape: oval, color: orange, label: "Waiting on the Label screen"]
+
+Waiting room [color: gray, label: "Waiting room"] {
+  q pages wait [shape: cylinder, icon: clock, label: "The AI's daily limit was reached: the page waits 15 minutes (or 1 hour), then gets back in line"]
+  Retries [icon: repeat, label: "The AI call failed: it is tried 3 times, then again every 3 hours"]
+}
+
+Wake grouper [color: gray, icon: send, label: "Tell the grouper a page is finished (diagram 2)"]
+
+Upload > n8n vf intake
+n8n vf intake > q pages
+q pages > Page worker
+Page worker > Step1 Prepare
+Step1 Prepare > Step2a Transcribe
+Step2a Transcribe > Transcript saved
+Transcript saved > Step2b Pass A
+Step2b Pass A > Grounding
+Step2b Pass A > Notes
+Grounding > Step3 Jev: Jev never sees the tips
+Step3 Jev > Step4 Decide
+Step4 Decide > Unsure: not sure
+Step4 Decide > Step4a Customer: sure, or a person picked
+Step4a Customer > Step4b Knowledge lookup
+Step4b Knowledge lookup > Pass B: tips about the text
+Step4b Knowledge lookup > Visual claims: tips about handwriting or stamps
+Step4b Knowledge lookup > Step5 Tesseract: no tips
+Pass B > Step5 Tesseract
+Visual claims > Step5 Tesseract
+Step5 Tesseract > Verify
+Verify > Zoom: not found
+Zoom > Gates 7a
+Verify > Gates 7a
+Gates 7a > Satellite 7b
+Satellite 7b > Step7 Look again: an important value only the AI read
+Satellite 7b > Step8 Outcome: nothing to ask
+Step7 Look again > Satellite 7b: checked again
+Step7 Look again > Step7b Store question: PO number still unclear
+Step7b Store question > Step8 Outcome
+Step8 Outcome > Clear
+Step8 Outcome > Waiting AI
+Step8 Outcome > Needs person
+Unsure > Held unsure
+Waiting AI > q pages wait: daily limit reached
+Waiting AI > Retries: the AI call failed
+q pages wait --> q pages
+Retries --> q pages
+Clear > Wake grouper
+Needs person > Wake grouper

@@ -1,0 +1,28 @@
+{
+  "id": "sambOcrVfLint001",
+  "name": "SAMB OCR vlm-first — knowledge lint",
+  "active": false,
+  "settings": { "executionOrder": "v1" },
+  "pinData": {},
+  "nodes": [
+    {
+      "id": "5e0f7a10-0004-4b6e-8f11-000000000001",
+      "name": "Every 6 hours",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [0, 0],
+      "parameters": { "rule": { "interval": [{ "field": "hours", "hoursInterval": 6 }] } }
+    },
+    {
+      "id": "5e0f7a10-0004-4b6e-8f11-000000000002",
+      "name": "Take out contradicted claims",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [260, 0],
+      "parameters": { "method": "POST", "url": "http://vf-ui:8000/internal/vf/lint", "options": { "timeout": 600000 } }
+    }
+  ],
+  "connections": {
+    "Every 6 hours": { "main": [[{ "node": "Take out contradicted claims", "type": "main", "index": 0 }]] }
+  }
+}

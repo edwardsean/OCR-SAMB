@@ -302,3 +302,28 @@ td s { color: var(--bad); }
 .fx-copied[hidden] { display: none; }
 .fx-chips { display: flex; flex-wrap: wrap; gap: 6px; }
 .fx-chip { font-size: 13px; padding: 5px 10px; } .fx-chip.on { background: var(--accent); border-color: var(--accent); color: #fff; }
+
+/* The status bar after a fix (the user, 2026-10-01): what the fix is doing now (_lesson_status.html). */
+.lesson-bar { margin-top: 8px; }
+.lb-head { font-size: 13px; display: flex; align-items: center; gap: 8px; }
+.lb-spin { width: 12px; height: 12px; flex: none; border-radius: 50%; border: 2px solid var(--line);
+           border-top-color: var(--accent); animation: lb-turn .9s linear infinite; }
+@keyframes lb-turn { to { transform: rotate(360deg); } }
+.lb-steps { list-style: none; margin: 8px 0 0; padding: 0; display: flex; flex-wrap: wrap; gap: 4px; counter-reset: lb; }
+.lb-steps li { counter-increment: lb; font-size: 12px; padding: 3px 9px; border-radius: 99px;
+               border: 1px solid var(--line); color: var(--muted); background: var(--panel); }
+.lb-steps li::before { content: counter(lb) ". "; }
+.lb-steps li.done { color: var(--ok); border-color: color-mix(in srgb, var(--ok) 45%, transparent); }
+.lb-steps li.done::before { content: "✓ "; }
+.lb-steps li.now { color: var(--accent); border-color: var(--accent); font-weight: 600;
+                   background: color-mix(in srgb, var(--accent) 10%, transparent); }
+.lb-steps li.stop { color: var(--warn); border-color: color-mix(in srgb, var(--warn) 50%, transparent); }
+.lb-steps li.stop::before { content: "■ "; }
+.lb-steps li.skip { opacity: .45; text-decoration: line-through; }
+.lb-tip { margin-top: 8px; font-size: 13px; color: var(--muted); }
+
+/* The top bar's teacher line (base.html → /partials/teacher). */
+.teacher-now:empty { display: none; }
+.teacher-badge { font-size: 12px; padding: 4px 10px; border-radius: 99px; text-decoration: none; white-space: nowrap;
+                 color: var(--accent); border: 1px solid color-mix(in srgb, var(--accent) 45%, transparent);
+                 background: color-mix(in srgb, var(--accent) 8%, transparent); }

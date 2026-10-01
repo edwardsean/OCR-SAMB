@@ -206,15 +206,17 @@ def save_example(c, bid, n, confirmation, value, shown, by, source, region=None,
     got = region_contents(region, blocks, p["ocr_words"], size) if region else {"words": "", "blocks": []}
     c.execute("""UPDATE staging.extract_example SET status='superseded'
                   WHERE batch_id=%s AND page_no=%s AND confirmation=%s AND status='active'""", (bid, n, confirmation))
+    pile = "exam" if random.random() < EXAM_SHARE else "practice"
     return c.execute("""INSERT INTO staging.extract_example (batch_id, page_no, confirmation, doc_type, chain, field,
-                          row_key, kind, value, shown, region, tess_words, blocks, anchor, printed, source, pile, made_by)
-                        VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s) RETURNING id""",
+                          row_key, kind, value, shown, region, tess_words, blocks, anchor, printed, source, pile, made_by,
+                          lesson_status)
+                        VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s) RETURNING id""",
                      (bid, n, confirmation, p["doc_type"], chain_of_page(c, bid, n), field, row_key,
                       "not_printed" if not_printed else "value", None if not_printed else value, shown or None,
                       Json(region) if region else None, got["words"] or None, Json(got["blocks"]),
                       Json(anchor_of(region, value, blocks) if region and not not_printed else {}),
                       bool(region) and not not_printed and bool(flat(value)) and flat(value) in flat(got["words"]),
-                      source, "exam" if random.random() < EXAM_SHARE else "practice", by)).fetchone()["id"]
+                      source, pile, by, "waiting" if pile == "practice" else None)).fetchone()["id"]
 
 
 def _size(p):

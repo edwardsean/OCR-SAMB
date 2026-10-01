@@ -107,6 +107,8 @@
       </div>
       {% if not published %}<label class="rv-me">You are <input id="me" placeholder="your name" autocomplete="name"></label>{% endif %}
     </div>
+    {% if fixed and fpage and vf %}<div class="fx-saved">✓ Saved your answer on page {{ fpage }}. The page was checked again and the bundle re-checked.
+      <div hx-get="/partials/lesson?batch={{ batch|urlencode }}&page={{ fpage }}&field={{ fixed|urlencode }}" hx-trigger="load" hx-swap="outerHTML"></div></div>{% endif %}
 
     <div class="rv-strip">
       {% for s in v.strip %}

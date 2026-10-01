@@ -1,6 +1,7 @@
 """Inspection UI. One tab per pipeline phase; a tab lights up when its phase is built."""
 import difflib
 import hashlib
+import html
 import io
 import json
 import os
@@ -11,7 +12,7 @@ from datetime import datetime, timezone, timedelta
 import cv2
 import httpx
 from fastapi import FastAPI, File, Form, Request, UploadFile
-from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, Response
+from fastapi.responses import HTMLResponse, JSONResponse, PlainTextResponse, RedirectResponse, Response
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
@@ -54,12 +55,13 @@ TABS = [  # (phase, path, label)
     (8, "/sor", "SOR search"),
 ]
 if VF:
-    TABS[4:4] = [(5, "/context", "Jev context"), (5, "/compare", "Compare v1")]
+    TABS[4:4] = [(5, "/context", "Jev context"), (5, "/knowledge", "Knowledge"), (5, "/compare", "Compare v1")]
 
 EXPECTED_TABLES = 20      # 19 from the base schema + staging.type_label (006)
 if VF:
-    EXPECTED_TABLES += 10  # + context_version, lesson, model_call (010), field_confirmation (011), satellite.sor_item
-                          # (012), line_match (013), bundle_decision (014), notice (018), reading_trial (019), extract_example (020)
+    EXPECTED_TABLES += 12  # + context_version, lesson, model_call (010), field_confirmation (011), satellite.sor_item
+                          # (012), line_match (013), bundle_decision (014), notice (018), reading_trial (019), extract_example (020),
+                          # knowledge_page, knowledge_map (021)
 
 SVC = os.environ.get("SERVICE_PREFIX", "vf")      # this stack's service names: vf-* on main, rtm-* in the worktree
 # (name, role, how to probe, console link on the host)
@@ -163,7 +165,7 @@ def _model_usage():
 
 def ctx(request, **kw):
     return {"request": request, "tabs": TABS, "built": PHASE_BUILT, "path": request.url.path,
-            "needs_you": _needs_you(), **kw}
+            "needs_you": _needs_you(), "vf": VF, **kw}
 
 
 def _needs_you():
@@ -1077,6 +1079,7 @@ def page_fix(batch: str = Form(...), page: int = Form(...), field: str = Form(..
     from worker import vf
     vf.recheck(batch, page)
     _regroup(batch)
+    _wake_teacher(f"a correction on {batch} p{page}: {field}")      # Stage 3: the teacher writes the wiki from it
     to = _safe_back(back) or f"/batches/{batch}/pages/{page}"
     return RedirectResponse(to + ("&" if "?" in to else "?") + f"fixed={field}#fixer", status_code=303)
 
@@ -1545,6 +1548,230 @@ def _wake_teacher(reason):
         q.wake_teacher(reason)
     except Exception as e:                 # nothing is lost: the teacher also looks every half hour
         print("could not wake the teacher:", e)
+
+
+def lesson_status(c, batch, page, field):
+    """The status bar after a fix (the user, 2026-10-01): what the fix of this field on this page is doing now, from
+    the example saved with it (none when a typed value wasn't found in the copy), the tip it proposed, and the
+    lessons before it. Pure wording in wiki.lesson_progress."""
+    from common import wiki
+    ex = c.execute("""SELECT e.* FROM staging.extract_example e
+                        JOIN staging.field_confirmation f ON f.batch_id=e.batch_id AND f.page_no=e.page_no
+                                                         AND f.field=e.confirmation
+                       WHERE e.batch_id=%s AND e.page_no=%s AND e.confirmation=%s AND e.made_at >= f.confirmed_at
+                       ORDER BY e.made_at DESC LIMIT 1""", (batch, page, field)).fetchone()
+    kp, ahead, pending = None, 0, False
+    if ex and ex.get("lesson_doc") and ex.get("lesson_version"):
+        kp = c.execute("SELECT * FROM staging.knowledge_page WHERE doc_type=%s AND version=%s",
+                       (ex["lesson_doc"], ex["lesson_version"])).fetchone()
+    if ex and ex.get("lesson_status") in ("waiting", "teaching"):
+        ahead = c.execute("""SELECT count(*) AS n FROM staging.extract_example
+                              WHERE pile='practice' AND status='active' AND lesson_status IN ('waiting', 'teaching')
+                                AND made_at < %s""", (ex["made_at"],)).fetchone()["n"]
+        pending = bool(c.execute("SELECT 1 FROM staging.knowledge_page WHERE doc_type=%s AND status='proposed'",
+                                 (ex["doc_type"],)).fetchone())
+    return wiki.lesson_progress(ex, kp, ahead, pending)
+
+
+@app.get("/partials/lesson", response_class=HTMLResponse)
+def partial_lesson(request: Request, batch: str, page: int, field: str):
+    """The status bar's body; it asks again every few seconds until nothing more will happen by itself."""
+    try:
+        with db.connect() as c:
+            lp = lesson_status(c, batch, page, field)
+    except Exception as e:                 # before migration 023, or the database is down: say so, never an error
+        lp = {"steps": [], "headline": f"Saved. (The lesson's progress can't be shown: {type(e).__name__}.)",
+              "tip": None, "final": True}
+    return templates.TemplateResponse("_lesson_status.html", ctx(request, lp=lp, batch=batch, page=page,
+                                                                  field=field))
+
+
+def teacher_now(c):
+    """The top bar's one line about the teacher (wiki.teacher_badge): a tip being tested or applied (reported within
+    the last half hour), a tip being written, tips waiting for approval, lessons waiting."""
+    from common import wiki
+    busy = c.execute("""SELECT doc_type, progress FROM staging.knowledge_page
+                         WHERE progress->>'step' IN ('testing', 'applying')
+                           AND (progress->>'at')::timestamptz > now() - interval '30 minutes'
+                         ORDER BY (progress->>'at')::timestamptz DESC LIMIT 1""").fetchone()
+    writing = c.execute("SELECT doc_type FROM staging.extract_example WHERE lesson_status='teaching' "
+                        "ORDER BY lesson_at DESC LIMIT 1").fetchone()
+    approvals = c.execute("SELECT count(*) AS n FROM staging.knowledge_page WHERE status='proposed' "
+                          "AND (gate->>'passed')::boolean").fetchone()["n"]
+    waiting = c.execute("SELECT count(*) AS n FROM staging.extract_example WHERE lesson_status='waiting' "
+                        "AND pile='practice' AND status='active'").fetchone()["n"]
+    return wiki.teacher_badge((writing or {}).get("doc_type"), (busy["doc_type"], busy["progress"]) if busy else None,
+                              waiting, approvals)
+
+
+@app.get("/partials/teacher", response_class=HTMLResponse)
+def partial_teacher():
+    """The top bar's teacher line, asked every few seconds; empty when the teacher has nothing to do."""
+    try:
+        with db.connect() as c:
+            line = teacher_now(c)
+    except Exception:                      # before migration 023, or the database is down: nothing to show
+        line = None
+    if not line:
+        return HTMLResponse("")
+    return HTMLResponse(f'<a class="teacher-badge" href="/knowledge" title="the teacher learns from people\'s fixes">'
+                        f'{html.escape(line)}</a>')
+
+
+KNOWLEDGE_TYPES = ("TTG", "PO", "FP")
+
+
+def _knowledge_view():
+    """The wiki (read-then-map Stage 2c): per type its active page by customer section, the proposals with their
+    replay and diff, the log; the customers it knows (index) and the examples still waiting for a second page."""
+    from common import customer, satellite, wiki
+    from worker import learn
+    with db.connect() as c:
+        rows = c.execute("SELECT * FROM staging.knowledge_page ORDER BY doc_type, version DESC").fetchall()
+        ex = c.execute("""SELECT id, batch_id, page_no, doc_type, chain, field, kind, value, anchor, source, pile, made_by,
+                                 lesson_status, lesson, lesson_doc, lesson_version, lesson_at
+                            FROM staging.extract_example WHERE status='active' ORDER BY made_at DESC""").fetchall()
+        sos = satellite.load(c)
+        known = customer.learned(c, sos)
+    labels = learn.labels(sos)
+    types, used, chains = [], set(), set()
+    for t in KNOWLEDGE_TYPES:
+        vs = [r for r in rows if r["doc_type"] == t]
+        act = next((r for r in vs if r["status"] == "active"), None)
+        by_v = {r["version"]: r for r in vs}
+        parsed = wiki.parse(act["markdown"]) if act else None
+        for sec in (parsed or {}).get("sections") or []:
+            chains.add(sec["chain"])
+            for cl in sec["claims"]:
+                used |= {(b, n, cl["field"]) for b, n in cl["pages"]}
+        for r in vs:
+            parent = by_v.get(r["parent"])
+            r["diff"] = wiki.diff(parent["markdown"] if parent else "", r["markdown"])
+            r["stale"] = r["status"] == "proposed" and (act["version"] if act else None) != r["parent"]
+        types.append({"type": t, "active": act, "parsed": parsed, "versions": vs,
+                      "proposals": [r for r in vs if r["status"] == "proposed"]})
+    index = []
+    for ch in sorted({c_ for c_ in chains if c_} | set(known), key=lambda x: labels.get(x) or x):
+        k = known.get(ch) or {"names": {}, "vendor": {}}
+        index.append({"chain": ch, "label": labels.get(ch) or ch,
+                      "names": sorted(k["names"], key=lambda n: -len(k["names"][n]))[:3],
+                      "vendor": sorted(k["vendor"], key=lambda n: -len(k["vendor"][n]))[:3],
+                      "bundles": len(set().union(*k["names"].values(), *k["vendor"].values()) if k["names"] or k["vendor"] else ()),
+                      "sections": [t["type"] for t in types for sec in (t["parsed"] or {}).get("sections") or []
+                                   if sec["chain"] == ch]})
+    waiting = [e for e in ex if e["pile"] == "practice" and (e["batch_id"], e["page_no"], e["field"]) not in used]
+    for e in ex:
+        e["label"] = labels.get(e["chain"]) if e["chain"] else None
+        les = e.get("lesson") or {}
+        last = (les.get("answers") or [{}])[-1] if les.get("answers") else {}
+        e["lesson_says"] = les.get("why") or last.get("why") or les.get("error") or \
+            ((last.get("answer") or {}).get("why") if isinstance(last.get("answer"), dict) else None)
+    return {"types": types, "index": index, "waiting": waiting, "labels": labels,
+            "lessons": [e for e in ex if e.get("lesson_status")],
+            "exam": sum(1 for e in ex if e["pile"] == "exam")}
+
+
+@app.get("/knowledge", response_class=HTMLResponse)
+def page_knowledge(request: Request, t: str | None = None, msg: str | None = None):
+    k = _knowledge_view()
+    return templates.TemplateResponse("knowledge.html", ctx(request, k=k, open_type=t, msg=msg))
+
+
+@app.get("/knowledge/{doc_type}.md", response_class=PlainTextResponse)
+def knowledge_md(doc_type: str, version: int | None = None):
+    with db.connect() as c:
+        r = c.execute("SELECT markdown FROM staging.knowledge_page WHERE doc_type=%s AND "
+                      + ("version=%s" if version else "status='active'"),
+                      (doc_type, version) if version else (doc_type,)).fetchone()
+    if not r:
+        return PlainTextResponse("", status_code=404)
+    return PlainTextResponse(r["markdown"], media_type="text/markdown; charset=utf-8")
+
+
+def _k_back(t, msg):
+    from urllib.parse import quote
+    return RedirectResponse(f"/knowledge?t={quote(t)}&msg={quote(msg[:300])}#{quote(t)}", status_code=303)
+
+
+@app.post("/knowledge/{doc_type}/propose")
+def knowledge_propose(doc_type: str, markdown: str = Form(...), by: str = Form(...), note: str = Form("")):
+    from worker import learn
+    if not by.strip():
+        return JSONResponse({"error": "say who writes it"}, status_code=400)
+    try:
+        v = learn.propose(doc_type, markdown.replace("\r\n", "\n"), "person", by.strip(), note.strip() or None)
+    except ValueError as e:
+        return JSONResponse({"error": str(e)}, status_code=409)
+    return _k_back(doc_type, f"{doc_type} #{v} proposed: run its replay before it can be approved")
+
+
+@app.post("/knowledge/{doc_type}/draft")
+def knowledge_draft(doc_type: str):
+    from worker import learn
+    v, new, waiting = learn.draft(doc_type)
+    return _k_back(doc_type, f"{doc_type} #{v} drafted from examples ({len(new)} claims)" if v else
+                   f"nothing to draft for {doc_type}: {len(waiting)} example(s) wait for a second page in another bundle")
+
+
+@app.post("/knowledge/{doc_type}/{version}/gate")
+def knowledge_gate(doc_type: str, version: int):
+    """The replay: pass B on the stored pages the proposal changes (text-model calls, kept for reuse)."""
+    from worker import learn
+    try:
+        g = learn.gate(doc_type, version, show=lambda *a: None)
+    except ValueError as e:
+        return _k_back(doc_type, str(e))
+    except Exception as e:                  # a limit or a failed call: nothing stored, try again later
+        return _k_back(doc_type, f"the replay stopped: {type(e).__name__}: {e}")
+    return _k_back(doc_type, f"{doc_type} #{version}: {'passed' if g['passed'] else 'did not pass'}: {g['why']}")
+
+
+@app.post("/knowledge/{doc_type}/{version}/approve")
+def knowledge_approve(doc_type: str, version: int, by: str = Form(...)):
+    from worker import learn
+    if not by.strip():
+        return JSONResponse({"error": "say who approves it"}, status_code=400)
+    try:
+        changed = learn.activate(doc_type, version, by.strip(), show=lambda *a: None)
+    except ValueError as e:
+        return _k_back(doc_type, str(e))
+    _wake_teacher(f"knowledge {doc_type} #{version} approved")        # the next lesson waited for this decision
+    return _k_back(doc_type, f"{doc_type} #{version} is active; pages mapped again: "
+                             + (", ".join(f"{p} ({', '.join(f) or 'no value changed'})" for p, f in changed.items())
+                                or "none changed"))
+
+
+@app.post("/knowledge/{doc_type}/{version}/reject")
+def knowledge_reject(doc_type: str, version: int, by: str = Form("")):
+    from worker import learn
+    learn.reject(doc_type, version, by.strip() or None)
+    _wake_teacher(f"knowledge {doc_type} #{version} rejected")
+    return _k_back(doc_type, f"{doc_type} #{version} rejected")
+
+
+@app.post("/knowledge/lint")
+def knowledge_lint():
+    from worker import learn
+    r = learn.lint(show=lambda *a: None)
+    return _k_back("TTG", f"lint: {len(r['demoted'])} claim change(s) taken out"
+                          + (": " + "; ".join("; ".join(d["why"]) for d in r["demoted"]) if r["demoted"] else "")
+                          + f" · {len(r['unbacked'])} claim(s) with no page behind them"
+                          + f" · {len(r['unrecognised'])} section(s) whose customer has nothing to be recognised by")
+
+
+@app.post("/knowledge/teach")
+def knowledge_teach():
+    _wake_teacher("asked on /knowledge")
+    return _k_back("TTG", "the teacher was woken: it takes the waiting lessons one at a time (vf-teacher's log)")
+
+
+@app.post("/internal/vf/lint")
+def internal_lint():
+    """n8n's "vf — knowledge lint" schedule (read-then-map Stage 3): contradicted claims taken out (worker/learn.py)."""
+    if not VF:
+        return JSONResponse({"error": "vlm-first only"}, status_code=404)
+    from worker import learn
+    return learn.lint(show=lambda *a: None)
 
 
 @app.get("/compare", response_class=HTMLResponse)
@@ -2108,12 +2335,13 @@ def page_review(request: Request, batch: str | None = None, published: int | Non
 
 
 @app.get("/review/{sor}", response_class=HTMLResponse)
-def page_review_sor(request: Request, sor: str, batch: str | None = None):
+def page_review_sor(request: Request, sor: str, batch: str | None = None, fixed: str | None = None,
+                    fpage: int | None = None):
     batch = batch or _latest_batch()
     v = review_view(batch, sor) if batch else None
     if not v:
         return HTMLResponse("no such bundle", status_code=404)
-    return templates.TemplateResponse("review_sor.html", ctx(request, batch=batch, v=v))
+    return templates.TemplateResponse("review_sor.html", ctx(request, batch=batch, v=v, fixed=fixed, fpage=fpage))
 
 
 def _regroup(batch):
@@ -2141,7 +2369,10 @@ def review_confirm(batch: str = Form(...), sor: str = Form(...), page: int = For
     from worker import vf
     vf.recheck(batch, page)
     _regroup(batch)
-    return RedirectResponse(f"/review/{sor}?batch={batch}#p{page}", status_code=303)
+    if VF:
+        _wake_teacher(f"a Review answer on {batch} p{page}: {field}")
+    from urllib.parse import quote                  # the status bar on the bundle's page follows this fix's lesson
+    return RedirectResponse(f"/review/{sor}?batch={batch}&fpage={page}&fixed={quote(field)}#p{page}", status_code=303)
 
 
 @app.post("/review/pair")

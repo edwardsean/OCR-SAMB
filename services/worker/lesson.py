@@ -383,14 +383,26 @@ def serve():
             ch.basic_qos(prefetch_count=1)
             print("vf-teacher waiting on", queue.Q_LESSONS, flush=True)
             run(quiet=True)                           # whatever waited while this service was down
+            teach_wiki()
             for method, _, body in ch.consume(queue.Q_LESSONS, inactivity_timeout=1800):
                 if method:
                     ch.basic_ack(method.delivery_tag)   # a wake-up; the work itself is in staging.lesson
                     print("woken:", json.loads(body or b"{}").get("reason"), flush=True)
                 run(quiet=True)
+                teach_wiki()
         except Exception as e:
             print("vf-teacher reconnecting:", e, flush=True)
             time.sleep(5)
+
+
+def teach_wiki():
+    """Stage 3 (read-then-map): the extraction lessons, one at a time, after Jev's (worker/learn.py teach). A
+    failure never stops the teacher: the lesson waits."""
+    try:
+        from worker import learn
+        learn.teach(show=lambda *a: print(*a, flush=True))
+    except Exception as e:
+        print("the wiki's lessons failed:", type(e).__name__, e, flush=True)
 
 
 def score_exam(version):

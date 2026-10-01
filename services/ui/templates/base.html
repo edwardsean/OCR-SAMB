@@ -18,6 +18,7 @@
         </a>
       {% endfor %}
     </nav>
+    {% if vf %}<div class="teacher-now" hx-get="/partials/teacher" hx-trigger="load, every 5s" hx-swap="innerHTML"></div>{% endif %}
     <div class="phase">Built through phase {{ built }}</div>
   </header>
   <main>{% block main %}{% endblock %}</main>

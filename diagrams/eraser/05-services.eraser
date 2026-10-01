@@ -1,0 +1,74 @@
+// SAMB OCR · 5 of 6 · WHO DOES WHAT: programs, waiting lines, storage, AI. Written for non-technical readers.
+// For maintainers: docker-compose.yml (services), n8n/ (workflows), worker/main.py and grouper/serve.py (queues).
+
+title Who does what: programs, waiting lines, storage and AI
+direction right
+
+People [icon: users, color: orange, label: "People"] {
+  Browser [icon: monitor, label: "The website people use: upload, pages, labels, tips, orders, Review and status"]
+}
+
+n8n [icon: git-branch, color: gray, label: "Scheduler (n8n)"] {
+  vf intake [label: "When a PDF is uploaded: split it into pages and put each page in line"]
+  vf sweep [label: "Every 3 hours: put pages that waited for the AI back in line"]
+  vf notify [label: "Every 5 minutes: count the orders that need a person"]
+  vf lint [label: "Every 6 hours: remove tips that people's fixes proved wrong"]
+}
+
+RabbitMQ [icon: inbox, color: gray, label: "Waiting lines (RabbitMQ)"] {
+  q pages [label: "Line of pages waiting to be read"]
+  q pages wait [label: "Pages waiting for the AI's limit to reset"]
+  q group [label: "Batches waiting to be grouped"]
+  q lessons [label: "Lessons waiting for the teacher"]
+}
+
+Workers [icon: cpu, color: green, label: "Programs that do the work"] {
+  vf worker [label: "Page readers (3): clean up, read, sort and check one page at a time"]
+  vf grouper [label: "Grouper (1): puts pages together by order and checks each order"]
+  vf teacher [label: "Teacher (1): turns people's fixes and labels into lessons, one at a time"]
+}
+
+Stores [icon: database, color: gray, label: "Storage"] {
+  Postgres [icon: database, label: "Database: everything read and decided, plus Satellite's orders and the published documents"]
+  MinIO [icon: hard-drive, label: "File storage: scans, page images, order folders and PDFs"]
+}
+
+Models [icon: cloud, color: blue, label: "AI and readers"] {
+  qwen3 vl plus [label: "AI reader (qwen3-vl-plus): copies the page, reads again when asked"]
+  qwen plus [label: "Text AI (qwen-plus): fills in the fields from the copy"]
+  Jev [label: "Jev (TypeSafe): says what kind of document a page is"]
+  GLM vision [label: "GLM-4.6V: teaches Jev"]
+  GLM text [label: "GLM-4.7: writes tips, suggests product matches"]
+  Tesseract [label: "Tesseract (on our own machine): the second, independent reader"]
+}
+
+Satellite export [icon: file-text, color: gray, label: "Satellite's export of orders, loaded by hand"]
+
+Browser > vf intake: upload
+vf intake > q pages
+q pages > vf worker
+vf worker > q pages wait: AI limit reached
+q pages wait > q pages
+vf worker > q group: after every page
+q group > vf grouper
+vf grouper > q pages: an order asks to read a page again
+Browser > q lessons: a label, a fix, an approval
+q lessons > vf teacher
+vf sweep > q pages
+vf notify > Postgres
+vf lint > Postgres
+vf worker > qwen3 vl plus
+vf worker > qwen plus
+vf worker > Jev
+vf worker > Tesseract
+vf grouper > qwen plus: fill in with the right customer's tips
+vf teacher > GLM vision
+vf teacher > GLM text
+vf teacher > qwen plus: testing tips
+vf worker > Postgres
+vf worker > MinIO
+vf grouper > Postgres
+vf grouper > MinIO
+vf teacher > Postgres
+Browser > Postgres
+Satellite export > Postgres

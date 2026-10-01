@@ -1,0 +1,109 @@
+// SAMB OCR · 3 of 6 · A PERSON'S FIX, AND HOW THE SYSTEM LEARNS FROM IT. Written for non-technical readers.
+// For maintainers: ui/app.py (page viewer, /page/fix), common/knowledge.py (examples), common/wiki.py, worker/learn.py
+// (teach, gate, activate, apply, lint).
+
+title A person's fix teaches the system
+direction down
+
+Colours [shape: document, color: gray, icon: info, label: "How to read the colours. Orange: a person. Green: simple rules. Blue: an AI. Purple: the tip book (what the system has learned). Gray: storage. Red: refused"]
+
+Fix [color: orange, label: "How a person fixes a value"] {
+  Page viewer [icon: mouse-pointer, label: "Open the page: the scanned paper on one side, the fields on the other, the important ones first"]
+  Click text [icon: crosshair, label: "Click Fix on a field, then click the right text on the paper. Shift-click adds the next word. For a table, click the right cell of the line"]
+  Checks panel [color: green, icon: check-circle, label: "Before saving, the panel shows the value in large type, whether Tesseract read the same, and for an order number whether Satellite knows it"]
+  Drag fallback [icon: square, label: "The text has no box? Draw a box around it"]
+  Typed on Review [icon: edit-3, label: "Or type the value on the Review screen"]
+  Not printed fix [icon: slash, label: "Or say 'not printed on this page'"]
+}
+
+Save [color: green, label: "What happens on Save"] {
+  Confirmation [shape: cylinder, color: gray, label: "The fix is saved and counts right away: a person's answer always wins"]
+  Recheck [icon: rotate-cw, label: "The page is checked again and its order regrouped, at no AI cost"]
+  Example [shape: cylinder, color: gray, label: "The fix is also saved as an example: where it is on the page, the label next to it or the column above it, and whether it is printed, handwritten or stamped"]
+  Pile [shape: diamond, label: "Each example is put once, at random, in the practice pile (80%) or the test pile (20%)"]
+  Exam [color: gray, icon: lock, label: "Test pile: never used for teaching. Used afterwards to measure how well the system learned"]
+  Wake [icon: send, label: "Wake up the teacher"]
+  Status bar [icon: activity, label: "A status bar under Save shows where the lesson is now: waiting for the teacher, the teacher writing a tip, testing it on other pages (3 of 7), switched on, applied. The top bar shows what the teacher is doing"]
+}
+
+Teacher [color: blue, label: "The teacher (an AI)"] {
+  Lesson queue [icon: list, label: "Examples are taught one at a time, oldest first"]
+  Already right [shape: diamond, color: green, label: "Does the system already get this value right now?"]
+  Closed [shape: oval, color: gray, label: "Yes: nothing to teach"]
+  GLM [icon: message-square, label: "The teacher, an AI, looks at the fix, where it is on the page, what is printed around it, and what the system read"]
+  One claim [icon: edit, label: "It writes ONE tip. For example: 'On AEON receipts, the PO number is the number after RECEIPT NO'"]
+  Code check [color: green, icon: shield, label: "Simple rules check the tip. It can't contain this page's own value, and the label it mentions must really be printed on the page"]
+  Refused [color: red, label: "Refused: the teacher gets one more try and is told why"]
+}
+
+Wiki [color: purple, label: "The tip book"] {
+  Proposal [icon: git-pull-request, label: "The tip is added to a new version of the tip page"]
+  Wiki page [shape: document, icon: book, label: "The tip book: one page per kind of document, with tips for any customer and tips for each customer"]
+  Drafts [icon: layers, label: "Tips can also come from examples that agree on 2 pages of 2 orders, or be written by a person"]
+}
+
+Replay gate [color: green, label: "Testing a tip before use"] {
+  Scope [icon: filter, label: "Find the stored pages this tip would change"]
+  Truth [icon: award, label: "What counts as the right answer: a person's fix, or Satellite for order numbers and invoice amounts"]
+  Leave one out [icon: minus-circle, label: "A tip is never tested on the page it was learned from"]
+  Needs pages [shape: diamond, label: "Is there any page to test it on?"]
+  Waits for pages [shape: oval, color: gray, label: "No: the tip waits until more pages of this kind arrive"]
+  Map again [color: blue, icon: type, label: "Yes: those pages are filled in again with the tip"]
+  Verdict [shape: diamond, label: "Did it fix at least one value and break none?"]
+}
+
+Activation [color: purple, label: "Switching a tip on"] {
+  Marked auto [icon: zap, label: "Learned from a fix clicked on the paper: it is switched on by itself"]
+  Person approves [color: orange, icon: thumbs-up, label: "Learned from a typed fix, or written by a person: a person approves it first, on the Knowledge screen"]
+  Active page [shape: document, icon: book-open, label: "The tip page in use. Older versions are kept"]
+  Apply [color: green, icon: refresh-cw, label: "The stored pages of that kind are filled in again with the tips, checked again and regrouped. Pages of orders already published are skipped: they are never checked again"]
+}
+
+Use [color: purple, label: "Using and cleaning up tips"] {
+  New pages [icon: file-plus, label: "Every new page of that kind and customer uses the tips (diagram 1, step 4b)"]
+  Lint [color: green, icon: alert-octagon, label: "Every 6 hours: a tip that led to a value a person later corrected is removed by itself"]
+  Lists [color: gray, icon: list, label: "Also listed for people: tips with no page behind them"]
+}
+
+Page viewer > Click text
+Click text > Checks panel
+Click text > Drag fallback: the text has no box
+Checks panel > Confirmation: Save
+Drag fallback > Confirmation
+Typed on Review > Confirmation
+Not printed fix > Confirmation
+Confirmation > Recheck
+Confirmation > Example
+Confirmation > Status bar: shown right away
+Example > Pile
+Pile > Exam: test pile
+Pile > Wake: practice pile
+Wake > Lesson queue
+Lesson queue > Already right
+Already right > Closed: yes
+Already right > GLM: no
+GLM > One claim
+One claim > Code check
+Code check > Refused: no
+Refused --> GLM
+Code check > Proposal: yes
+Drafts > Proposal
+Proposal > Wiki page
+Wiki page > Scope
+Scope > Truth
+Truth > Leave one out
+Leave one out > Needs pages
+Needs pages > Waits for pages: no
+Needs pages > Map again: yes
+Map again > Verdict
+Verdict > Refused: no
+Verdict > Marked auto: yes, clicked on the paper
+Verdict > Person approves: yes, typed or written
+Marked auto > Active page
+Person approves > Active page
+Active page > Apply
+Apply > New pages
+Active page > Lint
+Lint > Active page: removes the wrong tip
+Lint > Lists
+Exam --> Verdict: measured afterwards
