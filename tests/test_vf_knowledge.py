@@ -461,8 +461,10 @@ def test_a_tip_is_applied_once_per_page_and_never_to_a_published_order():
 
 def test_the_status_bar_renders_and_asks_again_until_final():
     import jinja2
-    env = jinja2.Environment(loader=jinja2.FileSystemLoader(os.path.join(os.path.dirname(__file__), "..", "services",
-                                                                         "ui", "templates")), autoescape=True)
+    here = os.path.dirname(__file__)                  # the repo (tests/ beside services/) or the container (/app)
+    where = next(d for d in (os.path.join(here, "..", "services", "ui", "templates"),
+                             os.path.join(here, "..", "ui", "templates")) if os.path.isdir(d))
+    env = jinja2.Environment(loader=jinja2.FileSystemLoader(where), autoescape=True)
     t = env.get_template("_lesson_status.html")
     live = t.render(lp=wiki.lesson_progress(_lesson_ex("teaching")), batch="b-1 x", page=3, field="lines[A1].qty")
     assert 'hx-trigger="every 3s"' in live and "field=lines%5BA1%5D.qty" in live and "batch=b-1%20x" in live

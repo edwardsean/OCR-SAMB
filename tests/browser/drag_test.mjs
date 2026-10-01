@@ -22,23 +22,32 @@ for (const [n, c] of cases.entries()) {
   await (await p.$('#fx-zfit')).click();
   await p.evaluate(() => document.getElementById('fx-zin').click());       // 150%: the words big enough to see
   // the drag's corners, 0-1000 on the page: around the named boxes, or the region given
-  const r = await p.evaluate(c => {
-    const box = c.region || (() => {
-      const a = document.querySelector(`rect.u[data-b="${c.from[0]}"][data-i="${c.from[1]}"]`);
-      const z = document.querySelector(`rect.u[data-b="${c.to[0]}"][data-i="${c.to[1]}"]`);
-      const g = (e, k) => +e.getAttribute(k);
-      return [g(a, 'y') - 2, g(a, 'x') - 2, g(z, 'y') + g(z, 'height') + 2, g(z, 'x') + g(z, 'width') + 2];
-    })();
+  const box = await p.evaluate(c => c.region || (() => {
+    const a = document.querySelector(`rect.u[data-b="${c.from[0]}"][data-i="${c.from[1]}"]`);
+    const z = document.querySelector(`rect.u[data-b="${c.to[0]}"][data-i="${c.to[1]}"]`);
+    const g = (e, k) => +e.getAttribute(k);
+    return [g(a, 'y') - 2, g(a, 'x') - 2, g(z, 'y') + g(z, 'height') + 2, g(z, 'x') + g(z, 'width') + 2];
+  })(), c);
+  // the drag in the middle of the paper's own scroller AND of the window (a header that stays on top can't cover it)
+  await p.evaluate(box => {
     const sheet = document.getElementById('fx-sheet'), view = document.getElementById('fx-view');
     view.scrollLeft = (box[1] + box[3]) / 2000 * sheet.offsetWidth - view.clientWidth / 2;
     view.scrollTop = (box[0] + box[2]) / 2000 * sheet.offsetHeight - view.clientHeight / 2;
-    document.getElementById('fixer').scrollIntoView();
     const s = sheet.getBoundingClientRect();
-    return {x0: s.left + box[1] / 1000 * s.width, y0: s.top + box[0] / 1000 * s.height,
-            x1: s.left + box[3] / 1000 * s.width, y1: s.top + box[2] / 1000 * s.height, sx: scrollX, sy: scrollY};
-  }, c);
-  await p.mouse.move(r.x0, r.y0); await p.mouse.down();
-  await p.mouse.move(r.x1, r.y1, {steps: 12});
+    window.scrollBy(0, s.top + (box[0] + box[2]) / 2000 * s.height - innerHeight / 2);
+  }, box);
+  await p.evaluate(() => document.fonts.ready);                             // a web font reflows the page as it lands
+  await new Promise(res => setTimeout(res, 300));
+  // each corner measured just before the mouse goes there, as a person aims at what they see
+  const at = (y, x) => p.evaluate((y, x) => { const s = document.getElementById('fx-sheet').getBoundingClientRect();
+    return [s.left + x / 1000 * s.width, s.top + y / 1000 * s.height]; }, y, x);
+  const [x0, y0] = await at(box[0], box[1]);
+  const under = await p.evaluate((x, y) => !!document.elementFromPoint(x, y)?.closest('#fx-sheet'), x0, y0);
+  await p.mouse.move(x0, y0); await p.mouse.down();
+  const [x1, y1] = await at(box[2], box[3]);
+  await p.mouse.move(x1, y1, {steps: 12});
+  const r = {x0, y0, x1, y1, sx: await p.evaluate(() => scrollX), sy: await p.evaluate(() => scrollY)};
+  if (!under) console.log(JSON.stringify({case: n, warning: 'the drag started on something above the paper'}));
   const lit = await p.evaluate(() => document.querySelectorAll('rect.u.live').length);
   const tip = await p.evaluate(() => document.getElementById('fx-tip').textContent);
   await p.screenshot({path: `${OUT}/drag_${n}.png`, clip: {x: r.sx + Math.max(0, r.x0 - 60), y: r.sy + Math.max(0, r.y0 - 40),   // page coordinates
