@@ -114,65 +114,6 @@ def anchor_of(region, value, blocks):
     return out
 
 
-NOISE_CONF = 40           # Tesseract's own confidence below which a word only it read is dropped as specks
-
-
-def pick_units(blocks, words, size):
-    """Everything on the page a person can click to take as a value. POSITIONS come from Tesseract's words (it knows
-    exactly where each word is printed); TEXT comes from the AI OCR's copy, which reads characters better: within each
-    line of the copy, its words are aligned in order with Tesseract's words in that line (difflib), so a word Tesseract
-    misread still gets the copy's characters. A word only Tesseract read keeps Tesseract's text; a word only the copy
-    has gets no box (its place isn't known: estimating it from its line put boxes on the wrong columns, 2026-09-30;
-    finding table cells from the ruling lines slipped a column on p3, where a row number and a dashed line cancelled
-    out). A table row is fixed from its copied cells instead (the viewer lists them; the person matches by eye).
-    [{id, block, i, text, box [ymin, xmin, ymax, xmax] 0-1000, tess, match: equal | misread | tesseract}]"""
-    import difflib
-    W, H = size or (0, 0)
-    if not W or not H:
-        return []
-    ws = [dict(t=wd[0], c=wd[1], x0=wd[2], y0=wd[3], x1=wd[2] + wd[4], y1=wd[3] + wd[5]) for wd in words or []
-          if len(wd) >= 6 and flat(wd[0])]
-    used, out = set(), []
-
-    def unit(w, text, block, i, match):
-        out.append({"id": f"w{len(out)}", "block": block, "i": i, "text": text, "tess": w["t"], "match": match,
-                    "box": [int(w["y0"] * 1000 / H), int(w["x0"] * 1000 / W), int(w["y1"] * 1000 / H),
-                            int(w["x1"] * 1000 / W)]})
-
-    for b in blocks or []:
-        box = b.get("box")
-        if not box:
-            continue
-        pad = max(4, (box[2] - box[0]) * 0.35)        # Tesseract's words whose centre lies on this line of the copy
-        mine = [k for k, w in enumerate(ws) if k not in used
-                and (box[0] - pad) * H / 1000 <= (w["y0"] + w["y1"]) / 2 <= (box[2] + pad) * H / 1000
-                and (box[1] - 15) * W / 1000 <= (w["x0"] + w["x1"]) / 2 <= (box[3] + 15) * W / 1000]
-        if not mine:
-            continue
-        mine.sort(key=lambda k: (round(((ws[k]["y0"] + ws[k]["y1"]) / 2) / max(1, ws[k]["y1"] - ws[k]["y0"])), ws[k]["x0"]))
-        text = " ".join(str(c) for c in b["cells"]) if b.get("cells") else (b.get("text") or "")
-        toks = [m.group(0) for m in transcript.TOKEN.finditer(text)]
-        sm = difflib.SequenceMatcher(None, [flat(t) for t in toks], [flat(ws[k]["t"]) for k in mine], autojunk=False)
-        for op, a0, a1, b0, b1 in sm.get_opcodes():
-            for j in range(b1 - b0):
-                k = mine[b0 + j]
-                if op == "equal" or (op == "replace" and a1 - a0 == b1 - b0):
-                    unit(ws[k], toks[a0 + j], b["id"], a0 + j, "equal" if op == "equal" else "misread")
-                elif not noise(ws[k]):
-                    unit(ws[k], ws[k]["t"], b["id"], 1000 + b0 + j, "tesseract")
-                used.add(k)
-    for k, w in enumerate(ws):                        # words on no line of the copy: Tesseract's text alone
-        if k not in used and not noise(w):
-            unit(w, w["t"], None, k, "tesseract")
-    return out
-
-
-def noise(w):
-    """A word only Tesseract read that is too short or too unsure to be anything but specks ("ie", "eee" over a table
-    border): it would sit on top of real words and catch their clicks."""
-    return len(flat(w["t"])) < 3 or (w.get("c") is not None and w["c"] < NOISE_CONF)
-
-
 def chain_of_page(c, bid, n):
     """The customer of the page's order, when grouping has linked it (satellite.chain_of), else None."""
     r = c.execute("""SELECT s.customer_parent, s.customer_code FROM staging.document d

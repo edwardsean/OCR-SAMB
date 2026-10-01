@@ -935,6 +935,7 @@ def _fix_view(c, p, pc):
     beside it, those that decide first. A person corrects a field by marking where it is printed; only for a page
     whose type is known and whose reading is finished."""
     from common import knowledge, satellite
+    from common.boxes import line_text
     from common.fields import DECIDES, TYPE_MAP
     t = p.get("doc_type")
     if t not in DOCS or p.get("type_status") not in ("decided", "labelled") or not p.get("fields"):
@@ -980,12 +981,27 @@ def _fix_view(c, p, pc):
                             JOIN satellite.sor s ON s.sor_no = b.sor_no
                            WHERE d.batch_id=%s AND %s BETWEEN d.page_from AND d.page_to LIMIT 1""",
                        (p["batch_id"], p["page_no"])).fetchone()
-    units = knowledge.pick_units(p.get("transcript") or [], p.get("ocr_words") or [],
-                                 _png_size(p["upright_path"])) if p.get("transcript") else []
+    units, copied = _pick_units(p), {}
+    for b in p.get("transcript") or []:              # a pick of several words is cut from its copied line as written
+        if b.get("id") and any(u["block"] == b["id"] for u in units):   # ("15:16:50", not "15 16 50")
+            copied[b["id"]] = line_text(b)
     units.sort(key=lambda u: -(u["box"][2] - u["box"][0]) * (u["box"][3] - u["box"][1]))   # small ones drawn on top
     return {"image": p["upright_path"], "type": t, "fields": fields, "rows": rows, "notes": p.get("notes") or [],
-            "customer": (so or {}).get("customer_name"), "chain": chain, "units": units,
+            "customer": (so or {}).get("customer_name"), "chain": chain, "units": units, "lines": copied,
             "ready": p.get("outcome") != "waiting_ai" and p.get("status") == "read"}
+
+
+def _pick_units(p):
+    """The words a person can click: the worker's (worker/boxes.py, made with its closer reads) while they belong to
+    the page's transcript; else the copy paired with Tesseract's own reading of the page (fewer boxes, never a guess)."""
+    from common import boxes
+    from worker import boxes as made
+    if not p.get("transcript"):
+        return []
+    pick = p.get("pick") or {}
+    if pick.get("v") == made.version(p.get("transcript_version")):
+        return [dict(u) for u in pick.get("units") or []]
+    return boxes.match(p["transcript"], [p.get("ocr_words") or []], _png_size(p["upright_path"]))
 
 
 @app.get("/crop/{batch}/{page_no}/row/{key}")

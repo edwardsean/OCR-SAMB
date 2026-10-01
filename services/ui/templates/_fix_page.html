@@ -1,10 +1,13 @@
 {# The page viewer (read-then-map, Stage 2a): the paper with a box on every value read, the type's fields beside it.
-   Fix = click the value on the paper (every word, number and table cell of the AI OCR's copy is clickable; shift-click
-   adds the next one); the page is fixed at once and the correction kept as an example for the knowledge.
+   Fix = click the value on the paper. A word, number or table cell of the AI OCR's copy is clickable where Tesseract
+   (or its closer look, worker/boxes.py) places it on the print; a word placed nowhere has no box (never a guess).
+   Hovering shows what a click takes; dragging across words takes them all, in reading order, as the copy writes them
+   ("15:16:50"); dragging around text with no box reads it from the paper. The page is fixed at once and the
+   correction kept as an example for the knowledge.
    fixv = app._fix_view(..); fix = a field to start fixing; back = where to return after saving. #}
 <section class="fixer" id="fixer">
   <h2>The page and its fields
-    <span class="muted small">hover the paper to see what can be picked · Fix a field, then click its value on the paper</span></h2>
+    <span class="muted small">hover the paper to see what a click takes · Fix a field, then click its value on the paper</span></h2>
   {% if fixed %}<p class="fx-saved">✓ Saved. The page was checked again with your answer, and your correction is kept as an example to learn from.</p>{% endif %}
   <div class="fx-grid">
     <div class="fx-paper">
@@ -12,19 +15,22 @@
       <span id="fx-zlevel" class="small mono">100%</span>
       <button type="button" class="btn tiny" id="fx-zin" title="Zoom in">+</button>
       <button type="button" class="btn tiny" id="fx-zfit">Fit</button>
-      <span class="muted small">Ctrl + scroll to zoom · Fix zooms to the field</span></div>
+      <span class="muted small">Ctrl + scroll to zoom · Fix zooms to the field · drag across words to take several</span></div>
     <div class="fx-view" id="fx-view">
     <div class="fx-sheet" id="fx-sheet">
       <img src="/img/{{ fixv.image }}" alt="page {{ page_no }}" draggable="false">
       <svg viewBox="0 0 1000 1000" preserveAspectRatio="none">
         {% for r in fixv.rows %}{% if r.box %}<rect class="fx-row" data-f="row{{ r.i }}" x="{{ r.box[1] }}" y="{{ r.box[0] }}" width="{{ r.box[3] - r.box[1] }}" height="{{ r.box[2] - r.box[0] }}"></rect>{% endif %}{% endfor %}
         {% for f in fixv.fields %}{% if f.box %}<rect class="fx-f {{ 'person' if f.person else f.verdict }}" data-f="{{ f.name }}" x="{{ f.box[1] }}" y="{{ f.box[0] }}" width="{{ f.box[3] - f.box[1] }}" height="{{ f.box[2] - f.box[0] }}"></rect>{% endif %}{% endfor %}
-        {% for u in fixv.units %}<rect class="u" data-u="{{ u.id }}" data-b="{{ u.block }}" data-i="{{ u.i }}" data-t="{{ u.text }}" data-tess="{{ u.tess or '' }}"
-          x="{{ u.box[1] }}" y="{{ u.box[0] }}" width="{{ u.box[3] - u.box[1] }}" height="{{ u.box[2] - u.box[0] }}"><title>{{ u.text }}{% if u.tess and u.tess != u.text %} (Tesseract: {{ u.tess }}){% endif %}</title></rect>{% endfor %}
+        {% for u in fixv.units %}{% set w, h = [u.box[3] - u.box[1], 8]|max, [u.box[2] - u.box[0], 8]|max %}<rect class="u" data-u="{{ u.id }}" data-b="{{ u.block }}" data-i="{{ u.i }}" data-s="{{ u.s }}" data-e="{{ u.e }}"
+          data-t="{{ u.text }}" data-tess="{{ u.tess or '' }}" data-m="{{ u.match }}"
+          x="{{ (u.box[1] + u.box[3] - w) / 2 }}" y="{{ (u.box[0] + u.box[2] - h) / 2 }}" width="{{ w }}" height="{{ h }}"></rect>{% endfor %}
         <rect id="fx-mark" class="fx-mark" x="0" y="0" width="0" height="0"></rect>
       </svg>
     </div>
     </div>
+    <div class="fx-tip" id="fx-tip" hidden></div>
+    <script type="application/json" id="fx-lines">{{ fixv.lines|tojson }}</script>
     </div>
 
     <div class="fx-side">
@@ -43,7 +49,7 @@
           <button type="button" class="fx-x" id="fx-cancel" title="Cancel">✕</button>
         </div>
         <ol class="fx-steps">
-          <li id="fx-s1" class="on">Click the value on the paper <span class="muted">· shift-click to add the next word</span></li>
+          <li id="fx-s1" class="on">Click the value on the paper <span class="muted">· drag across words to take several</span></li>
           <li id="fx-s2">Check it, then save</li>
         </ol>
         <div class="fx-copied" id="fx-copied" hidden>
@@ -63,7 +69,7 @@
           <button class="btn primary fx-save" id="fx-save" disabled>Save</button>
           <button type="button" class="btn" id="fx-none">Not printed on this page</button>
         </div>
-        <a href="#" class="small fx-draglink" id="fx-drag">The value has no box? Drag one around it on the paper</a>
+        <div class="small muted">The value has no box? Drag around it on the paper: it is read from there.</div>
       </form>
 
       {% if not fixv.ready %}<p class="muted small">The AI OCR hasn't finished this page yet (it looks again first); fixing opens when it has.</p>{% endif %}
@@ -109,7 +115,7 @@
   var sheet = document.getElementById('fx-sheet'); if (!sheet) return;
   var form = document.getElementById('fx-form'), mark = document.getElementById('fx-mark'), svg = sheet.querySelector('svg');
   var $ = function (id) { return document.getElementById(id); };
-  var by = $('fx-by'), mode = null, picked = [], start = null;
+  var by = $('fx-by'), mode = null, picked = [];
   var view = $('fx-view'), zoom = 1;
   function setZoom(z, cx, cy) {                      // cx, cy: the point (0-1000) to keep centred
     zoom = Math.max(1, Math.min(6, z)); sheet.style.width = (zoom * 100) + '%';
@@ -156,7 +162,7 @@
   form.value.addEventListener('input', function () { ready(); keycheck(); });
 
   function begin(b) {
-    form.hidden = false; mode = 'pick'; picked = []; sheet.classList.add('picking'); sheet.classList.remove('dragging');
+    form.hidden = false; mode = 'pick'; picked = []; sheet.classList.add('picking');
     form.field.value = b.dataset.f; form.row_key.value = b.dataset.row || ''; form.shown.value = b.dataset.shown || '';
     form.region.value = ''; form.value.value = ''; $('fx-pick').hidden = true; draw([0, 0], [0, 0]);
     $('fx-what').textContent = b.dataset.label; $('fx-now').textContent = b.dataset.shown || 'nothing';
@@ -190,11 +196,12 @@
     var y1 = Math.max.apply(null, rs.map(function (r) { return n(r, 'y') + n(r, 'height'); })), x1 = Math.max.apply(null, rs.map(function (r) { return n(r, 'x') + n(r, 'width'); }));
     return [y0, x0, y1, x1].map(Math.round);
   }
-  function took(text, tess, region) {
+  function took(text, tess, region, inkOnly) {
     form.value.value = text; form.region.value = (region || []).join(',');
     $('fx-big').textContent = text; $('fx-pick').hidden = false;
     var t = $('fx-tess'), f = function (s) { return (s || '').toUpperCase().replace(/[^0-9A-Z]/g, ''); };
-    if (!tess) { t.className = 'fx-tess small muted'; t.textContent = 'Tesseract read nothing here: check the value against the paper.'; }
+    if (inkOnly) { t.className = 'fx-tess small muted'; t.textContent = 'Tesseract could not read this spot; the AI OCR\'s copy says ' + text + ': check it against the paper.'; }
+    else if (!tess) { t.className = 'fx-tess small muted'; t.textContent = 'Tesseract read nothing here: check the value against the paper.'; }
     else if (f(tess) === f(text) || tess.split(/[\s|]+/).some(function (w) { return f(w) && f(w) === f(text); })) {
       t.className = 'fx-tess small agree'; t.textContent = '✓ Tesseract reads the same: ' + tess; }
     else { t.className = 'fx-tess small differ'; t.textContent = '⚠ Tesseract reads ' + tess + ': look at the paper, and correct the value if needed.'; }
@@ -215,24 +222,95 @@
     }, 250);
   }
 
-  // click a word, number or table cell of the copy; shift-click extends within the same line
-  svg.querySelectorAll('rect.u').forEach(function (u) {
-    u.addEventListener('click', function (e) {
-      if (mode !== 'pick') return;
-      if (e.shiftKey && picked.length && picked[0].dataset.b === u.dataset.b) {
-        var is = picked.map(function (p) { return +p.dataset.i; }).concat(+u.dataset.i);
-        var lo = Math.min.apply(null, is), hi = Math.max.apply(null, is);
-        picked = Array.prototype.filter.call(svg.querySelectorAll('rect.u[data-b="' + u.dataset.b + '"]'), function (r) { return +r.dataset.i >= lo && +r.dataset.i <= hi; });
-      } else picked = [u];
-      svg.querySelectorAll('rect.u.picked').forEach(function (r) { r.classList.remove('picked'); });
-      picked.forEach(function (r) { r.classList.add('picked'); });
-      took(picked.map(function (r) { return r.dataset.t; }).join(' '),
-           picked.map(function (r) { return r.dataset.tess; }).filter(Boolean).join(' '), union(picked));
-    });
-  });
+  // What a pick of several words says: per copied line, in reading order, cut from the line as the copy writes it
+  // ("15:16:50", "PT. SARANA"); a token between two picked ones that has no box of its own is part of the cut.
+  var units = Array.prototype.slice.call(svg.querySelectorAll('rect.u'));
+  var lines = {}; try { lines = JSON.parse($('fx-lines').textContent || '{}'); } catch (e) {}
+  var boxed = {}; units.forEach(function (u) { boxed[u.dataset.b + ':' + u.dataset.i] = true; });
+  function ub(r) { var y = +r.getAttribute('y'), x = +r.getAttribute('x'); return [y, x, y + +r.getAttribute('height'), x + +r.getAttribute('width')]; }
+  function inOrder(rs) {                             // printed lines top to bottom, each left to right
+    var it = rs.map(function (r) { var b = ub(r); return {r: r, cy: (b[0] + b[2]) / 2, h: b[2] - b[0], x: b[1]}; });
+    it.sort(function (a, b) { return a.cy - b.cy; });
+    var rows = [];
+    it.forEach(function (a) { var l = rows[rows.length - 1];
+      if (l && Math.abs(a.cy - l.cy) <= 0.6 * Math.max(a.h, l.h)) l.a.push(a); else rows.push({cy: a.cy, h: a.h, a: [a]}); });
+    var out = []; rows.forEach(function (l) { l.a.sort(function (p, q) { return p.x - q.x; }); l.a.forEach(function (a) { out.push(a.r); }); });
+    return out;
+  }
+  function said(rs) {
+    var groups = [], by = {};
+    inOrder(rs).forEach(function (r) { var k = r.dataset.b;
+      if (!k || k === 'None' || lines[k] === undefined) { groups.push({t: r.dataset.t}); return; }
+      if (!by[k]) { by[k] = {b: k, rs: []}; groups.push(by[k]); } by[k].rs.push(r); });
+    return groups.map(function (g) {
+      if (g.t !== undefined) return g.t;
+      var rs = g.rs.slice().sort(function (p, q) { return +p.dataset.i - +q.dataset.i; }), runs = [], cur = null;
+      rs.forEach(function (r) {
+        var i = +r.dataset.i, gap = true;
+        if (cur) { gap = false; for (var k = cur.i + 1; k < i; k++) if (boxed[g.b + ':' + k]) { gap = true; break; } }
+        if (cur && !gap) { cur.e = +r.dataset.e; cur.i = i; } else { cur = {s: +r.dataset.s, e: +r.dataset.e, i: i}; runs.push(cur); }
+      });
+      return runs.map(function (x) { return lines[g.b].slice(x.s, x.e).replace(/\s+/g, ' ').trim(); }).join(' ');
+    }).join(' ');
+  }
+  function tessOf(rs) {                             // words Tesseract read as one ("15:16:50") are said once
+    return inOrder(rs).map(function (r) { return r.dataset.tess; })
+      .filter(function (t, k, a) { return t && t !== a[k - 1]; }).join(' ');
+  }
+  function pick(rs) {
+    picked = rs;
+    svg.querySelectorAll('rect.u.picked, rect.u.live').forEach(function (r) { r.classList.remove('picked', 'live'); });
+    picked.forEach(function (r) { r.classList.add('picked'); });
+    took(said(picked), tessOf(picked), union(picked), picked.every(function (r) { return r.dataset.m === 'ink'; }));
+  }
 
-  // the fallback: drag a box where the copy has none
-  $('fx-drag').addEventListener('click', function (e) { e.preventDefault(); mode = 'drag'; sheet.classList.add('dragging'); sheet.classList.remove('picking'); });
+  // hover: what a click takes, beside the pointer
+  var tip = $('fx-tip');
+  function showTip(e, text) { if (!text) { tip.hidden = true; return; }
+    tip.textContent = text; tip.hidden = false; tip.style.left = (e.clientX + 14) + 'px'; tip.style.top = (e.clientY + 18) + 'px'; }
+
+  // click a word; drag across words to take them all (drag around text with no box: read from the paper there)
+  var drag = null;
+  function inside(a, b) {
+    var y0 = Math.min(a[1], b[1]), y1 = Math.max(a[1], b[1]), x0 = Math.min(a[0], b[0]), x1 = Math.max(a[0], b[0]);
+    return units.filter(function (r) { var q = ub(r), w = Math.min(x1, q[3]) - Math.max(x0, q[1]), h = Math.min(y1, q[2]) - Math.max(y0, q[0]);
+      return w > 0 && h > 0 && w * h >= 0.4 * (q[3] - q[1]) * (q[2] - q[0]); });
+  }
+  sheet.addEventListener('pointerdown', function (e) {
+    if (mode !== 'pick' || e.button !== 0) return;
+    e.preventDefault(); drag = {a: at(e), moved: false, u: e.target.closest ? e.target.closest('rect.u') : null, shift: e.shiftKey};
+    sheet.setPointerCapture(e.pointerId);
+  });
+  sheet.addEventListener('pointermove', function (e) {
+    if (!drag) { var u = e.target.closest ? e.target.closest('rect.u') : null; showTip(e, u ? u.dataset.t : ''); return; }
+    var b = at(e);
+    if (!drag.moved && Math.abs(b[0] - drag.a[0]) * sheet.offsetWidth / 1000 < 5 && Math.abs(b[1] - drag.a[1]) * sheet.offsetHeight / 1000 < 5) return;
+    drag.moved = true; draw(drag.a, b);
+    var rs = inside(drag.a, b);
+    units.forEach(function (r) { r.classList.toggle('live', rs.indexOf(r) >= 0); });
+    showTip(e, rs.length ? said(rs) : 'no word here: it will be read from the paper');
+  });
+  sheet.addEventListener('pointerup', function (e) {
+    if (!drag) return; var d = drag; drag = null; tip.hidden = true;
+    if (!d.moved) {
+      if (!d.u) return;
+      if (d.shift && picked.length) {                // shift-click adds a word, or takes it out
+        var i = picked.indexOf(d.u); pick(i >= 0 ? picked.filter(function (r) { return r !== d.u; }) : picked.concat([d.u]));
+        if (!picked.length) draw([0, 0], [0, 0]);
+      } else { draw([0, 0], [0, 0]); pick([d.u]); }
+      return;
+    }
+    var end = at(e), rs = inside(d.a, end);
+    units.forEach(function (r) { r.classList.remove('live'); });
+    if (rs.length) { draw([0, 0], [0, 0]); pick(rs); return; }
+    var box = [Math.min(d.a[1], end[1]), Math.min(d.a[0], end[0]), Math.max(d.a[1], end[1]), Math.max(d.a[0], end[0])].map(Math.round);
+    if (box[2] - box[0] < 3 || box[3] - box[1] < 3) return;
+    fetch('/api/region/{{ batch_id }}/{{ page_no }}?box=' + box.join(',')).then(function (r) { return r.json(); })
+      .then(function (j) { picked = []; svg.querySelectorAll('rect.u.picked').forEach(function (r) { r.classList.remove('picked'); });
+        took(j.suggest || '', j.words || '', box, false); });
+  });
+  sheet.addEventListener('pointerleave', function () { if (!drag) tip.hidden = true; });
+
   function at(e) {
     var r = sheet.getBoundingClientRect();
     return [Math.max(0, Math.min(1000, (e.clientX - r.left) * 1000 / r.width)), Math.max(0, Math.min(1000, (e.clientY - r.top) * 1000 / r.height))];
@@ -241,22 +319,13 @@
     mark.setAttribute('x', Math.min(a[0], b[0])); mark.setAttribute('y', Math.min(a[1], b[1]));
     mark.setAttribute('width', Math.abs(a[0] - b[0])); mark.setAttribute('height', Math.abs(a[1] - b[1]));
   }
-  sheet.addEventListener('pointerdown', function (e) { if (mode !== 'drag') return; e.preventDefault(); start = at(e); draw(start, start); sheet.setPointerCapture(e.pointerId); });
-  sheet.addEventListener('pointermove', function (e) { if (start) draw(start, at(e)); });
-  sheet.addEventListener('pointerup', function (e) {
-    if (!start) return; var end = at(e), a = start; start = null;
-    var box = [Math.min(a[1], end[1]), Math.min(a[0], end[0]), Math.max(a[1], end[1]), Math.max(a[0], end[0])].map(Math.round);
-    if (box[2] - box[0] < 3 || box[3] - box[1] < 3) return;
-    fetch('/api/region/{{ batch_id }}/{{ page_no }}?box=' + box.join(',')).then(function (r) { return r.json(); })
-      .then(function (j) { took(j.suggest || '', j.words || '', box); mode = 'pick'; sheet.classList.remove('dragging'); sheet.classList.add('picking'); });
-  });
 
   $('fx-none').addEventListener('click', function () {
     form.value.value = '(not printed)'; form.region.value = ''; $('fx-big').textContent = 'Not printed on this page';
     $('fx-tess').textContent = ''; $('fx-pick').hidden = false; $('fx-s1').className = 'done'; $('fx-s2').className = 'on'; ready();
   });
   $('fx-cancel').addEventListener('click', function () {
-    form.hidden = true; mode = null; sheet.classList.remove('picking', 'dragging'); draw([0, 0], [0, 0]);
+    form.hidden = true; mode = null; sheet.classList.remove('picking'); draw([0, 0], [0, 0]); tip.hidden = true;
     svg.querySelectorAll('.picked, .hot-keep').forEach(function (r) { r.classList.remove('picked', 'hot-keep'); });
   });
   document.addEventListener('keydown', function (e) { if (e.key === 'Escape' && !form.hidden) $('fx-cancel').click(); });
