@@ -20,6 +20,9 @@ CLAUDE.md
 .claude
 .agents/
 
+# architecture diagrams: kept on this computer, not in the repo
+/diagrams/
+
 # empty mount-point folders Docker created (anchored: testdata/golden_p1-32.json must stay tracked)
 /services/tests/
 /services/testdata/
