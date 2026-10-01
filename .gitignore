@@ -1,13 +1,24 @@
-# secrets
-/.env
+# secrets: the real keys live only in .env (copy .env.example to start)
+.env
+.env.*
+!.env.example
 
-# OS / Python
+# OS, editors, Python, Node
 .DS_Store
+.vscode/
+.idea/
 __pycache__/
 *.pyc
+.pytest_cache/
+.venv/
+node_modules/
+*.log
 
-# worktrees are separate checkouts that live inside this folder
-/.claude/worktrees/
+# local tooling, never in the repo: Claude Code's notes and folders (worktrees are separate checkouts inside this
+# folder), and the agent skills installed for frontend work (skills-lock.json lists them)
+CLAUDE.md
+.claude
+.agents/
 
 # empty mount-point folders Docker created (anchored: testdata/golden_p1-32.json must stay tracked)
 /services/tests/
@@ -16,9 +27,10 @@ __pycache__/
 # real customer documents and results: never committed
 *.pdf
 *.xlsx
+*.xls
 *.csv
-/Screenshot*.png
-
-.claude
-
-CLAUDE.md
+*.zip
+*.dump
+Screenshot*.png
+/docs/17/
+/docs/satellite/
