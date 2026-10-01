@@ -310,12 +310,14 @@ td s { color: var(--bad); }
 .fx-sheet rect.fx-f, .fx-sheet rect.fx-row, .fx-sheet rect.fx-mark { pointer-events: none; }
 .fx-sheet rect.u { fill: transparent; stroke: none; pointer-events: all; }
 .fx-sheet rect.u:hover { stroke: #2457c5; stroke-width: 1.5; fill: rgba(36, 87, 197, .08); }
-.fx-sheet.picking { outline: 2px solid var(--accent); outline-offset: 2px; }
-.fx-sheet.picking rect.u { cursor: pointer; }
-.fx-sheet.picking rect.u:hover { stroke-width: 2.5; fill: rgba(36, 87, 197, .16); }
-.fx-sheet rect.u.picked { stroke: #2457c5; stroke-width: 3; fill: rgba(36, 87, 197, .25); }
-.fx-sheet.dragging { cursor: crosshair; outline: 2px dashed var(--accent); outline-offset: 2px; }
-.fx-sheet.dragging rect.u { pointer-events: none; }
+.fx-sheet.picking { outline: 2px solid var(--accent); outline-offset: 2px; cursor: crosshair; }
+.fx-sheet.picking rect.u { cursor: pointer; stroke: rgba(36, 87, 197, .35); stroke-width: 1; }   /* what can be picked */
+.fx-sheet.picking rect.u:hover { stroke: #2457c5; stroke-width: 2.5; fill: rgba(36, 87, 197, .18); }
+.fx-sheet rect.u.live { stroke: #2457c5; stroke-width: 2; fill: rgba(36, 87, 197, .22); }              /* in the drag */
+.fx-sheet rect.u.picked { stroke: #2457c5; stroke-width: 3; fill: rgba(36, 87, 197, .28); }
+.fx-tip { position: fixed; z-index: 60; pointer-events: none; max-width: 60vw; padding: 3px 9px; border-radius: 7px;
+  background: #1d2433; color: #fff; font: 600 14px/1.35 var(--mono); box-shadow: 0 4px 14px rgba(0, 0, 0, .25); white-space: pre-wrap; }
+.fx-tip[hidden] { display: none; }
 .fx-form { gap: 10px; box-shadow: 0 6px 24px rgba(0, 0, 0, .18); }
 .fx-head { display: flex; justify-content: space-between; align-items: flex-start; gap: 8px; }
 .fx-kicker { font-size: 11px; text-transform: uppercase; letter-spacing: .06em; color: var(--muted); font-weight: 700; }
@@ -336,7 +338,6 @@ td s { color: var(--bad); }
 .fx-lab input { font-size: 15px; padding: 9px 10px !important; }
 .fx-byline { color: var(--muted); }
 .fx-save { font-size: 15px; padding: 9px 20px; }
-.fx-draglink { color: var(--muted); }
 .fx-lab[hidden], .fx-byline[hidden], .fx-key[hidden] { display: none; }
 .fx-desc { color: var(--muted); font-size: 12px; } .fx-item .fx-desc { margin-top: 1px; }
 .fx-key.agree { color: var(--ok); } .fx-key.differ { color: var(--bad); font-weight: 600; }

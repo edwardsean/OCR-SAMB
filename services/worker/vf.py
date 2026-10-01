@@ -60,7 +60,7 @@ from common import context, db, gates, satellite, transcript, verify, wiki
 from common import keys as keymod
 from common.fields import DECIDES, DOCS, TYPE_MAP, decides, lift, project
 from common.models import openai_vlm, vlm
-from worker import classify, enhance, layout, zoom
+from worker import boxes as pickboxes, classify, enhance, layout, zoom
 from worker import main as v1
 
 PREP_VERSION = 1
@@ -666,7 +666,8 @@ def _handle(ticket, bid, n, run, v1_reading, second_look):
     title = (prev or {}).get("fp_title")             # the printed-title witness, looked for at most once per page
     x = {"fields_all": None, "extract_status": None, "extract_error": None, "vlm_meta": {}}      # 2
     earlier = None                                   # this reading's earlier look-again, if the reading is reused
-    two = {"notes": (prev or {}).get("notes"), "mapping": (prev or {}).get("mapping")}
+    two = {"notes": (prev or {}).get("notes"), "mapping": (prev or {}).get("mapping"),
+           "blocks": (prev or {}).get("transcript"), "tv": (prev or {}).get("transcript_version")}
     if prev and prev["fields_all"] and prev["fields_version"] == fv:
         x.update(fields_all=prev["fields_all"], extract_status="done", vlm_meta=prev["vlm_meta"] or {})
         earlier = prev["second_look"]
@@ -674,9 +675,9 @@ def _handle(ticket, bid, n, run, v1_reading, second_look):
         x.update(fields_all=v1_reading, extract_status="done", vlm_meta={"read": {"model": "v1 reading (dry run)"}})
     elif READER == "two_step":
         try:
-            fa, meta, _, notes, mapping = read_then_map(bid, n, up, ctx, prev)
+            fa, meta, blocks, notes, mapping = read_then_map(bid, n, up, ctx, prev)
             x.update(fields_all=fa, extract_status="done", vlm_meta={"read": meta})
-            two.update(notes=notes, mapping=mapping)
+            two.update(notes=notes, mapping=mapping, blocks=blocks, tv=two_step_versions(ctx)[0])
             earlier = carry_over((prev or {}).get("second_look"), fa)
         except Exception as e:
             x.update(extract_status="failed", extract_error=f"{type(e).__name__}: {e}"[:500])
@@ -729,7 +730,7 @@ def _handle(ticket, bid, n, run, v1_reading, second_look):
             kwait = f"the call failed: pass B: {type(e).__name__}: {e}"[:300]
             x["fields_all"], two["mapping"] = wiki.undo(x["fields_all"], two["mapping"])
 
-    rd, res, zev, sl, looked = {}, None, None, None, True                                        # 5, 6, 7
+    rd, res, zev, sl, looked, pick = {}, None, None, None, True, None                            # 5, 6, 7
     ship_to = (prev or {}).get("ship_to")            # the store question's answer (S4), kept across re-runs
     fields_all = x["fields_all"]
     fields = project(fields_all, cls["doc_type"]) if fields_all is not None and cls["doc_type"] in DOCS else {}
@@ -739,6 +740,8 @@ def _handle(ticket, bid, n, run, v1_reading, second_look):
         _, rd = enhance.read(work)
         if READER == "two_step" and two["mapping"] and fields_all:   # boxes on Tesseract's own words, now it has read
             transcript.snap_boxes(fields_all, two["mapping"], rd.get("ocr_words"), up.shape)
+        if two["blocks"] and two["tv"]:              # what a person can click on the page viewer (worker/boxes.py)
+            pick = pick_boxes(up, two["blocks"], two["tv"], rd.get("ocr_words"))
         with db.connect() as c:
             sos, confirmed, day = satellite.load(c), satellite.confirmations(c, bid, n), scan_day_of(c, bid)
         fields, res, zev = page_verdicts(dt, fields_all, rd, prep["qr_text"], up, ctx, sos, confirmed,
@@ -779,7 +782,7 @@ def _handle(ticket, bid, n, run, v1_reading, second_look):
               doc_type_conf=%(doc_type_conf)s, type_votes=%(type_votes)s, context_version=%(cv)s,
               zoom=%(zoom)s, second_look=%(second_look)s, outcome=%(outcome)s, verify_version=%(vv)s,
               ship_to=%(ship_to)s, fp_title=%(fp_title)s, notes=%(notes)s, mapping=%(mapping)s,
-              error=NULL, read_at=now()
+              pick=COALESCE(%(pick)s::jsonb, pick), error=NULL, read_at=now()
             WHERE batch_id=%(bid)s AND page_no=%(n)s AND status <> 'read'
               AND EXISTS (SELECT 1 FROM staging.scan_batch WHERE id=%(bid)s AND run=%(run)s)
             RETURNING page_no""",
@@ -795,13 +798,23 @@ def _handle(ticket, bid, n, run, v1_reading, second_look):
              "ship_to": Json(ship_to) if ship_to is not None else None, "fp_title": title,
              "notes": Json(two["notes"]) if two["notes"] is not None else None,
              "mapping": Json(two["mapping"]) if two["mapping"] is not None else None,
-             "vv": verify.VERIFY_VERSION if res else None,
+             "pick": Json(pick) if pick else None, "vv": verify.VERIFY_VERSION if res else None,
              "up": up_key, "thumb": thumb_key, "bid": bid, "n": n, "run": run}).fetchone()
         if saved:
             verify.store(c, bid, n, fields, res)
     if not saved:
         return None
     return v1.tick(bid, run)
+
+
+def pick_boxes(up, blocks, tv, words):
+    """The page viewer's clickable boxes (worker/boxes.py), for this transcript. They only help a person: a failure
+    here never fails the page (the viewer then pairs the copy with Tesseract's own reading)."""
+    try:
+        return {"v": pickboxes.version(tv), **pickboxes.make(up, blocks, words)}
+    except Exception as e:
+        print(f"boxes for the page viewer failed: {type(e).__name__}: {e}", flush=True)
+        return None
 
 
 def regroup(bid):

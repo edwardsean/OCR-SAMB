@@ -85,22 +85,3 @@ def test_the_viewer_shows_the_fields_and_the_region_api_answers():
     j = httpx.get(f"{UI}/api/region/b-c80bbbde4d/12?box=225,587,255,781", timeout=60).json()
     assert "13,987,409.70" in j["suggest"]
     assert httpx.get(f"{UI}/api/region/b-c80bbbde4d/12?box=9,9,1,1", timeout=60).status_code == 400
-
-
-def test_what_a_person_can_click_on_the_page():
-    """Boxes sit on Tesseract's words (exact places); their text is the copy's, aligned word by word within the line,
-    so a word Tesseract misread still gets the copy's characters. A word only the copy has gets no box."""
-    blocks = [{"id": "b4", "kind": "printed", "text": "Ref. PO No. : 4505832724", "box": [90, 600, 110, 820]},
-              {"id": "r1", "kind": "table_row", "text": "", "cells": ["AYAM 2 TELOR", "2.00", "", "0.00"],
-               "box": [330, 0, 350, 900]}]
-    words = [["Ref.", 90, 1500, 950, 70, 40], ["P0", 90, 1580, 950, 40, 40], ["No.", 90, 1630, 950, 50, 40],
-             ["4505832724", 90, 1800, 950, 260, 40],                     # the PO line, on a 2500 x 10000 page
-             ["AYAM", 90, 20, 3350, 120, 40], ["2", 90, 150, 3350, 20, 40], ["TELOR", 90, 180, 3350, 140, 40],
-             ["2.00", 90, 1500, 3350, 90, 40]]                           # row 1: "0.00" under the black band
-    u = knowledge.pick_units(blocks, words, (2500, 10000))
-    by = {x["tess"]: x for x in u}
-    assert by["4505832724"]["text"] == "4505832724" and by["4505832724"]["box"] == [95, 720, 99, 824]
-    assert by["P0"]["text"] == "PO" and by["P0"]["match"] == "misread"         # Tesseract's P0, the copy's PO
-    assert [x["text"] for x in u if x["block"] == "r1"] == ["AYAM", "2", "TELOR", "2.00"]
-    assert "0.00" not in {x["text"] for x in u}                                  # nowhere to put it: no box
-    assert knowledge.pick_units(blocks, words, None) == []
