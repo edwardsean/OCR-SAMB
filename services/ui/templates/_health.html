@@ -1,0 +1,6 @@
+{# Beranda's one line about the system: every service answering, or how many don't (details on the Status page). #}
+{% if bad %}
+  <a class="hp bad" href="/status" title="{{ bad|join(', ') }}"><i></i>{{ bad|length }} dari {{ n }} layanan bermasalah · hubungi tim IT</a>
+{% else %}
+  <a class="hp ok" href="/status"><i></i>Sistem berjalan normal</a>
+{% endif %}

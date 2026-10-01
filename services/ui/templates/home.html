@@ -1,0 +1,104 @@
+{% extends "base.html" %}
+{% block title %}Beranda{% endblock %}
+{% block main %}
+  {% set t = h.todo %}
+  {% macro task(n, unit, title, text, href, button, tone) %}
+    <div class="task {{ tone if n else 'done' }}">
+      <div class="task-n"><b>{{ n }}</b><span>{{ unit }}</span></div>
+      <div class="task-body"><h3>{{ title }}</h3><p>{{ text }}</p></div>
+      <div class="task-act">{% if n %}<a class="btn{{ ' primary' if tone == 'need' }}" href="{{ href }}">{{ button }} <span aria-hidden="true">→</span></a>
+        {% else %}<span class="task-ok">✓ Tidak ada</span>{% endif %}</div>
+    </div>
+  {% endmacro %}
+
+  <div class="home">
+    <section class="head home-head">
+      <div>
+        <p class="kicker">{{ hari_ini() }}</p>
+        <h1>Beranda</h1>
+        <p class="lede">Sistem membaca dokumen pelanggan dari hasil scan, menyatukannya per order (SOR), lalu
+          mencocokkannya dengan data Satellite. Anda hanya perlu menangani yang ditandai di bawah ini.</p>
+      </div>
+      <div class="health" hx-get="/partials/health" hx-trigger="load" hx-swap="innerHTML">
+        <span class="hp wait"><i></i>Memeriksa sistem…</span></div>
+    </section>
+
+    <h2 class="sect">Yang perlu Anda kerjakan</h2>
+    <div class="todo">
+      {{ task(t.need.n, 'order', 'Periksa order yang ditandai',
+              'Ada selisih atau data yang perlu Anda pastikan sebelum order dikirim ke Satellite.',
+              '/review?batch=' ~ t.need.batch, 'Mulai periksa', 'need') }}
+      {{ task(t.unsure.n, 'halaman', 'Tentukan jenis halaman',
+              'Sistem ragu halaman ini dokumen apa (Faktur, Tanda Terima, PO…). Cukup pilih jenisnya.',
+              '/label?batch=' ~ t.unsure.batch, 'Tentukan jenis', 'need') }}
+      {{ task(t.held.n, 'dokumen', 'Pastikan nomor dokumen',
+              'Nomor SOR atau PO-nya belum terbaca pasti, jadi dokumen ini belum masuk ke order mana pun.',
+              '/bundles?batch=' ~ t.held.batch ~ '#held', 'Lihat dokumen', 'need') }}
+      {{ task(t.ready.n, 'order', 'Kirim ke Satellite',
+              'Semua cek lolos atau sudah disetujui. Kirim agar data dan satu PDF per SOR tercatat di Satellite.',
+              '/review?batch=' ~ t.ready.batch ~ '#ready', 'Buka & kirim', 'ready') }}
+    </div>
+    {% if not (t.need.n or t.unsure.n or t.held.n or t.ready.n) %}
+      <p class="allclear">Semua beres: tidak ada yang perlu Anda kerjakan sekarang. Ada dokumen baru? <a href="/upload">Unggah scan</a>.</p>
+    {% endif %}
+
+    <h2 class="sect">Scan terbaru <a class="sect-link" href="/batches">Lihat semua</a></h2>
+    <div class="scans">
+      {% for s in h.scans[:6] %}
+        {% set reading = s.status in ('splitting', 'queued', 'reading') or s.waiting_ai %}
+        <a class="scan" href="/batches/{{ s.id }}">
+          <div class="scan-file"><b>{{ s.file_name }}</b><span>Diterima {{ s.received_at|tgl }}</span></div>
+          <div class="scan-prog">
+            <div class="bar"><i style="width: {{ ((100 * s.page_done / s.page_total) if s.page_total else 0)|round|int }}%"></i></div>
+            <span>{{ s.page_done }} dari {{ s.page_total }} halaman dibaca{% if reading %} · <em class="live">sedang diproses</em>{% endif %}</span>
+          </div>
+          <div class="scan-orders">
+            {% if s.orders %}
+              {% if s.need %}<span class="chip need">{{ s.need }} perlu dicek</span>{% endif %}
+              {% if s.waiting %}<span class="chip wait">{{ s.waiting }} menunggu sistem</span>{% endif %}
+              {% if s.ready %}<span class="chip ok">{{ s.ready }} siap dikirim</span>{% endif %}
+              {% if s.published %}<span class="chip done">{{ s.published }} terkirim</span>{% endif %}
+            {% else %}<span class="muted small">Belum ada order terbentuk</span>{% endif %}
+            {% if s.unsure %}<span class="chip need">{{ s.unsure }} halaman belum pasti</span>{% endif %}
+          </div>
+          <span class="go" aria-hidden="true">›</span>
+        </a>
+      {% else %}
+        <div class="empty-state">
+          <p><b>Belum ada scan.</b> Mulai dengan mengunggah file PDF hasil scan dokumen pelanggan.</p>
+          <a class="btn primary" href="/upload">Unggah scan pertama</a>
+        </div>
+      {% endfor %}
+    </div>
+
+    <section class="howto" id="cara-kerja">
+      <div class="howto-head"><h2>Cara kerja sistem ini</h2>
+        <button type="button" class="linkbtn" id="howto-hide">Sembunyikan</button></div>
+      <ol class="flowline">
+        <li><b>Unggah scan</b><span>Satu file PDF berisi tumpukan dokumen pelanggan. Tidak perlu disortir.</span></li>
+        <li><b>Sistem membaca</b><span>AI membaca tiap halaman dan mengenali jenisnya: Faktur, Tanda Terima, PO.</span></li>
+        <li><b>Disatukan per SOR</b><span>Halaman dikelompokkan per order dan dicocokkan dengan data Satellite.</span></li>
+        <li><b>Anda memeriksa</b><span>Hanya yang tidak cocok atau belum pasti yang muncul di <a href="/review">Periksa order</a>.</span></li>
+        <li><b>Kirim ke Satellite</b><span>Data tiap dokumen dan satu PDF per SOR tersimpan di Satellite.</span></li>
+      </ol>
+      <dl class="glossary">
+        <div><dt>SOR</dt><dd>Nomor Sales Order SAMB. Satu SOR = satu order = satu berkas dokumen.</dd></div>
+        <div><dt>Faktur Penjualan</dt><dd>Faktur milik SAMB. Mencetak nomor SOR dan kode QR.</dd></div>
+        <div><dt>Tanda Terima (TTG)</dt><dd>Bukti pelanggan menerima barang: GRN, Receiving Note, Good Receipt, dll.</dd></div>
+        <div><dt>PO</dt><dd>Pesanan dari pelanggan ke SAMB. Nomornya = Nomor CPO di faktur.</dd></div>
+        <div><dt>Satellite</dt><dd>Sistem SAMB sebelum SAP: data order, terima barang (CGR), dan tagihan.</dd></div>
+        <div><dt>Tolakan</dt><dd>Barang yang ditolak toko, sehingga diterima lebih sedikit dari yang dipesan.</dd></div>
+      </dl>
+    </section>
+    <p class="howto-show" hidden><button type="button" class="linkbtn" id="howto-show">Tampilkan cara kerja sistem ini</button></p>
+  </div>
+  <script>
+    (function () {                                   // "Cara kerja" can be hidden once you know it (this browser only)
+      var box = document.getElementById('cara-kerja'), again = document.querySelector('.howto-show');
+      function show(on) { box.hidden = !on; again.hidden = on; try { localStorage.setItem('howto-hidden', on ? '' : '1'); } catch (e) {} }
+      try { if (localStorage.getItem('howto-hidden')) { box.hidden = true; again.hidden = false; } } catch (e) {}
+      document.getElementById('howto-hide').addEventListener('click', function () { show(false); });
+      document.getElementById('howto-show').addEventListener('click', function () { show(true); });
+    })();
+  </script>
+{% endblock %}

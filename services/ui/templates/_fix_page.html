@@ -3,20 +3,20 @@
    adds the next one); the page is fixed at once and the correction kept as an example for the knowledge.
    fixv = app._fix_view(..); fix = a field to start fixing; back = where to return after saving. #}
 <section class="fixer" id="fixer">
-  <h2>The page and its fields
-    <span class="muted small">hover the paper to see what can be picked · Fix a field, then click its value on the paper</span></h2>
-  {% if fixed %}<div class="fx-saved">✓ Saved. The page was checked again with your answer.
+  <h2>Halaman dan isiannya
+    <span class="muted small">klik <b>Perbaiki</b> pada isian yang salah, lalu klik nilainya di kertas</span></h2>
+  {% if fixed %}<div class="fx-saved">✓ Tersimpan. Halaman sudah dicek ulang dengan jawaban Anda.
     <div hx-get="/partials/lesson?batch={{ batch_id|urlencode }}&page={{ page_no }}&field={{ fixed|urlencode }}" hx-trigger="load" hx-swap="outerHTML"></div></div>{% endif %}
   <div class="fx-grid">
     <div class="fx-paper">
-    <div class="fx-zoom"><button type="button" class="btn tiny" id="fx-zout" title="Zoom out">−</button>
+    <div class="fx-zoom"><button type="button" class="btn tiny" id="fx-zout" title="Perkecil">−</button>
       <span id="fx-zlevel" class="small mono">100%</span>
-      <button type="button" class="btn tiny" id="fx-zin" title="Zoom in">+</button>
-      <button type="button" class="btn tiny" id="fx-zfit">Fit</button>
-      <span class="muted small">Ctrl + scroll to zoom · Fix zooms to the field</span></div>
+      <button type="button" class="btn tiny" id="fx-zin" title="Perbesar">+</button>
+      <button type="button" class="btn tiny" id="fx-zfit">Pas layar</button>
+      <span class="muted small">Ctrl + scroll untuk zoom · Perbaiki langsung memperbesar ke isiannya</span></div>
     <div class="fx-view" id="fx-view">
     <div class="fx-sheet" id="fx-sheet">
-      <img src="/img/{{ fixv.image }}" alt="page {{ page_no }}" draggable="false">
+      <img src="/img/{{ fixv.image }}" alt="halaman {{ page_no }}" draggable="false">
       <svg viewBox="0 0 1000 1000" preserveAspectRatio="none">
         {% for r in fixv.rows %}{% if r.box %}<rect class="fx-row" data-f="row{{ r.i }}" x="{{ r.box[1] }}" y="{{ r.box[0] }}" width="{{ r.box[3] - r.box[1] }}" height="{{ r.box[2] - r.box[0] }}"></rect>{% endif %}{% endfor %}
         {% for f in fixv.fields %}{% if f.box %}<rect class="fx-f {{ 'person' if f.person else f.verdict }}" data-f="{{ f.name }}" x="{{ f.box[1] }}" y="{{ f.box[0] }}" width="{{ f.box[3] - f.box[1] }}" height="{{ f.box[2] - f.box[0] }}"></rect>{% endif %}{% endfor %}
@@ -29,26 +29,26 @@
     </div>
 
     <div class="fx-side">
-      <div class="fx-meta"><span class="tchip t-{{ fixv.type }}">{{ fixv.type }}</span>
-        {% if fixv.customer %}<span>{{ fixv.customer }} <span class="muted small">(from its order)</span></span>
-        {% else %}<span class="muted small">customer not known yet: the page isn't linked to an order</span>{% endif %}</div>
+      <div class="fx-meta"><span class="tchip t-{{ fixv.type }}">{{ DOC_SHORT.get(fixv.type, fixv.type) }}</span>
+        {% if fixv.customer %}<span>{{ fixv.customer }} <span class="muted small">(dari ordernya)</span></span>
+        {% else %}<span class="muted small">pelanggan belum diketahui: halaman ini belum terhubung ke order</span>{% endif %}</div>
 
       <form id="fx-form" class="fx-form" method="post" action="/page/fix" hidden>
         <input type="hidden" name="batch" value="{{ batch_id }}"><input type="hidden" name="page" value="{{ page_no }}">
         <input type="hidden" name="field"><input type="hidden" name="row_key"><input type="hidden" name="shown">
         <input type="hidden" name="region"><input type="hidden" name="back" value="{{ back or '' }}">
         <div class="fx-head">
-          <div><div class="fx-kicker">Fixing</div><div class="fx-what" id="fx-what"></div>
+          <div><div class="fx-kicker">Memperbaiki</div><div class="fx-what" id="fx-what"></div>
             <div class="fx-desc small" id="fx-desc"></div>
-            <div class="fx-now">read as <span class="mono" id="fx-now"></span></div></div>
-          <button type="button" class="fx-x" id="fx-cancel" title="Cancel">✕</button>
+            <div class="fx-now">terbaca <span class="mono" id="fx-now"></span></div></div>
+          <button type="button" class="fx-x" id="fx-cancel" title="Batal (Esc)">✕</button>
         </div>
         <ol class="fx-steps">
-          <li id="fx-s1" class="on">Click the value on the paper <span class="muted">· shift-click to add the next word</span></li>
-          <li id="fx-s2">Check it, then save</li>
+          <li id="fx-s1" class="on">Klik nilainya di kertas <span class="muted">· shift-klik untuk menambah kata berikutnya</span></li>
+          <li id="fx-s2">Periksa, lalu simpan</li>
         </ol>
         <div class="fx-copied" id="fx-copied" hidden>
-          <div class="small">This row as the AI OCR copied it, left to right. <b>Click the value you see in the column on the paper:</b></div>
+          <div class="small">Baris ini seperti disalin AI, dari kiri ke kanan. <b>Klik nilai yang Anda lihat di kolomnya pada kertas:</b></div>
           <div class="fx-chips" id="fx-chips"></div>
         </div>
         <div class="fx-pick" id="fx-pick" hidden>
@@ -56,32 +56,32 @@
           <div class="fx-tess small" id="fx-tess"></div>
           <div class="fx-key small" id="fx-key" hidden></div>
         </div>
-        <label class="fx-lab">Value as printed
-          <input name="value" id="fx-value" class="mono" required autocomplete="off" placeholder="click it on the paper, or type it"></label>
-        <div class="fx-byline small" id="fx-byline">Saving as <b id="fx-byname"></b> · <a href="#" id="fx-bychange">not you?</a></div>
-        <label class="fx-lab" id="fx-bylab">Your name <input name="by" id="fx-by" required autocomplete="off"></label>
+        <label class="fx-lab">Nilai seperti tercetak
+          <input name="value" id="fx-value" class="mono" required autocomplete="off" placeholder="klik di kertas, atau ketik"></label>
+        <div class="fx-byline small" id="fx-byline">Disimpan atas nama <b id="fx-byname"></b> · <a href="#" id="fx-bychange">bukan Anda?</a></div>
+        <label class="fx-lab" id="fx-bylab">Nama Anda <input name="by" id="fx-by" required autocomplete="off"></label>
         <div class="fx-buttons">
-          <button class="btn primary fx-save" id="fx-save" disabled>Save</button>
-          <button type="button" class="btn" id="fx-none">Not printed on this page</button>
+          <button class="btn primary fx-save" id="fx-save" disabled>Simpan</button>
+          <button type="button" class="btn" id="fx-none">Tidak tercetak di halaman ini</button>
         </div>
-        <a href="#" class="small fx-draglink" id="fx-drag">The value has no box? Drag one around it on the paper</a>
+        <a href="#" class="small fx-draglink" id="fx-drag">Nilainya tidak punya kotak? Tarik kotak di sekelilingnya di kertas</a>
       </form>
 
-      {% if not fixv.ready %}<p class="muted small">The AI OCR hasn't finished this page yet (it looks again first); fixing opens when it has.</p>{% endif %}
+      {% if not fixv.ready %}<p class="muted small">AI belum selesai membaca halaman ini (masih membaca ulang); perbaikan bisa dilakukan setelah selesai.</p>{% endif %}
       <div class="fx-list">
         {% for f in fixv.fields %}
         <div class="fx-item" data-f="{{ f.name }}">
-          <div><div class="fx-label">{{ f.label }}{% if f.role %} <span class="fx-role">decides</span>{% endif %}</div>
-            <div class="mono fx-val">{{ f.value if f.value not in (none, '') else '—' }}</div>
+          <div><div class="fx-label">{{ f.label }}{% if f.role %} <span class="fx-role" title="nilai ini ikut menentukan: menghubungkan ke order, atau dicek dengan Satellite">penentu</span>{% endif %}</div>
+            <div class="mono fx-val">{{ f.value|nilai }}</div>
             {% if f.desc %}<div class="small fx-desc">{{ f.desc }}</div>{% endif %}
             <div class="muted small">{{ f.says }}</div></div>
           <div class="fx-right">
-            {% if f.person %}<span class="chip person">corrected by a person</span>
-            {% elif f.verdict == 'ok' %}<span class="chip ok">✓ {{ f.by or 'backed' }}</span>
-            {% elif f.verdict == 'empty' %}<span class="chip">not read</span>
-            {% else %}<span class="chip warn">not confirmed</span>{% endif %}
+            {% if f.person %}<span class="chip person">diperbaiki orang</span>
+            {% elif f.verdict == 'ok' %}<span class="chip ok" title="dipastikan oleh: {{ BY.get(f.by, f.by) if f.by else 'cetakan' }}">✓ {{ BY.get(f.by, f.by) if f.by else 'pasti' }}</span>
+            {% elif f.verdict == 'empty' %}<span class="chip">tidak terbaca</span>
+            {% else %}<span class="chip warn">belum pasti</span>{% endif %}
             {% if fixv.ready %}<button type="button" class="btn js-fx" data-f="{{ f.name }}" data-label="{{ f.label }}" data-desc="{{ f.desc or '' }}"
-              data-key="{{ '1' if f.role == 'keys' or f.name == 'nomor_cpo' else '' }}" data-shown="{{ f.value if f.value is not none else '' }}">Fix</button>{% endif %}
+              data-key="{{ '1' if f.role == 'keys' or f.name == 'nomor_cpo' else '' }}" data-shown="{{ f.value if f.value is not none else '' }}">Perbaiki</button>{% endif %}
           </div>
         </div>
         {% endfor %}
@@ -89,14 +89,14 @@
 
       {% if fixv.rows %}
       <details class="fx-rows" {{ 'open' if fix and fix.startswith('lines[') }}>
-        <summary>Table rows · {{ fixv.rows|length }}</summary>
+        <summary>Baris tabel · {{ fixv.rows|length }}</summary>
         {% for r in fixv.rows %}
         <div class="fx-rowitem" data-f="row{{ r.i }}" data-copied="{{ r.copied|tojson|forceescape }}">
-          <div class="small"><b>Row {{ r.i }}</b> <span class="muted">{{ (r.text or '')[:90] }}</span></div>
+          <div class="small"><b>Baris {{ r.i }}</b> <span class="muted">{{ (r.text or '')[:90] }}</span></div>
           <div class="fx-cells">{% for col, val, byp in r.cells %}
-            <span class="fx-cell{{ ' person' if byp }}"><span class="muted">{{ col|replace('_', ' ') }}</span> <b class="mono">{{ val if val not in (none, '') else '—' }}</b>
+            <span class="fx-cell{{ ' person' if byp }}"><span class="muted">{{ COL.get(col, col|replace('_', ' ')) }}</span> <b class="mono">{{ val|nilai }}</b>
               {% if fixv.ready %}<button type="button" class="btn tiny js-fx" data-f="lines[{{ r.key }}].{{ col }}" data-row="{{ r.key }}" data-hl="row{{ r.i }}"
-                data-label="Row {{ r.i }} · {{ col|replace('_', ' ') }}" data-shown="{{ val if val is not none else '' }}">Fix</button>{% endif %}</span>
+                data-label="Baris {{ r.i }} · {{ COL.get(col, col|replace('_', ' ')) }}" data-shown="{{ val if val is not none else '' }}">Perbaiki</button>{% endif %}</span>
           {% endfor %}</div>
         </div>
         {% endfor %}
@@ -160,7 +160,7 @@
     form.hidden = false; mode = 'pick'; picked = []; sheet.classList.add('picking'); sheet.classList.remove('dragging');
     form.field.value = b.dataset.f; form.row_key.value = b.dataset.row || ''; form.shown.value = b.dataset.shown || '';
     form.region.value = ''; form.value.value = ''; $('fx-pick').hidden = true; draw([0, 0], [0, 0]);
-    $('fx-what').textContent = b.dataset.label; $('fx-now').textContent = b.dataset.shown || 'nothing';
+    $('fx-what').textContent = b.dataset.label; $('fx-now').textContent = b.dataset.shown || 'kosong';
     $('fx-desc').textContent = b.dataset.desc || ''; form.dataset.key = b.dataset.key || ''; $('fx-key').hidden = true;
     $('fx-s1').className = 'on'; $('fx-s2').className = '';
     svg.querySelectorAll('.picked, .hot-keep').forEach(function (r) { r.classList.remove('picked', 'hot-keep'); });
@@ -175,7 +175,7 @@
           chips.querySelectorAll('.fx-chip').forEach(function (y) { y.classList.remove('on'); }); x.classList.add('on');
           var r = svg.querySelector('rect[data-f="' + b.dataset.hl + '"]');
           took(c, '', r ? union([r]) : []); $('fx-tess').className = 'fx-tess small muted';
-          $('fx-tess').textContent = 'From the AI OCR\'s copy of this row. Check it against the zoomed row on the paper.';
+          $('fx-tess').textContent = 'Dari salinan AI untuk baris ini. Cocokkan dengan baris yang diperbesar di kertas.';
         });
         chips.appendChild(x);
       });
@@ -195,10 +195,10 @@
     form.value.value = text; form.region.value = (region || []).join(',');
     $('fx-big').textContent = text; $('fx-pick').hidden = false;
     var t = $('fx-tess'), f = function (s) { return (s || '').toUpperCase().replace(/[^0-9A-Z]/g, ''); };
-    if (!tess) { t.className = 'fx-tess small muted'; t.textContent = 'Tesseract read nothing here: check the value against the paper.'; }
+    if (!tess) { t.className = 'fx-tess small muted'; t.textContent = 'Pembaca teks (Tesseract) tidak membaca apa pun di sini: cocokkan nilainya dengan kertas.'; }
     else if (f(tess) === f(text) || tess.split(/[\s|]+/).some(function (w) { return f(w) && f(w) === f(text); })) {
-      t.className = 'fx-tess small agree'; t.textContent = '✓ Tesseract reads the same: ' + tess; }
-    else { t.className = 'fx-tess small differ'; t.textContent = '⚠ Tesseract reads ' + tess + ': look at the paper, and correct the value if needed.'; }
+      t.className = 'fx-tess small agree'; t.textContent = '✓ Pembaca teks (Tesseract) membaca sama: ' + tess; }
+    else { t.className = 'fx-tess small differ'; t.textContent = '⚠ Pembaca teks (Tesseract) membaca ' + tess + ': lihat kertasnya, dan perbaiki nilainya bila perlu.'; }
     $('fx-s1').className = 'done'; $('fx-s2').className = 'on'; ready(); form.value.focus(); keycheck();
   }
   // a value that links the page to its order: does Satellite know it? (a warning, never a refusal)
@@ -210,7 +210,7 @@
         .then(function (r) { return r.json(); }).then(function (j) {
           if (j.known === null || j.known === undefined) { k.hidden = true; return; }
           k.hidden = false; k.className = 'fx-key small ' + (j.known ? 'agree' : 'differ');
-          k.textContent = (j.known ? '✓ Satellite knows it: ' : '⚠ ') + j.says;
+          k.textContent = (j.known ? '✓ Ada di Satellite: ' : '⚠ ') + j.says;
           $('fx-pick').hidden = false; if (!$('fx-big').textContent) $('fx-big').textContent = form.value.value;
         });
     }, 250);
@@ -253,7 +253,7 @@
   });
 
   $('fx-none').addEventListener('click', function () {
-    form.value.value = '(not printed)'; form.region.value = ''; $('fx-big').textContent = 'Not printed on this page';
+    form.value.value = '(not printed)'; form.region.value = ''; $('fx-big').textContent = 'Tidak tercetak di halaman ini';
     $('fx-tess').textContent = ''; $('fx-pick').hidden = false; $('fx-s1').className = 'done'; $('fx-s2').className = 'on'; ready();
   });
   $('fx-cancel').addEventListener('click', function () {

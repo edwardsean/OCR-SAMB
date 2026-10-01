@@ -1,18 +1,17 @@
-<table class="grid">
-  <thead><tr><th>Batch</th><th>File</th><th>Pages</th><th>Rendered</th><th>Read</th><th>Status</th><th>Received</th></tr></thead>
+<table class="grid scantable">
+  <thead><tr><th>File</th><th>Diterima</th><th>Halaman dibaca</th><th>Status</th><th></th></tr></thead>
   <tbody>
   {% for b in batches %}
     <tr>
-      <td><a class="mono" href="/batches/{{ b.id }}">{{ b.id }}</a></td>
-      <td class="mono">{{ b.file_name }}</td>
-      <td>{{ b.page_total }}</td>
-      <td>{{ b.pages_rendered }}</td>
-      <td>{{ b.page_done }}</td>
-      <td><span class="pill s-{{ b.status }}">{{ b.status }}</span></td>
-      <td class="muted">{{ b.received_at.strftime('%d %b %H:%M') }}</td>
+      <td><a href="/batches/{{ b.id }}"><b>{{ b.file_name }}</b></a></td>
+      <td class="muted">{{ b.received_at|tgl }}</td>
+      <td class="prog"><div class="bar"><i style="width: {{ ((100 * b.page_done / b.page_total) if b.page_total else 0)|round|int }}%"></i></div>
+        <span class="small muted">{{ b.page_done }} dari {{ b.page_total }}</span></td>
+      <td><span class="pill s-{{ b.status }}">{{ BATCH.get(b.status, b.status) }}</span></td>
+      <td><a href="/batches/{{ b.id }}">Buka ›</a></td>
     </tr>
   {% else %}
-    <tr><td colspan="7" class="muted">No batches yet.</td></tr>
+    <tr><td colspan="5" class="muted">Belum ada scan. <a href="/upload">Unggah scan pertama</a>.</td></tr>
   {% endfor %}
   </tbody>
 </table>

@@ -20,11 +20,14 @@ import re
 
 from common import db, health, intake, keys as keymod, queue as q, storage, verify
 from common.fields import DOCS, decides
+from ui import bahasa
 
 HERE = os.path.dirname(__file__)
 app = FastAPI(title="SAMB OCR — inspection UI")
 app.mount("/static", StaticFiles(directory=os.path.join(HERE, "static")), name="static")
 templates = Jinja2Templates(directory=os.path.join(HERE, "templates"))
+templates.env.filters.update(bahasa.FILTERS)       # Indonesian numbers and dates on every screen
+templates.env.globals.update(bahasa.GLOBALS)
 
 
 def static_v(name):
@@ -56,6 +59,14 @@ TABS = [  # (phase, path, label)
 ]
 if VF:
     TABS[4:4] = [(5, "/context", "Jev context"), (5, "/knowledge", "Knowledge"), (5, "/compare", "Compare v1")]
+# The top bar (the user, 2026-10-01): the screens Finance works in, in the order of the work, in Indonesian; the
+# screens for building the system sit under "Teknis". (path, label, the count shown beside it)
+NAV = [("/", "Beranda", None), ("/upload", "Unggah scan", None), ("/review", "Periksa order", "needs_you"),
+       ("/label", "Jenis halaman", "unsure_left"), ("/bundles", "Berkas per SOR", None),
+       ("/batches", "Riwayat scan", None)]
+TECH = [("/status", "Status sistem"), ("/fields", "Daftar field"), ("/labels", "Semua label")]
+if VF:
+    TECH[1:1] = [("/context", "Konteks Jev"), ("/knowledge", "Pengetahuan AI"), ("/compare", "Bandingkan dengan v1")]
 
 EXPECTED_TABLES = 20      # 19 from the base schema + staging.type_label (006)
 if VF:
@@ -164,8 +175,21 @@ def _model_usage():
 
 
 def ctx(request, **kw):
-    return {"request": request, "tabs": TABS, "built": PHASE_BUILT, "path": request.url.path,
-            "needs_you": _needs_you(), "vf": VF, **kw}
+    path = request.url.path
+    return {"request": request, "tabs": TABS, "nav": NAV, "tech": TECH, "built": PHASE_BUILT, "path": path,
+            "tech_on": any(path == p or path.startswith(p + "/") for p, _ in TECH) or path.startswith("/trial"),
+            "needs_you": _needs_you(), "unsure_left": _unsure_left(), "vf": VF, **kw}
+
+
+def _unsure_left():
+    """Pages whose type the machine couldn't decide and nobody has chosen yet (the Jenis halaman tab's count)."""
+    try:
+        with db.connect() as c:
+            return c.execute("""SELECT count(*) AS n FROM staging.page p WHERE p.type_status = 'unsure'
+                                   AND NOT EXISTS (SELECT 1 FROM staging.type_label l
+                                                    WHERE l.batch_id = p.batch_id AND l.page_no = p.page_no)""").fetchone()["n"]
+    except Exception:                    # the database is down: no count, never an error
+        return 0
 
 
 def _needs_you():
@@ -180,7 +204,51 @@ def _needs_you():
         return 0
 
 
+def home_view():
+    """Beranda: what needs a person now, over every scan, and how each recent scan is doing. One row per scan:
+    pages read, pages waiting for their type, documents waiting for a number, and its orders by status."""
+    with db.connect() as c:
+        scans = [dict(r) for r in c.execute("""
+            SELECT s.id, s.file_name, s.page_total, s.pages_rendered, s.page_done, s.status, s.received_at,
+                   (SELECT count(*) FROM staging.page p WHERE p.batch_id = s.id AND p.type_status = 'unsure'
+                       AND NOT EXISTS (SELECT 1 FROM staging.type_label l
+                                        WHERE l.batch_id = p.batch_id AND l.page_no = p.page_no)) AS unsure,
+                   (SELECT count(*) FROM staging.page p WHERE p.batch_id = s.id AND p.outcome = 'waiting_ai') AS waiting_ai,
+                   (SELECT count(*) FROM staging.document d WHERE d.batch_id = s.id AND NOT EXISTS
+                       (SELECT 1 FROM staging.bundle_document bd WHERE bd.document_id = d.id)) AS held
+              FROM staging.scan_batch s ORDER BY s.received_at DESC LIMIT 12""")]
+        orders = {}
+        for r in c.execute("""SELECT d.batch_id, b.status::text AS status, count(DISTINCT b.id) AS n
+                                FROM staging.bundle b JOIN staging.bundle_document bd ON bd.bundle_id = b.id
+                                JOIN staging.document d ON d.id = bd.document_id GROUP BY 1, 2"""):
+            orders.setdefault(r["batch_id"], {})[r["status"]] = r["n"]
+    for s in scans:
+        o = orders.get(s["id"], {})
+        s.update(need=o.get("needs_review", 0), waiting=o.get("grouping", 0),
+                 ready=o.get("auto_ok", 0) + o.get("reviewed", 0), published=o.get("published", 0),
+                 orders=sum(o.values()))
+
+    def first(k):                       # the most recent scan where this kind of work waits: where its button goes
+        return next((s["id"] for s in scans if s[k]), None)
+    todo = {k: {"n": sum(s[k] for s in scans), "batch": first(k)} for k in ("need", "unsure", "ready", "held")}
+    return {"scans": scans, "todo": todo, "busy": [s for s in scans if s["status"] in ("splitting", "queued", "reading")
+                                                    or s["waiting_ai"] or s["waiting"]]}
+
+
 @app.get("/", response_class=HTMLResponse)
+def page_home(request: Request):
+    return templates.TemplateResponse("home.html", ctx(request, h=home_view()))
+
+
+@app.get("/partials/health", response_class=HTMLResponse)
+def partial_health(request: Request):
+    """Beranda's one line about the system (loaded after the page: probing every service takes a moment)."""
+    s = status()
+    bad = [r["name"] for r in s["services"] if not r["ok"]]
+    return templates.TemplateResponse("_health.html", ctx(request, bad=bad, n=len(s["services"])))
+
+
+@app.get("/status", response_class=HTMLResponse)
 def page_status(request: Request):
     return templates.TemplateResponse("status.html", ctx(request, s=status()))
 
@@ -218,7 +286,7 @@ async def do_upload(request: Request, file: UploadFile = File(...)):
     data = await file.read()
     if not data.startswith(b"%PDF"):
         return templates.TemplateResponse("upload.html", ctx(request, batches=_recent_batches(),
-                                          error="That file is not a PDF.", dup=None), status_code=400)
+                                          error="File itu bukan PDF. Pilih file PDF hasil scan.", dup=None), status_code=400)
     sha = hashlib.sha256(data).hexdigest()
     batch_id = intake.batch_id_for(sha)
     with db.connect() as c:
@@ -237,8 +305,9 @@ async def do_upload(request: Request, file: UploadFile = File(...)):
         r.raise_for_status()
     except Exception as e:
         return templates.TemplateResponse("upload.html", ctx(request, batches=_recent_batches(), dup=None,
-            error=f"Stored in MinIO, but n8n did not accept it ({type(e).__name__}: {e}). "
-                  f"Is the intake workflow published? Run {'scripts/n8n-setup-vf.sh' if VF else 'scripts/n8n-setup.sh'}."),
+            error="File sudah tersimpan, tetapi belum bisa diproses: layanan penerima (n8n) tidak menjawab. "
+                  "Hubungi tim IT dan sebutkan pesan ini.",
+            error_detail=f"{type(e).__name__}: {e} · run {'scripts/n8n-setup-vf.sh' if VF else 'scripts/n8n-setup.sh'}"),
             status_code=502)
     return RedirectResponse(f"/batches/{batch_id}", status_code=303)
 
@@ -494,20 +563,24 @@ def phase3_checks(batch_id):
 
 # ---------------------------------------------------------------- labelling (learning from corrections)
 
-LABEL_TYPES = [("FP", "Faktur Penjualan", "SAMB's own sales invoice"),
-               ("TTG", "Tanda Terima", "customer's receipt of goods, any name"),
-               ("PO", "Purchase Order", "customer's order to SAMB, incl. Surat Pesanan"),
-               ("SJ", "Surat Jalan", "delivery note"),
-               ("FPJ", "Faktur Pajak", "tax invoice"),
-               ("PEL", "Pelunasan", "payment / remittance"),
-               ("CONTINUATION", "Continuation", "later page of the document before it, no title of its own"),
-               ("OTHER", "Other", "none of these, or unreadable")]
+LABEL_TYPES = bahasa.LABEL_TYPES       # (key stored, name, what it is): the names are said in Indonesian
 EXAM_SHARE = 0.2
 
 
 def _latest_batch():
     with db.connect() as c:
         r = c.execute("SELECT id FROM staging.scan_batch ORDER BY received_at DESC LIMIT 1").fetchone()
+    return r and r["id"]
+
+
+def _batch_with_unsure():
+    """The most recent scan that still has a page waiting for its type: where the Label screen opens by itself."""
+    with db.connect() as c:
+        r = c.execute("""SELECT s.id FROM staging.scan_batch s WHERE EXISTS (
+                             SELECT 1 FROM staging.page p WHERE p.batch_id = s.id AND p.type_status = 'unsure'
+                                AND NOT EXISTS (SELECT 1 FROM staging.type_label l
+                                                 WHERE l.batch_id = p.batch_id AND l.page_no = p.page_no))
+                          ORDER BY s.received_at DESC LIMIT 1""").fetchone()
     return r and r["id"]
 
 
@@ -534,7 +607,7 @@ def _customers():
 @app.get("/label", response_class=HTMLResponse)
 def page_label(request: Request, batch: str | None = None, page: int | None = None, saved: int | None = None,
                after: int = 0):
-    batch = batch or _latest_batch()
+    batch = batch or _batch_with_unsure() or _latest_batch()
     if not batch:
         return templates.TemplateResponse("label.html", ctx(request, batch=None))
     with db.connect() as c:
@@ -609,30 +682,43 @@ def page_batches(request: Request):
     return templates.TemplateResponse("batches.html", ctx(request, batches=_recent_batches(100)))
 
 
+def _batch_orders(batch_id):
+    """A scan's orders by status, its documents waiting for a number, and its pages waiting for their type: the scan
+    page's summary in plain words."""
+    with db.connect() as c:
+        o = {r["status"]: r["n"] for r in c.execute("""
+            SELECT b.status::text AS status, count(DISTINCT b.id) AS n FROM staging.bundle b
+              JOIN staging.bundle_document bd ON bd.bundle_id = b.id JOIN staging.document d ON d.id = bd.document_id
+             WHERE d.batch_id = %s GROUP BY 1""", (batch_id,))}
+        held = c.execute("""SELECT count(*) AS n FROM staging.document d WHERE d.batch_id = %s AND NOT EXISTS
+                               (SELECT 1 FROM staging.bundle_document bd WHERE bd.document_id = d.id)""",
+                         (batch_id,)).fetchone()["n"]
+    return {"total": sum(o.values()), "need": o.get("needs_review", 0), "waiting": o.get("grouping", 0),
+            "ready": o.get("auto_ok", 0) + o.get("reviewed", 0), "published": o.get("published", 0), "held": held}
+
+
 @app.get("/batches/{batch_id}", response_class=HTMLResponse)
 def page_batch(request: Request, batch_id: str):
     b, pages = _batch(batch_id)
     if VF:
         return templates.TemplateResponse("batch.html", ctx(request, batch_id=batch_id, b=b, pages=pages, depth=None,
-                                          depths=_depths(), vf=vf_checks(batch_id), p6=phase6_checks(batch_id),
-                                          p7=phase7_cached(batch_id),
+                                          depths=_depths(), orders=_batch_orders(batch_id), vf=vf_checks(batch_id),
+                                          p6=phase6_checks(batch_id), p7=phase7_cached(batch_id),
                                           flt=request.query_params.get("flag"), fc=_flag_counts(pages)))
     return templates.TemplateResponse("batch.html", ctx(request, batch_id=batch_id, b=b, pages=pages, depth=None,
-                                      depths=_depths(), p2=phase2_checks(batch_id), p3=phase3_checks(batch_id),
-                                      p4=phase4_checks(batch_id), p5=phase5_checks(batch_id),
+                                      depths=_depths(), orders=_batch_orders(batch_id), p2=phase2_checks(batch_id),
+                                      p3=phase3_checks(batch_id), p4=phase4_checks(batch_id),
+                                      p5=phase5_checks(batch_id),
                                       flt=request.query_params.get("flag"), fc=_flag_counts(pages)))
 
 
 @app.get("/partials/batch/{batch_id}/stats", response_class=HTMLResponse)
 def partial_batch_stats(request: Request, batch_id: str):
+    """The scan's progress, asked every few seconds: plain steps and its orders. The technical checks are drawn once
+    with the page (batch.html), so an open fold isn't closed by the refresh."""
     b, pages = _batch(batch_id)
-    if VF:
-        return templates.TemplateResponse("_batch_stats.html", ctx(request, batch_id=batch_id, b=b, pages=pages,
-                                          depth=None, depths=_depths(), vf=vf_checks(batch_id),
-                                          p6=phase6_checks(batch_id), p7=phase7_cached(batch_id)))
-    return templates.TemplateResponse("_batch_stats.html", ctx(request, batch_id=batch_id, b=b, pages=pages, depth=None,
-                                      depths=_depths(), p2=phase2_checks(batch_id), p3=phase3_checks(batch_id),
-                                      p4=phase4_checks(batch_id), p5=phase5_checks(batch_id)))
+    return templates.TemplateResponse("_batch_stats.html", ctx(request, batch_id=batch_id, b=b, pages=pages,
+                                      depths=_depths(), orders=_batch_orders(batch_id)))
 
 
 @app.get("/partials/batch/{batch_id}/grid", response_class=HTMLResponse)
@@ -923,8 +1009,7 @@ def page_page(request: Request, batch_id: str, page_no: int, fix: str | None = N
 
 
 ROLE_ORDER = {"keys": 0, "page": 1, "bundle": 2, "support": 3, None: 4}
-ROLE_SAYS = {"keys": "links the page to its order", "page": "the invoice's own amount",
-             "bundle": "checked against Satellite", "support": "Satellite settles it", None: "kept as read"}
+ROLE_SAYS = bahasa.ROLE          # what each value does, in Indonesian (keys, page, bundle, support, kept as read)
 
 
 def _safe_back(back):
@@ -951,7 +1036,8 @@ def _fix_view(c, p, pc):
         if f.get("source") == "check":
             continue
         name, cur, ck = f["name"], (p["fields"].get(f["name"]) or {}), checks.get(f["name"]) or {}
-        fields.append({"name": name, "label": f.get("label") or name, "desc": f.get("desc"), "value": cur.get("value"),
+        fields.append({"name": name, "label": bahasa.field(name, t), "desc": bahasa.desc(name, t) or f.get("desc"),
+                       "value": cur.get("value"),
                        "box": (fa.get(canon.get(name, name)) or {}).get("box"),
                        "verdict": ck.get("verdict") or ("empty" if cur.get("value") in (None, "") else "check"),
                        "by": ck.get("by"), "role": roles.get(name), "says": ROLE_SAYS[roles.get(name)],
@@ -1026,11 +1112,11 @@ def api_keycheck(field: str, value: str):
             sor = v if v.upper().startswith("SOR") else "SOR" + re.sub(r"\D", "", v)
             r = c.execute("SELECT sor_no, customer_name FROM satellite.sor WHERE sor_no=%s", (sor.upper(),)).fetchone()
             return {"known": bool(r), "says": f"{r['sor_no']} · {r['customer_name']}" if r else
-                    f"no order in Satellite has the SOR {sor.upper()}: this field is an SOR number, not a PO number"}
+                    f"tidak ada order di Satellite dengan SOR {sor.upper()}: isian ini nomor SOR, bukan nomor PO"}
         if field in ("purchase_order_no", "nomor_cpo"):
             rs = c.execute("SELECT sor_no, customer_name FROM satellite.sor WHERE cpo_no=%s LIMIT 3", (v,)).fetchall()
             return {"known": bool(rs), "says": (" · ".join(f"{r['sor_no']} ({r['customer_name']})" for r in rs)
-                                               if rs else f"no order in Satellite has the PO number {v}")}
+                                               if rs else f"tidak ada order di Satellite dengan nomor PO {v}")}
     return {"known": None}
 
 
@@ -1582,8 +1668,8 @@ def partial_lesson(request: Request, batch: str, page: int, field: str):
     except Exception as e:                 # before migration 023, or the database is down: say so, never an error
         lp = {"steps": [], "headline": f"Saved. (The lesson's progress can't be shown: {type(e).__name__}.)",
               "tip": None, "final": True}
-    return templates.TemplateResponse("_lesson_status.html", ctx(request, lp=lp, batch=batch, page=page,
-                                                                  field=field))
+    return templates.TemplateResponse("_lesson_status.html", ctx(request, lp=bahasa.lesson(lp), batch=batch,
+                                                                  page=page, field=field))
 
 
 def teacher_now(c):
@@ -1614,8 +1700,8 @@ def partial_teacher():
         line = None
     if not line:
         return HTMLResponse("")
-    return HTMLResponse(f'<a class="teacher-badge" href="/knowledge" title="the teacher learns from people\'s fixes">'
-                        f'{html.escape(line)}</a>')
+    return HTMLResponse(f'<a class="teacher-badge" href="/knowledge" title="Guru AI belajar dari perbaikan yang Anda '
+                        f'buat">{html.escape(bahasa.teacher(line))}</a>')
 
 
 KNOWLEDGE_TYPES = ("TTG", "PO", "FP")
@@ -1870,11 +1956,11 @@ def bundles_view(batch):
         d["pages"] = list(range(d["page_from"], d["page_to"] + 1))
         if d["sor_no"]:
             b = bundles.setdefault(d["sor_no"], {"sor": d["sor_no"], "hold": d["bundle_hold"], "folder": d["folder"],
-                                                 "why": group.WHY.get(d["bundle_hold"]), "documents": [],
+                                                 "why": _why(d["bundle_hold"]), "documents": [],
                                                  "customer": (sos.get(d["sor_no"]) or {}).get("customer_name")})
             b["documents"].append(d)
         else:
-            d["why"] = group.WHY.get(d["hold_reason"], d["hold_reason"])
+            d["why"] = _why(d["hold_reason"])
             field = CONFIRM_FIELD.get(d["type"])
             f = ((pages.get(d["page_from"]) or {}).get("fields") or {}).get(field) or {}
             d["confirm"] = {"field": field, "read": f.get("value"),
@@ -1882,15 +1968,20 @@ def bundles_view(batch):
                             "done": confirmed.get((d["page_from"], field))} if field else None
             held.append(d)
     grouped = {n for d in docs for n in d["pages"]}
-    unplaced = [{"page": n, "type": p["doc_type"], "why": group.WHY["not_read" if p["type_status"] is None else "type_unknown"]}
+    unplaced = [{"page": n, "type": p["doc_type"], "why": _why("not_read" if p["type_status"] is None else "type_unknown")}
                 for n, p in sorted(pages.items()) if n not in grouped]
     ordered = sorted(bundles.values(), key=lambda b: (bool(b["hold"]), min(n for d in b["documents"] for n in d["pages"])))
     return {"bundles": ordered, "held": held, "unplaced": unplaced,
             "complete": sum(1 for b in ordered if not b["hold"]), "prefix": os.environ.get("STORAGE_PREFIX", "")}
 
 
-KIND = {"FP": "Faktur Penjualan", "TTG": "Tanda Terima", "PO": "Purchase Order", "CONTINUATION": "Continuation page",
-        "FPJ": "Faktur Pajak", "PEL": "Pelunasan", "SJ": "Surat Jalan", "OTHER": "Other document"}
+def _why(key):
+    """Why grouping holds something, in Indonesian (grouping's own words for a reason added later)."""
+    from grouper import group
+    return bahasa.HOLD.get(key) or group.WHY.get(key, key)
+
+
+KIND = bahasa.DOC                 # document type -> its name for people
 TAG_COLORS = ["#ff5f57", "#febc2e", "#28c840", "#0a84ff", "#bf5af2", "#ff9f0a", "#8e8e93"]   # Finder's tag colours
 PAGE_FILE = re.compile(r"^(?P<batch>.+)-p(?P<n>\d{3})-(?P<type>[A-Z]+|unread)\.png$")
 
@@ -1907,7 +1998,7 @@ def finder_view(batch, v):
     for o in c.list_objects(bucket, prefix=root + "/", recursive=True):
         if "/_held/" not in o.object_name:
             objs.setdefault(o.object_name.rsplit("/", 1)[0], []).append(o)
-    customers = sorted({b["customer"] or "no customer" for b in v["bundles"] if not b["hold"]})
+    customers = sorted({b["customer"] or "tanpa pelanggan" for b in v["bundles"] if not b["hold"]})
     tags = [{"name": name, "color": TAG_COLORS[i % len(TAG_COLORS)]} for i, name in enumerate(customers)]
     color = {t["name"]: t["color"] for t in tags}
     folders = []
@@ -1918,7 +2009,7 @@ def finder_view(batch, v):
         for o in sorted(objs.get(path, []), key=lambda o: o.object_name):
             latest = max(latest, o.last_modified) if latest else o.last_modified
             name = o.object_name.rsplit("/", 1)[1]
-            f = {"name": name, "size": o.size, "modified": o.last_modified.astimezone(WIB).strftime("%-d %b %Y %H:%M")}
+            f = {"name": name, "size": o.size, "modified": bahasa.tgl(o.last_modified)}
             m = PAGE_FILE.match(name)
             if m:
                 n, t = int(m["n"]), m["type"]
@@ -1936,10 +2027,10 @@ def finder_view(batch, v):
                     f.update(kind="manifest", content={"error": str(e)})
             files.append(f)
         types = [d["type"] for d in sorted(b["documents"], key=lambda d: d["pages"][0])]
-        folders.append({"name": b["sor"], "customer": b["customer"] or "no customer",
-                        "tag": color[b["customer"] or "no customer"], "path": path, "files": files,
-                        "summary": " + ".join(types),
-                        "modified": latest.astimezone(WIB).strftime("%-d %b %Y %H:%M") if latest else ""})
+        folders.append({"name": b["sor"], "customer": b["customer"] or "tanpa pelanggan",
+                        "tag": color[b["customer"] or "tanpa pelanggan"], "path": path, "files": files,
+                        "summary": " + ".join(bahasa.DOC_SHORT.get(t, t) for t in types),
+                        "modified": bahasa.tgl(latest) if latest else ""})
     return {"root": root, "folders": folders, "tags": tags}
 
 
@@ -1951,7 +2042,7 @@ def page_bundles(request: Request, batch: str | None = None):
         finder = finder_view(batch, d) if d else None
     except Exception as e:                       # storage down: the held section still works
         finder = {"root": "bundles", "folders": [], "tags": [], "error": str(e)}
-    return templates.TemplateResponse("bundles.html", ctx(request, batch=batch, d=d, finder=finder,
+    return templates.TemplateResponse("bundles.html", ctx(request, batch=batch, d=d, finder=finder, scans=_recent_batches(),
                                                           p6=phase6_checks(batch) if batch else None))
 
 
@@ -2014,7 +2105,7 @@ def review_list(batch):
         ds = docs.get(r["sor_no"]) or []
         kinds = []
         for d in ds:                                   # Invoice · PO ×4 · Receipt
-            name = {"FP": "Invoice", "PO": "PO", "TTG": "Receipt"}.get(d["t"], KIND.get(d["t"], d["t"]))
+            name = bahasa.DOC_SHORT.get(d["t"], KIND.get(d["t"], d["t"]))
             kinds.append(name)
         chips = [f"{k} ×{kinds.count(k)}" if kinds.count(k) > 1 else k for k in dict.fromkeys(kinds)]
         fp = next((d for d in ds if d["t"] == "FP"), ds[0] if ds else None)
@@ -2029,24 +2120,24 @@ def review_list(batch):
 def _issues(checks, reasons, customer):
     """A bundle's open problems as short chips for the Review list: (label, 'need' | 'wait')."""
     out = []
-    short = {"fp_po_total": "PO total ≠ SAMB's order", "dates": "Receipt date", "docs_complete": "A document is missing",
-             "store_named": "Another store is named", "sor_in_satellite": "Not in Satellite"}
+    short = {"fp_po_total": "Total PO ≠ order SAMB", "dates": "Tanggal terima", "docs_complete": "Ada dokumen kurang",
+             "store_named": "Nama toko berbeda", "sor_in_satellite": "Tidak ada di Satellite"}
     for k, c in checks.items():
         st = c.get("status")
         if st not in ("fail", "unknown", "waiting"):
             continue
         if k == "received":
-            out.append(("Waiting for the goods receipt", "wait") if st == "waiting" else
-                       ("Receipt quantities" if st == "fail" else "Receipt rows to pair", "need"))
+            out.append(("Menunggu data terima barang (CGR)", "wait") if st == "waiting" else
+                       ("Qty tanda terima" if st == "fail" else "Baris tanda terima perlu dipasangkan", "need"))
         elif k == "calibration":
-            out.append((f"First look: {' '.join(str(customer or 'customer').split()[:2])}", "need"))
+            out.append((f"Pelanggan baru: {' '.join(str(customer or 'pelanggan').split()[:2])}", "need"))
         elif k in short:
             out.append((short[k], "wait" if st == "waiting" or c.get("ask") else "need"))
     for x in reasons:
         if "wait for the AI OCR" in x:
-            out.append(("Waiting for the AI", "wait"))
+            out.append(("Menunggu AI", "wait"))
         elif "wait for a person" in x:
-            out.append(("A page to confirm", "need"))
+            out.append(("Ada halaman untuk dipastikan", "need"))
     return out
 
 
@@ -2083,18 +2174,18 @@ def review_view(batch, sor):
     def suggest(t, name):
         out = []
         if t == "TTG" and name == "posting_date" and so and so.get("cgr_date"):
-            out.append((str(so["cgr_date"]), "Satellite's goods receipt date"))
+            out.append((str(so["cgr_date"]), "tanggal terima barang di Satellite (CGR)"))
         if name == "purchase_order_no" and so and so.get("cpo_no"):
-            out.append((so["cpo_no"], "the SO's Nomor CPO"))
+            out.append((so["cpo_no"], "Nomor CPO di SO"))
         if t == "TTG" and name == "no_ref":
-            out.append((sor, "this bundle's SOR"))
+            out.append((sor, "SOR order ini"))
         # the order side's reference is the SO as ordered (what the FP printed), never the FP page's reading; the
         # delivery side's is what Satellite received (verification redesign, S2)
         refs = []
         if t == "PO" and order:
-            refs = [(order.get("total"), "the order's total, with tax (Satellite)"),
-                    (order.get("dpp"), "the order's DPP: a total before tax (Satellite)")] if name == "total" else \
-                [(order.get("ppn"), "the order's PPN (Satellite)")] if name == "ppn" else []
+            refs = [(order.get("total"), "total order, termasuk pajak (Satellite)"),
+                    (order.get("dpp"), "DPP order: total sebelum pajak (Satellite)")] if name == "total" else \
+                [(order.get("ppn"), "PPN order (Satellite)")] if name == "ppn" else []
 
         return out + [(f"{v:.2f}", why) for v, why in refs if v is not None]
 
@@ -2104,8 +2195,8 @@ def review_view(batch, sor):
         f = next((x for x in DOCS.get(t, {}).get("header", []) if x["name"] == name), {"label": name})
         v = ((p.get("checks") or {}).get("header") or {}).get(name) or {}
         canon = {b: a for a, b in TYPE_MAP.get(t, {}).items()}
-        return {"name": name, "label": f["label"], "value": ((p.get("fields") or {}).get(name) or {}).get("value"),
-                "why": v.get("why") or ("backed" if v.get("verdict") == "ok" else "not read"), "ok": v.get("verdict") == "ok",
+        return {"name": name, "label": bahasa.field(name, t), "value": ((p.get("fields") or {}).get(name) or {}).get("value"),
+                "why": v.get("why") or ("didukung" if v.get("verdict") == "ok" else "tidak terbaca"), "ok": v.get("verdict") == "ok",
                 "asked": canon.get(name) in vf.asked_of(p.get("second_look")), "suggest": suggest(t, name)}
 
     documents = []
@@ -2131,21 +2222,21 @@ def review_view(batch, sor):
                 if t == "FP":                            # SAMB's own invoice prints the SO's lines (7b checked them)
                     s = code_line.get(verify.flat(r.get("kode_material")))
                     m = {"status": "matched" if s else "none", "how": "satellite",
-                         "why": "SAMB's invoice prints the SO's own lines; checked against the record"}
+                         "why": "faktur SAMB mencetak baris SO itu sendiri; dicek terhadap datanya"}
                 def ok_cell(col):
                     return i < len(cells) and (cells[i].get(col) or {}).get("verdict") == "ok"
                 hints = {"qty": [], "unit_price": [], "discount": []}   # a quantity carries its unit: a bare 48 on a
                 if s is not None and t == "TTG" and s.get("cgr_qty") is not None:   # carton row was 48 cartons (S5)
-                    hints["qty"].append((f"{float(s['cgr_qty']):g} PCS", "pieces received, Satellite's CGR"))
+                    hints["qty"].append((f"{float(s['cgr_qty']):g} PCS", "pcs diterima, CGR Satellite"))
                 if s is not None and t == "PO":
-                    hints["qty"].append((f"{float(s['qty_pcs']):g} PCS", "pieces ordered, the SO"))
-                    hints["unit_price"] += [(f"{float(s['price_uom'] or 0):,.2f}", "the SO's price a carton"),
-                                            (f"{float(s['price_pcs'] or 0):,.2f}", "the SO's price a piece")]
+                    hints["qty"].append((f"{float(s['qty_pcs']):g} PCS", "pcs dipesan, di SO"))
+                    hints["unit_price"] += [(f"{float(s['price_uom'] or 0):,.2f}", "harga per karton di SO"),
+                                            (f"{float(s['price_pcs'] or 0):,.2f}", "harga per pcs di SO")]
                     pct = [f"{float(x['value']):.2f}%" for x in (s.get("discounts") or {}).values()
                            if x.get("type") == "percentage" and x.get("value")]
-                    hints["discount"].append((" / ".join(sorted(pct)) or "0", "the SO's discounts"))
-                label = {"qty": "received" if t == "TTG" else "ordered", "unit_price": "unit price",
-                         "discount": "discounts"}
+                    hints["discount"].append((" / ".join(sorted(pct)) or "0", "diskon di SO"))
+                label = {"qty": "qty diterima" if t == "TTG" else "qty dipesan", "unit_price": "harga satuan",
+                         "discount": "diskon"}
                 bonus = parsed[i]["bonus"] if i < len(parsed) else False
                 todo = [] if t == "FP" or bonus else [
                     {"col": col, "label": label[col], "read": r.get(col), "hints": hints[col]}
@@ -2164,8 +2255,10 @@ def review_view(batch, sor):
     strip = [{"page": n, "type": t, "kind": KIND.get(t, t), "first": n == ps[0],
               "thumb": f"/img/{pages[n]['thumb_upright_path']}" if (pages.get(n) or {}).get("thumb_upright_path") else None,
               "flag": n in flagged} for n0, t, ps in docs for n in ps]
-    passed = [crosscheck.LABEL.get(k, k) for k, c in checks.items() if c["status"] in ("pass", "accepted")]
-    return {"bundle": b, "sor": sor, "so": so, "lines": lines, "checks": checks, "labels": crosscheck.LABEL,
+    passed = [bahasa.CHECK.get(k) or crosscheck.LABEL.get(k, k) for k, c in checks.items()
+              if c["status"] in ("pass", "accepted")]
+    return {"bundle": b, "sor": sor, "so": so, "lines": lines, "checks": checks,
+            "labels": {**crosscheck.LABEL, **bahasa.CHECK},
             "reasons": (b["checks"] or {}).get("reasons") or [], "documents": documents, "can_approve": ok,
             "left": left, "accept_reasons": ACCEPT_REASONS, "none_reasons": NONE_REASONS, "open_items": items,
             "strip": strip, "passed": passed,
@@ -2178,7 +2271,7 @@ FIX_FIELDS = {"fp_po_total": ("PO", ("total", "ppn")), "dates": ("TTG", ("postin
 
 
 def _money(x):
-    return f"Rp {x:,.2f}" if isinstance(x, (int, float)) else "—"
+    return bahasa.rp(x) if isinstance(x, (int, float)) else "—"
 
 
 def _plain(k, c, refs=None):
@@ -2186,22 +2279,23 @@ def _plain(k, c, refs=None):
     gap = c.get("gap")
     if k == "fp_po_total":
         if gap is None:
-            return "The PO's total can't be compared with SAMB's order yet"
+            return "Total PO belum bisa dibandingkan dengan order SAMB"
         more = (c.get("po") or 0) > (c.get("fp") or 0)
-        return f"The PO asks {_money(gap)} {'more' if more else 'less'} than SAMB's order"
+        return f"Total PO {_money(gap)} {'lebih besar' if more else 'lebih kecil'} dari order SAMB"
     if k == "received":
         if c["status"] == "fail":
-            return "The receipt's quantities don't match what Satellite recorded as received"
-        return "The receipt's rows aren't all paired with SAMB's lines yet"
+            return "Qty di Tanda Terima tidak sama dengan barang diterima menurut Satellite"
+        return "Ada baris Tanda Terima yang belum dipasangkan dengan barang di order SAMB"
     if k == "dates":
-        return "The receipt's date doesn't fit Satellite's goods-receipt date"
+        return "Tanggal di Tanda Terima tidak sesuai dengan tanggal terima barang di Satellite"
     if k == "docs_complete":
-        return "A document is missing: " + (c.get("why") or "").replace("no ", "the ").replace(" in the bundle", "") \
-            .replace("TTG", "receipt (Tanda Terima)")
+        m = re.fullmatch(r"no (.+) in the bundle", c.get("why") or "")       # crosscheck: "no FP or TTG in the bundle"
+        missing = [bahasa.DOC.get(t, t) for t in m[1].split(" or ")] if m else []
+        return "Ada dokumen yang kurang" + (": " + ", ".join(missing) if missing else "")
     if k == "store_named":
-        return "A page names a different store of this customer"
+        return "Ada halaman yang menyebut toko lain milik pelanggan ini"
     if k == "sor_in_satellite":
-        return "This order isn't in Satellite"
+        return "Order ini tidak ada di Satellite"
     return None
 
 
@@ -2220,9 +2314,9 @@ def _open_items(batch, sor, docs, pages, checks, lines, pairs, entry, refs=None)
     for n, t, ps in docs:                                             # the pages that hold the bundle
         p = pages.get(n) or {}
         if p.get("outcome") == "held_unsure":
-            items.append({"kind": "label", "title": f"Page {n}: its type waits for a label", "page": n})
+            items.append({"kind": "label", "title": f"Halaman {n}: jenis dokumennya belum pasti", "page": n})
         elif p.get("outcome") == "waiting_ai":
-            items.append({"kind": "wait", "title": f"Page {n} waits for the AI OCR (its look-again)", "page": n})
+            items.append({"kind": "wait", "title": f"Halaman {n} menunggu AI membaca ulang", "page": n})
         elif p.get("outcome") == "needs_person":
             h = (p.get("checks") or {}).get("header") or {}
             keys = DECIDES.get(t, {}).get("keys", ())
@@ -2230,17 +2324,17 @@ def _open_items(batch, sor, docs, pages, checks, lines, pairs, entry, refs=None)
                 if keys and not any(ok(h.get(k)) for k in keys) else []
             hold += [f for f in dec(t, "page") if not ok(h.get(f))]
             hold += [f for f in dec(t, "support") if (h.get(f) or {}).get("conflict")]
-            items.append({"kind": "page", "title": f"Page {n} · {KIND.get(t, t)}: " + ", ".join(
-                entry(n, t, f)["label"] for f in hold) + " not settled", "page": n, "fields": [entry(n, t, f) for f in hold]})
+            items.append({"kind": "page", "title": f"Halaman {n} · {KIND.get(t, t)}: " + ", ".join(
+                entry(n, t, f)["label"] for f in hold) + " belum pasti", "page": n, "fields": [entry(n, t, f) for f in hold]})
     for k, c in checks.items():                                       # the bundle's checks that don't pass
         if c["status"] not in OPEN or k == "calibration":
             continue
-        item = {"kind": "check", "key": k, "title": crosscheck.LABEL.get(k, k), "plain": _plain(k, c, refs),
+        item = {"kind": "check", "key": k, "title": bahasa.CHECK.get(k) or crosscheck.LABEL.get(k, k), "plain": _plain(k, c, refs),
                 "status": c["status"], "why": c["why"],
                 "print": c.get("print"), "accept": c["status"] != "waiting" and not c.get("ask"),
                 "gap": c.get("gap"), "allow": c.get("allow"), "tolakan": c.get("tolakan") or [], "notes": [], "fix": []}
         if k == "fp_po_total" and c.get("po") is not None:
-            item["pair"] = [("the PO", c["po"]), ("SAMB's order (Satellite, as ordered)", c.get("fp"))]
+            item["pair"] = [("Total di PO", c["po"]), ("Order SAMB (Satellite, saat dipesan)", c.get("fp"))]
         if k == "received" and c.get("lines"):          # quantities, line by line (the mentors, 2026-09-28)
             item["qty_lines"] = c["lines"]
             item["qty_bad"] = [x for x in c["lines"] if x["receipt"] is None or abs(x["receipt"] - x["satellite"]) >= 0.001]
@@ -2312,7 +2406,7 @@ def _calibration_view(so, checks):
             for k in ("fp_po_total", "received"):
                 g = ((((r["checks"] or {}).get("checks") or {}).get(k)) or {}).get("gap")
                 if g is not None:
-                    gaps.append({"sor": r["sor_no"], "check": crosscheck.LABEL[k], "gap": g})
+                    gaps.append({"sor": r["sor_no"], "check": bahasa.CHECK.get(k) or crosscheck.LABEL[k], "gap": g})
     worst = max((g["gap"] for g in gaps), default=None)
     return {"chain": chain, "name": sat.chain_name(so), "asks": asks, "gaps": sorted(gaps, key=lambda g: -g["gap"]),
             "suggest": crosscheck.allowance_for(worst), "worst": worst, "steps": crosscheck.STEPS}
@@ -2323,8 +2417,12 @@ def page_review(request: Request, batch: str | None = None, published: int | Non
     batch = batch or _latest_batch()
     rows = review_list(batch) if batch else []
     with db.connect() as c:
-        batches = c.execute("""SELECT DISTINCT s.id, s.file_name, s.received_at FROM staging.scan_batch s
-                                 JOIN staging.document d ON d.batch_id = s.id ORDER BY s.received_at DESC""").fetchall()
+        batches = c.execute("""SELECT s.id, s.file_name, s.received_at,
+                                      count(DISTINCT b.id) FILTER (WHERE b.status = 'needs_review') AS need
+                                 FROM staging.scan_batch s JOIN staging.document d ON d.batch_id = s.id
+                                 LEFT JOIN staging.bundle_document bd ON bd.document_id = d.id
+                                 LEFT JOIN staging.bundle b ON b.id = bd.bundle_id
+                                GROUP BY s.id ORDER BY s.received_at DESC""").fetchall()
         fresh = []
         if VF:                           # n8n's notices; the page marks them seen once a browser shows it (/notices/seen)
             from common import notice

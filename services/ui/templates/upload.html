@@ -1,41 +1,67 @@
 {% extends "base.html" %}
-{% block title %}Upload{% endblock %}
+{% block title %}Unggah scan{% endblock %}
 {% block main %}
   <section class="head">
-    <h1>Phase 1 · Upload a scan</h1>
-    {% if vf %}
-    <p class="lede">vlm-first: the file goes to MinIO under <code>vf/</code>, is split into page images here (n8n's intake
-      is v1's), and each page becomes a ticket on vlm-first's own <code>q.pages</code>. <code>vf-worker</code> then reads
-      each page: AI OCR, Jev, Tesseract, the checks, the look-again, grouping and the bundle checks.</p>
-    <p class="note"><strong>Budget:</strong> the AI OCR runs on Groq's free tier: 200K tokens a day, refilling about 8K an
-      hour. Groq counts a read as about 7K and a look-again as about 4.5K, so that's roughly 20–25 pages a day. Every page
-      is prepared right away, and it is read while the budget lasts. Once Groq refuses, the rest wait (<em>waiting for the
-      AI</em>) without asking it again, and resume with
-      <code>docker compose exec vf-worker python -m worker.vf again &lt;batch&gt;</code>, which waits for each refill.</p>
-    {% else %}
-    <p class="lede">This stands in for the feeder scanner's SCP drop. The file goes to MinIO (the temp repository), then n8n splits it into page images and puts one ticket per page on <code>q.pages</code>.</p>
-    {% endif %}
+    <h1>Unggah scan</h1>
+    <p class="lede">Pilih satu file PDF hasil scan dokumen pelanggan: Faktur Penjualan, Tanda Terima, PO, dan lainnya.
+      Tidak perlu disortir; sistem yang mengenali dan mengelompokkan per order (SOR).</p>
   </section>
 
-  {% if error %}<section class="alert bad">{{ error }}</section>{% endif %}
+  {% if error %}<section class="alert bad"><strong>{{ error }}</strong>{% if error_detail %}
+    <details class="small"><summary>Detail untuk tim IT</summary><code>{{ error_detail }}</code></details>{% endif %}</section>{% endif %}
   {% if dup %}
     <section class="alert warn">
-      <strong>Already received.</strong> This exact file (same SHA-256) arrived as
-      <a href="/batches/{{ dup.id }}">{{ dup.id }}</a> — <span class="mono">{{ dup.file_name }}</span>
-      on {{ dup.received_at.strftime('%d %b %H:%M') }}. It was not processed again.
+      <strong>File ini sudah pernah diunggah.</strong> File yang persis sama masuk sebagai
+      <a href="/batches/{{ dup.id }}">{{ dup.file_name }}</a> pada {{ dup.received_at|tgl }}, jadi tidak diproses lagi.
     </section>
   {% endif %}
 
-  <section>
-    <form class="upload" method="post" action="/upload" enctype="multipart/form-data">
-      <input type="file" name="file" accept="application/pdf" required>
-      <button type="submit">Upload and split</button>
-    </form>
-    <p class="note">Sample in this folder: <span class="mono">7000356304 - 7000356499.pdf</span> (288 pages). Splitting takes about a minute; the batch page fills in live.</p>
+  <form class="drop" method="post" action="/upload" enctype="multipart/form-data" id="upform">
+    <label class="drop-zone" id="dz">
+      <input type="file" name="file" accept="application/pdf" required id="upfile">
+      <span class="dz-icon" aria-hidden="true">
+        <svg viewBox="0 0 24 24" width="34" height="34" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 16V4"/><path d="m7 9 5-5 5 5"/><path d="M4 16v3a1 1 0 0 0 1 1h14a1 1 0 0 0 1-1v-3"/></svg>
+      </span>
+      <b id="dz-title">Tarik file PDF ke sini, atau klik untuk memilih</b>
+      <span class="muted small" id="dz-sub">Hanya file PDF. Satu file boleh berisi ratusan halaman.</span>
+    </label>
+    <div class="drop-act">
+      <button type="submit" class="btn primary big" id="upbtn" disabled>Unggah dan proses</button>
+      <span class="muted small" id="upwait" hidden>Mengunggah… jangan tutup halaman ini.</span>
+    </div>
+  </form>
+
+  <section class="next">
+    <h2>Setelah diunggah</h2>
+    <ol>
+      <li>File dipecah menjadi halaman-halaman (sekitar satu menit untuk ratusan halaman).</li>
+      <li>AI membaca setiap halaman. Anda bisa melihat kemajuannya di halaman scan.</li>
+      <li>Halaman disatukan per order (SOR) dan dicocokkan dengan Satellite.</li>
+      <li>Yang perlu Anda cek akan muncul di <a href="/review">Periksa order</a> dan di <a href="/">Beranda</a>.</li>
+    </ol>
   </section>
 
   <section>
-    <h2>Recent batches</h2>
+    <h2>Scan terakhir</h2>
     {% include "_batch_table.html" %}
   </section>
+  <script>
+    (function () {
+      var f = document.getElementById('upfile'), dz = document.getElementById('dz'), btn = document.getElementById('upbtn');
+      function picked() {
+        var x = f.files && f.files[0];
+        btn.disabled = !x;
+        document.getElementById('dz-title').textContent = x ? x.name : 'Tarik file PDF ke sini, atau klik untuk memilih';
+        document.getElementById('dz-sub').textContent = x ? (x.size / 1048576).toFixed(1) + ' MB · siap diunggah' : 'Hanya file PDF.';
+        dz.classList.toggle('has', !!x);
+      }
+      f.addEventListener('change', picked);
+      ['dragenter', 'dragover'].forEach(function (t) { dz.addEventListener(t, function (e) { e.preventDefault(); dz.classList.add('over'); }); });
+      ['dragleave', 'drop'].forEach(function (t) { dz.addEventListener(t, function () { dz.classList.remove('over'); }); });
+      dz.addEventListener('drop', function (e) { e.preventDefault(); if (e.dataTransfer.files.length) { f.files = e.dataTransfer.files; picked(); } });
+      document.getElementById('upform').addEventListener('submit', function () {
+        btn.disabled = true; btn.textContent = 'Mengunggah…'; document.getElementById('upwait').hidden = false;
+      });
+    })();
+  </script>
 {% endblock %}

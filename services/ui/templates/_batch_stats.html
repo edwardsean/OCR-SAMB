@@ -1,74 +1,44 @@
+{# A scan's progress in plain words, asked again every few seconds (batch.html). #}
 {% set total = b.page_total if b else 0 %}
-{% set queued = pages|selectattr('status','equalto','queued')|list|length %}
-{% set rendered_or_later = b and b.status in ('split','queued','reading','read','grouping','done') %}
+{% set o = orders or {} %}
+{% set split_done = b and b.status in ('split', 'queued', 'reading', 'read', 'grouping', 'done') %}
+{% set read_done = b and total and b.page_done >= total %}
 <section class="flow five">
   <div class="step {{ 'done' if b else 'now' }}">
-    <span class="n">1</span><strong>Stored in MinIO</strong>
-    <em>{{ 'temp repository' if b else 'waiting for n8n…' }}</em>
+    <span class="n">1</span><strong>Diterima</strong>
+    <em>{{ 'file tersimpan' if b else 'menunggu file…' }}</em>
   </div>
-  <div class="step {{ 'done' if rendered_or_later else ('now' if b else '') }}">
-    <span class="n">2</span><strong>n8n split into pages</strong>
-    <em>{{ b.pages_rendered if b else 0 }} of {{ total }} rendered</em>
+  <div class="step {{ 'done' if split_done else ('now' if b else '') }}">
+    <span class="n">2</span><strong>Dipecah per halaman</strong>
+    <em>{{ b.pages_rendered if b else 0 }} dari {{ total }} halaman</em>
   </div>
-  <div class="step {{ 'done' if b and b.status in ('queued','reading','read','grouping','done') else '' }}">
-    <span class="n">3</span><strong>Tickets on q.pages</strong>
-    <em>{{ depths.pages if depths.pages is not none else '?' }} waiting now</em>
-  </div>
-  <div class="step {{ 'done' if b and b.page_done == total and total else ('now' if b and b.page_done else '') }}">
-    <span class="n">4</span><strong>Scoreboard</strong>
-    <em>{{ b.page_done if b else 0 }} of {{ total }} read</em>
+  <div class="step {{ 'done' if read_done else ('now' if split_done else '') }}">
+    <span class="n">3</span><strong>Dibaca AI</strong>
+    <em>{{ b.page_done if b else 0 }} dari {{ total }} halaman</em>
     {% if b and total %}<div class="bar"><i style="width: {{ (100 * b.page_done / total)|round|int }}%"></i></div>{% endif %}
   </div>
-  <div class="step {{ 'done' if b and b.page_done == total and total else '' }}">
-    <span class="n">5</span><strong>Bell on q.group</strong>
-    <em>{% if b and b.page_done == total and total %}rung · {{ depths.group }} waiting for the grouper (phase 6){% else %}rings at N of N{% endif %}</em>
+  <div class="step {{ 'done' if o.total and not o.waiting else ('now' if o.total or (b and b.page_done) else '') }}">
+    <span class="n">4</span><strong>Disatukan per order</strong>
+    <em>{% if o.total %}{{ o.total }} order (SOR){% if o.waiting %} · {{ o.waiting }} masih diproses{% endif %}{% else %}belum ada order{% endif %}</em>
+  </div>
+  <div class="step {{ 'now' if o.need else ('done' if o.total and not o.waiting else '') }}">
+    <span class="n">5</span><strong>Diperiksa &amp; dikirim</strong>
+    <em>{% if o.need %}{{ o.need }} order perlu Anda cek{% elif o.total and o.published == o.total %}semua terkirim{% elif o.total %}tidak ada yang perlu dicek{% else %}menunggu langkah 4{% endif %}</em>
   </div>
 </section>
 
-<div class="actions">
-  <span class="muted">Dead-letter queue: <strong>{{ depths.dlq }}</strong></span>
-  {% if b and b.status in ('read','queued','reading') %}
-  <form method="post" action="/batches/{{ batch_id }}/rerun" class="rerunf" onsubmit="return confirm('Re-run ' + (this.pages.value || 'ALL {{ total }}') + ' pages? Steps whose code has not changed are reused, so only new steps run (and only new model calls are paid).')">
-    <input name="pages" placeholder="all, or e.g. 1-32" size="12">
-    <button class="ghost" type="submit">↻ Re-run</button>
-  </form>
-  {% endif %}
+{% if o.total or o.held %}
+<div class="ordersum">
+  <div class="chips">
+    {% if o.need %}<span class="chip need">{{ o.need }} perlu dicek</span>{% endif %}
+    {% if o.waiting %}<span class="chip wait">{{ o.waiting }} menunggu sistem</span>{% endif %}
+    {% if o.ready %}<span class="chip ok">{{ o.ready }} siap dikirim</span>{% endif %}
+    {% if o.published %}<span class="chip done">{{ o.published }} terkirim</span>{% endif %}
+    {% if o.held %}<a class="chip need" href="/bundles?batch={{ batch_id }}#held">{{ o.held }} dokumen menunggu nomor</a>{% endif %}
+  </div>
+  <div class="acts">
+    <a class="btn" href="/bundles?batch={{ batch_id }}">Lihat berkas per SOR</a>
+    <a class="btn{{ ' primary' if o.need or o.ready }}" href="/review?batch={{ batch_id }}">{{ 'Periksa ' ~ o.need ~ ' order' if o.need else 'Buka daftar order' }} <span aria-hidden="true">→</span></a>
+  </div>
 </div>
-
-{% if p7 %}{% include "_phase7.html" %}{% endif %}
-{% if p6 %}{% include "_phase6.html" %}{% endif %}
-{% if vf %}{% include "_vf.html" %}{% endif %}
-{% if p5 %}{% include "_phase5.html" %}{% endif %}
-{% if p4 %}<details class="phasebox"><summary>Phase 4 acceptance — {{ 'all pass' if p4.all_ok else 'FAILING' }}</summary>{% include "_phase4.html" %}</details>{% endif %}
-{% if p3 %}<details class="phasebox"><summary>Phase 3 acceptance — {{ 'all pass' if p3.all_ok else 'FAILING' }}</summary>{% include "_phase3.html" %}</details>{% endif %}
-
-{% if p2 %}
-<details class="phasebox"><summary>Phase 2 acceptance — {{ 'all pass' if p2.all_ok else 'FAILING' }}</summary>
-<section class="checks {{ 'pass' if p2.all_ok else 'fail' }}">
-  <h2>Phase 2 acceptance {% if not p2.golden %}<span class="muted">(golden checks apply to the 288-page sample only)</span>{% endif %}</h2>
-  <ul>
-  {% for label, ok, detail in p2.checks %}
-    <li class="{{ 'ok' if ok else 'bad' }}"><span class="dot"></span>{{ label }} <em>{{ detail }}</em></li>
-  {% endfor %}
-  </ul>
-  {% if p2.fp %}
-  <table class="grid small">
-    <thead><tr><th>FP page</th><th>Answer key <span class="muted">(read by hand)</span></th><th>Pipeline found</th><th>How</th><th>Title read</th><th>Flag</th></tr></thead>
-    <tbody>
-    {% for x in p2.fp %}
-      <tr class="{{ 'bad' if x.wrong else ('ok' if x.found else 'warn') }}">
-        <td><a href="/batches/{{ batch_id }}/pages/{{ x.page }}">{{ x.page }}</a></td>
-        <td class="mono muted">{{ x.key }}</td>
-        <td class="mono">{% if x.found %}{{ x.found }}{% if x.wrong %} ✕ wrong{% endif %}{% else %}<strong>None</strong>{% endif %}</td>
-        <td>{{ x.how or '—' }}</td>
-        <td>{{ '✓' if x.title else '—' }}</td>
-        <td>{% if x.faint %}<span class="badge faint">faint</span>{% endif %}</td>
-      </tr>
-    {% endfor %}
-    </tbody>
-  </table>
-  <p class="note">The answer key is what's printed on the paper. "Pipeline found" is only what this phase could read; None is allowed, a wrong SOR is not. Pages the pipeline can't read get their SOR later from their partner documents (phase 6) or are held for a person.</p>
-  {% endif %}
-</section>
-</details>
 {% endif %}

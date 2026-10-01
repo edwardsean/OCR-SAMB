@@ -1,10 +1,10 @@
 {% extends "base.html" %}
-{% block title %}Review{% endblock %}
+{% block title %}Periksa order{% endblock %}
 {% block main %}
   <style>
     .rl { max-width: 1080px; margin: 0 auto; padding-bottom: 40px; }
     .rl-top { display: flex; justify-content: space-between; align-items: flex-end; gap: 16px; flex-wrap: wrap; margin-bottom: 14px; }
-    .rl-top h1 { margin: 0 0 4px; font-size: 22px; }
+    .rl-top h1 { margin: 0 0 4px; font-size: 24px; letter-spacing: -.02em; }
     .rl-top select { padding: 6px 8px; border: 1px solid var(--line); border-radius: 8px; background: var(--panel); color: var(--text); }
     .tally { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 10px; margin: 6px 0 16px; }
     .tally a { display: block; text-decoration: none; color: var(--text); border: 1px solid var(--line); border-radius: 12px;
@@ -36,7 +36,9 @@
     .done-list { border: 1px solid var(--line); border-radius: 12px; background: var(--panel); }
     .done-list div { display: flex; justify-content: space-between; gap: 12px; padding: 8px 14px; border-top: 1px solid var(--line); font-size: 13px; }
     .done-list div:first-child { border-top: 0; }
-    .empty { color: var(--muted); font-size: 14px; }
+    .empty { color: var(--ok); font-size: 14px; font-weight: 600; }
+    .rl-lede { margin: 2px 0 0; max-width: 72ch; font-size: 14px; }
+    .justpub { color: var(--ok); }
     .fresh { border: 1px solid var(--bad); border-radius: 12px; padding: 10px 14px; margin-bottom: 14px; font-size: 14px;
              background: color-mix(in srgb, var(--bad) 8%, transparent); }
     @media (max-width: 640px) { .tally { grid-template-columns: repeat(2, minmax(0, 1fr)); } .bc { grid-template-columns: 44px 1fr; } .bc .go { display: none; } .bc .th { width: 44px; height: 60px; } }
@@ -51,61 +53,62 @@
     <a class="bc" href="/review/{{ r.sor_no }}?batch={{ batch }}">
       <div class="th" style="background-image:url('{{ r.thumb or '' }}')"></div>
       <div>
-        <div class="who">{{ r.customer_name or 'Unknown customer' }}</div>
+        <div class="who">{{ r.customer_name or 'Pelanggan belum diketahui' }}</div>
         <div class="sor">{{ r.sor_no }}</div>
         <div class="docs">{{ r.docs|join(' · ') }}</div>
         {% if r.issues %}<div class="iss">{% for label, kind in r.issues %}<span class="chip {{ kind }}">{{ label }}</span>{% endfor %}</div>
-        {% elif r.status in ('auto_ok', 'reviewed') %}<div class="iss"><span class="chip ok">✓ {{ 'Approved by ' ~ r.reviewed_by if r.status == 'reviewed' else 'Every check passed' }}</span></div>{% endif %}
+        {% elif r.status in ('auto_ok', 'reviewed') %}<div class="iss"><span class="chip ok">✓ {{ 'Disetujui oleh ' ~ r.reviewed_by if r.status == 'reviewed' else 'Semua cek lolos' }}</span></div>{% endif %}
       </div>
-      <span class="go">{{ 'Review ›' if r.status == 'needs_review' else 'Open ›' }}</span>
+      <span class="go">{{ 'Periksa ›' if r.status == 'needs_review' else 'Buka ›' }}</span>
     </a>
   {% endmacro %}
 
   <div class="rl">
     <div class="rl-top">
-      <div><h1>Review</h1><span class="muted small">Each order's documents, checked against Satellite. Only what the checks can't settle needs you.</span></div>
+      <div><h1>Periksa order</h1><p class="muted rl-lede">Satu kartu = satu order (SOR) beserta dokumennya. Sistem sudah
+        mencocokkan semuanya dengan Satellite; yang muncul di <b>Perlu Anda cek</b> hanya yang belum cocok atau belum pasti.</p></div>
       {% if batches %}
       <label class="muted small">Scan
         <select onchange="location.href='/review?batch=' + this.value">
-          {% for b in batches %}<option value="{{ b.id }}" {{ 'selected' if b.id == batch }}>{{ b.file_name }}</option>{% endfor %}
+          {% for b in batches %}<option value="{{ b.id }}" {{ 'selected' if b.id == batch }}>{{ b.file_name }}{{ ' · ' ~ b.need ~ ' perlu dicek' if b.need }}</option>{% endfor %}
         </select></label>
       {% endif %}
     </div>
 
     <div class="tally">
-      <a class="need" href="#need"><b>{{ need|length }}</b><span>need you</span></a>
-      <a class="wait" href="#wait"><b>{{ wait|length }}</b><span>waiting (no action)</span></a>
-      <a class="ready" href="#ready"><b>{{ ok|length }}</b><span>ready to publish</span></a>
-      <a class="done" href="#published"><b>{{ pubd|length }}</b><span>published</span></a>
+      <a class="need" href="#need"><b>{{ need|length }}</b><span>perlu Anda cek</span></a>
+      <a class="wait" href="#wait"><b>{{ wait|length }}</b><span>menunggu sistem (tanpa tindakan)</span></a>
+      <a class="ready" href="#ready"><b>{{ ok|length }}</b><span>siap dikirim ke Satellite</span></a>
+      <a class="done" href="#published"><b>{{ pubd|length }}</b><span>sudah terkirim</span></a>
     </div>
 
     {% if fresh %}
-    <div class="fresh" hx-post="/notices/seen" hx-trigger="load" hx-swap="none"><strong>New since you last looked:</strong>
+    <div class="fresh" hx-post="/notices/seen" hx-trigger="load" hx-swap="none"><strong>Baru sejak terakhir Anda lihat:</strong>
       {% for f in fresh %}<a href="/review/{{ f.sor }}?batch={{ f.batch }}">{{ f.customer or f.sor }}</a>{{ '' if loop.last else ' · ' }}{% endfor %}
     </div>
     {% endif %}
-    {% if just_published is not none %}<p><strong>Published {{ just_published }} bundle{{ '' if just_published == 1 else 's' }}.</strong></p>{% endif %}
+    {% if just_published is not none %}<p class="justpub">✓ <strong>{{ just_published }} order terkirim ke Satellite.</strong></p>{% endif %}
     {% if ok %}
     <form class="pub" method="post" action="/review/publish" id="pubform">
       <input type="hidden" name="batch" value="{{ batch }}">
-      <strong>{{ ok|length }} bundle{{ '' if ok|length == 1 else 's' }} ready:</strong>
-      <span class="muted small">write them to Satellite, with one PDF per order (checked once more first)</span>
-      <input name="by" id="pubby" placeholder="your name" required> <button class="btn primary">Publish</button>
+      <strong>{{ ok|length }} order siap dikirim.</strong>
+      <span class="muted small">Datanya ditulis ke Satellite beserta satu PDF per SOR (dicek sekali lagi sebelum dikirim).</span>
+      <input name="by" id="pubby" placeholder="nama Anda" aria-label="Nama Anda" required> <button class="btn primary">Kirim ke Satellite</button>
     </form>
     {% endif %}
 
-    <div class="grp" id="need">Needs you</div>
-    <div class="cards">{% for r in need %}{{ card(r) }}{% else %}<p class="empty">Nothing needs you in this scan.</p>{% endfor %}</div>
+    <div class="grp" id="need">Perlu Anda cek</div>
+    <div class="cards">{% for r in need %}{{ card(r) }}{% else %}<p class="empty">✓ Tidak ada yang perlu Anda cek di scan ini.</p>{% endfor %}</div>
 
-    {% if wait %}<div class="grp" id="wait">Waiting: no action needed</div>
+    {% if wait %}<div class="grp" id="wait">Menunggu sistem · tidak perlu tindakan</div>
     <div class="cards">{% for r in wait %}{{ card(r) }}{% endfor %}</div>{% endif %}
 
-    {% if ok %}<div class="grp" id="ready">Ready to publish</div>
+    {% if ok %}<div class="grp" id="ready">Siap dikirim ke Satellite</div>
     <div class="cards">{% for r in ok %}{{ card(r) }}{% endfor %}</div>{% endif %}
 
-    {% if pubd %}<div class="grp" id="published">Published</div>
+    {% if pubd %}<div class="grp" id="published">Sudah terkirim</div>
     <div class="done-list">{% for r in pubd %}<div><span><a href="/review/{{ r.sor_no }}?batch={{ batch }}">{{ r.customer_name or r.sor_no }}</a>
-      <span class="muted mono small"> · {{ r.sor_no }}</span></span><a href="/documents/{{ r.sor_no }}.pdf">PDF</a></div>{% endfor %}</div>{% endif %}
+      <span class="muted mono small"> · {{ r.sor_no }}</span></span><a href="/documents/{{ r.sor_no }}.pdf">Buka PDF</a></div>{% endfor %}</div>{% endif %}
   </div>
   <script>
     (function () {                                        // the name typed on a bundle's page, remembered here too

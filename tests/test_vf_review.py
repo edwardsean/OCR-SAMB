@@ -55,7 +55,8 @@ def test_the_review_screens_answer():
     r = httpx.get(f"{UI}/review", params={"batch": BID}, timeout=60)
     assert r.status_code == 200 and "SOR26110257250" in r.text
     r = httpx.get(f"{UI}/review/SOR26110257250", params={"batch": BID}, timeout=60)
-    assert r.status_code == 200 and "CGR" in r.text and ("What is left" in r.text or "Published" in r.text)
+    assert r.status_code == 200 and "CGR" in r.text                    # the check "Barang diterima = CGR Satellite"
+    assert any(pill in r.text for pill in ("Terkirim ke Satellite", "Siap disetujui", "Perlu Anda", "Menunggu sistem"))
 
 
 # ------------------------------------------------------------------------------------------ S5: anomalies only

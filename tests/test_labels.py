@@ -38,7 +38,7 @@ def pile(page):
 
 
 def test_save_relabel_keeps_pile_and_queue_moves_on():
-    assert "Page 2" in httpx.get(f"{UI}/label?batch={BID}").text           # first unsure page
+    assert "Halaman 2" in httpx.get(f"{UI}/label?batch={BID}").text        # first unsure page
     r = save(2, "PO", customer="Indomaret", note="no title")
     assert r.status_code == 303 and r.headers["location"].startswith(f"/label?batch={BID}")
     first = pile(2)
@@ -47,7 +47,7 @@ def test_save_relabel_keeps_pile_and_queue_moves_on():
         save(2, "CONTINUATION")
         assert pile(2)["pile"] == first["pile"]
     assert pile(2)["label"] == "CONTINUATION"
-    assert "Page 3" in httpx.get(f"{UI}/label?batch={BID}").text            # queue skips the labelled page
+    assert "Halaman 3" in httpx.get(f"{UI}/label?batch={BID}").text         # queue skips the labelled page
 
 
 def test_unknown_type_refused():

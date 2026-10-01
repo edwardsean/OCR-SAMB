@@ -1,23 +1,47 @@
 {% extends "base.html" %}
-{% block title %}Page {{ page_no }}{% endblock %}
+{% block title %}Halaman {{ page_no }}{% endblock %}
 {% block main %}
-  <section class="head">
-    <p class="crumbs"><a href="/batches">Batches</a> / <a class="mono" href="/batches/{{ batch_id }}">{{ batch_id }}</a> / page {{ page_no }}</p>
-    <h1>Page {{ page_no }}{% if b %} <span class="muted">of {{ b.page_total }}</span>{% endif %}
-      {% for f in (p.quality_flags or []) if p %}<span class="badge {{ f }}">{{ f|replace('_',' ') }}</span>{% endfor %}
-      {% if p and p.qr_text %}<span class="badge qr">QR</span>{% endif %}</h1>
-    <p class="pager">
-      {% if page_no > 1 %}<a href="/batches/{{ batch_id }}/pages/{{ page_no - 1 }}">← prev</a>{% endif %}
-      {% if b and page_no < b.page_total %}<a href="/batches/{{ batch_id }}/pages/{{ page_no + 1 }}">next →</a>{% endif %}
-    </p>
+  {% set ptype = p.doc_type if p else None %}
+  <section class="head pg-head">
+    <p class="crumbs"><a href="/batches">Riwayat scan</a> / <a href="/batches/{{ batch_id }}">{{ b.file_name if b else batch_id }}</a> / halaman {{ page_no }}</p>
+    <div class="pg-title">
+      <h1>Halaman {{ page_no }}{% if b %} <span class="muted">dari {{ b.page_total }}</span>{% endif %}
+        {% if ptype %}<span class="tchip t-{{ ptype }} big">{{ DOC.get(ptype, ptype) }}</span>
+        {% elif p and p.type_status == 'unsure' %}<span class="tchip t-unsure big">Jenis belum pasti</span>{% endif %}</h1>
+      <p class="pager">
+        {% if page_no > 1 %}<a href="/batches/{{ batch_id }}/pages/{{ page_no - 1 }}">← Sebelumnya</a>{% endif %}
+        {% if b and page_no < b.page_total %}<a href="/batches/{{ batch_id }}/pages/{{ page_no + 1 }}">Berikutnya →</a>{% endif %}
+      </p>
+    </div>
+    {% if p %}<p class="pg-state">
+      {% if p.outcome %}<span class="chip {{ {'clear': 'ok', 'waiting_ai': 'wait', 'needs_person': 'need', 'held_unsure': 'need'}.get(p.outcome, '') }}">{{ OUTCOME.get(p.outcome, p.outcome) }}</span>{% endif %}
+      {% for f in (p.quality_flags or []) %}<span class="badge {{ f }}">{{ FLAG.get(f, f) }}</span>{% endfor %}
+      {% if p.qr_text %}<span class="badge qr">ada kode QR</span>{% endif %}
+    </p>{% endif %}
   </section>
   {% if not p %}
-    <section class="alert bad">No such page.</section>
+    <section class="alert bad">Halaman ini tidak ditemukan.</section>
   {% elif not p.upright_path %}
-    <section class="alert">Not read yet (status <span class="pill s-{{ p.status }}">{{ p.status }}</span>). The worker hasn't picked up its ticket.{% if p.error %} Last error: <span class="mono">{{ p.error }}</span>{% endif %}</section>
-    <section class="img"><img style="max-width:520px;width:100%" src="/img/{{ p.original_path }}"></section>
+    <section class="alert">Halaman ini belum dibaca sistem ({{ BATCH.get(p.status, p.status) }}). Tunggu sebentar; halaman ini akan terisi sendiri.{% if p.error %}
+      <details class="small"><summary>Detail untuk tim IT</summary><code>{{ p.error }}</code></details>{% endif %}</section>
+    <section class="img"><img style="max-width:520px;width:100%" src="/img/{{ p.original_path }}" alt="halaman {{ page_no }} seperti di-scan"></section>
   {% else %}
-  {% if fixv %}{% include "_fix_page.html" %}{% endif %}
+  {% if fixv %}{% include "_fix_page.html" %}
+  {% else %}
+  <section class="pg-plain">
+    {% if p.type_status == 'unsure' %}
+      <div class="pg-plain-msg"><b>Sistem belum yakin ini dokumen apa.</b> Tentukan jenisnya dulu; setelah itu isinya bisa dibaca dan diperiksa di sini.
+        <a class="btn primary" href="/label?batch={{ batch_id }}&page={{ page_no }}">Tentukan jenis halaman ini</a></div>
+    {% elif p.outcome == 'waiting_ai' or not p.fields %}
+      <div class="pg-plain-msg"><b>AI belum selesai membaca halaman ini.</b> Halaman ini akan terisi sendiri; tidak perlu tindakan.</div>
+    {% else %}
+      <div class="pg-plain-msg">Halaman ini tidak punya daftar isian untuk diperiksa ({{ DOC.get(p.doc_type, p.doc_type) if p.doc_type else 'jenis tidak diketahui' }}).</div>
+    {% endif %}
+    <img class="pg-plain-img" src="/img/{{ p.upright_path }}" alt="halaman {{ page_no }}">
+  </section>
+  {% endif %}
+
+  <details class="tech"><summary>Detail teknis <small>· untuk tim pengembang: hasil scan, teks Tesseract, klasifikasi, bacaan AI, pengukuran</small></summary>
   <div class="three">
     <section class="img">
       <h2>1 · As scanned</h2>
@@ -139,6 +163,7 @@
 
   <details><summary>Ticket and raw row</summary>
     <pre class="mono">{{ ticket }}</pre>
+  </details>
   </details>
   {% endif %}
   <script>

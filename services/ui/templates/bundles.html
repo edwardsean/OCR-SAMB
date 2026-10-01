@@ -1,15 +1,16 @@
 {% extends "base.html" %}
-{% block title %}Bundles{% endblock %}
+{% block title %}Berkas per SOR{% endblock %}
 {% block main %}
   <section class="head">
-    <h1>Bundles <span class="muted">{{ batch or '' }}</span></h1>
-    <p class="lede">Pages are linked by <strong>resolved keys only</strong>: backed by print, by Satellite's SO record, or
-      by a person. The FP is the hub (its SOR and Nomor CPO); a TTG or PO joins by the SOR it prints, or by its PO number
-      = the SO's Nomor CPO. Page order is used for one thing: a continuation belongs to the page before it. Each complete
-      bundle is a folder in storage, shown below as it really is; anything held is further down.</p>
+    <div class="head-row"><h1>Berkas per SOR</h1>
+      {% if scans %}<label class="muted small">Scan
+        <select class="scanpick" onchange="location.href='/bundles?batch=' + this.value">
+          {% for sc in scans %}<option value="{{ sc.id }}" {{ 'selected' if sc.id == batch }}>{{ sc.file_name }}</option>{% endfor %}
+        </select></label>{% endif %}</div>
+    <p class="lede">Setiap order (SOR) punya satu folder berisi halaman-halamannya: Faktur Penjualan, PO, dan Tanda Terima.
+      Halaman hanya disatukan lewat nomor yang sudah pasti: tercetak jelas, ada di data Satellite, atau dipastikan orang.
+      Dokumen yang nomornya belum pasti menunggu di bagian bawah.</p>
   </section>
-
-  {% if p6 %}{% with batch_id=batch %}{% include "_phase6.html" %}{% endwith %}{% endif %}
 
   {% if d %}
   <style>
@@ -72,11 +73,11 @@
       .finder .f-col { max-height: 220px; border-right: 0; border-bottom: 1px solid var(--f-line); } }
   </style>
 
-  <div class="finder" id="finder" tabindex="0" aria-label="Bundle folders">
+  <div class="finder" id="finder" tabindex="0" aria-label="Folder per SOR">
     <div class="f-bar">
       <div class="f-lights"><i style="background:#ff5f57"></i><i style="background:#febc2e"></i><i style="background:#28c840"></i></div>
-      <div class="f-nav"><button id="f-back" title="Back (←)">‹</button><button id="f-fwd" title="Forward (→)">›</button></div>
-      <div class="f-title" id="f-title">bundles</div>
+      <div class="f-nav"><button id="f-back" title="Kembali">‹</button><button id="f-fwd" title="Maju">›</button></div>
+      <div class="f-title" id="f-title">berkas</div>
       <div class="f-count" id="f-count"></div>
     </div>
     <div class="f-body">
@@ -113,34 +114,35 @@
     }
 
     function render() {
-      const side = [`<h4>Favorites</h4><a class="${tag ? '' : 'on'}" data-tag="">${FOLDER}<span>bundles</span></a>`];
-      if (data.tags.length) side.push('<h4>Tags</h4>');
+      const side = [`<h4>Semua</h4><a class="${tag ? '' : 'on'}" data-tag="">${FOLDER}<span>semua berkas</span></a>`];
+      if (data.tags.length) side.push('<h4>Pelanggan</h4>');
       data.tags.forEach(t => side.push(`<a class="${tag === t.name ? 'on' : ''}" data-tag="${esc(t.name)}" title="${esc(t.name)}"><i class="tag" style="background:${t.color}"></i><span>${esc(t.name)}</span></a>`));
       el('f-side').innerHTML = side.join('');
 
       const fs = shown();
       el('f-folders').innerHTML = fs.length ? fs.map(f => `<div class="f-row ${f.name === fo ? 'sel' : ''} ${f.name === fo && col === 0 ? 'act' : ''}" role="option" data-fo="${esc(f.name)}" title="${esc(f.customer)}"><span class="ic">${FOLDER}</span><span class="name">${esc(f.name)}</span><i class="tag" style="background:${f.tag}"></i><span class="chev">›</span></div>`).join('')
-        : `<div class="f-empty">${esc(data.error ? 'Storage unreachable: ' + data.error : 'No complete bundles yet')}</div>`;
+        : `<div class="f-empty">${esc(data.error ? 'Penyimpanan tidak bisa dihubungi: ' + data.error : 'Belum ada berkas lengkap')}</div>`;
 
       const cur = folder();
-      el('f-files').innerHTML = cur ? (cur.files.length ? cur.files.map(f => `<div class="f-row ${f.name === fi ? 'sel' : ''} ${f.name === fi && col === 1 ? 'act' : ''}" role="option" data-fi="${esc(f.name)}"><span class="ic">${f.kind === 'page' && f.thumb ? `<img src="${esc(f.thumb)}" alt="" loading="lazy">` : JSONICON}</span><span class="name" title="${esc(f.name)}">${esc(mid(f.name))}</span>${f.type ? `<i class="tag" style="background:${TYPE[f.type] || '#8e8e93'}"></i>` : ''}</div>`).join('') : '<div class="f-empty">Empty folder</div>') : '';
+      el('f-files').innerHTML = cur ? (cur.files.length ? cur.files.map(f => `<div class="f-row ${f.name === fi ? 'sel' : ''} ${f.name === fi && col === 1 ? 'act' : ''}" role="option" data-fi="${esc(f.name)}"><span class="ic">${f.kind === 'page' && f.thumb ? `<img src="${esc(f.thumb)}" alt="" loading="lazy">` : JSONICON}</span><span class="name" title="${esc(f.name)}">${esc(mid(f.name))}</span>${f.type ? `<i class="tag" style="background:${TYPE[f.type] || '#8e8e93'}"></i>` : ''}</div>`).join('') : '<div class="f-empty">Folder kosong</div>') : '';
 
       const f = file();
       let prev = '';
       if (f && f.kind === 'page') {
         prev = `<div class="big">${f.thumb ? `<img src="${esc(f.thumb)}" alt="${esc(f.name)}">` : ''}</div>
-          <h3>${esc(f.name)}</h3><p class="sub">PNG image · ${kb(f.size)}</p>
-          <dl><dt>Kind</dt><dd>${esc(f.type)} · ${esc(f.kind_name)}</dd>
-              <dt>Page</dt><dd>${f.page} of ${esc(f.batch)}</dd>
-              <dt>Joined</dt><dd>${f.evidence.length ? f.evidence.map(esc).join('<br>') : '—'}</dd>
-              <dt>Modified</dt><dd>${esc(f.modified)}</dd></dl>
-          <div class="btns"><a href="${esc(f.page_url)}">Open page</a>${f.image ? `<a href="${esc(f.image)}" target="_blank" rel="noopener">Open image</a>` : ''}</div>`;
+          <h3>${esc(f.name)}</h3><p class="sub">Gambar PNG · ${kb(f.size)}</p>
+          <dl><dt>Jenis</dt><dd>${esc(f.kind_name)}</dd>
+              <dt>Halaman</dt><dd>${f.page} (scan ${esc(f.batch)})</dd>
+              <dt>Bergabung lewat</dt><dd>${f.evidence.length ? f.evidence.map(esc).join('<br>') : '—'}</dd>
+              <dt>Diubah</dt><dd>${esc(f.modified)}</dd></dl>
+          <div class="btns"><a href="${esc(f.page_url)}">Buka halaman</a>${f.image ? `<a href="${esc(f.image)}" target="_blank" rel="noopener">Buka gambar</a>` : ''}</div>`;
       } else if (f) {
-        prev = `<h3>${esc(f.name)}</h3><p class="sub">JSON · ${kb(f.size)} · how every page got here</p><pre>${esc(JSON.stringify(f.content, null, 1))}</pre>`;
+        prev = `<h3>${esc(f.name)}</h3><p class="sub">JSON · ${kb(f.size)} · catatan teknis: bagaimana tiap halaman masuk ke sini</p><pre>${esc(JSON.stringify(f.content, null, 1))}</pre>`;
       } else if (cur) {
-        prev = `<div class="big">${BIGFOLDER}</div><h3>${esc(cur.name)}</h3><p class="sub">Folder · ${cur.files.length} items</p>
-          <dl><dt>Customer</dt><dd>${esc(cur.customer)}</dd><dt>Bundle</dt><dd>${esc(cur.summary)}</dd>
-              <dt>Where</dt><dd class="mono">${esc(cur.path)}/</dd><dt>Modified</dt><dd>${esc(cur.modified)}</dd></dl>`;
+        prev = `<div class="big">${BIGFOLDER}</div><h3>${esc(cur.name)}</h3><p class="sub">Folder · ${cur.files.length} file</p>
+          <dl><dt>Pelanggan</dt><dd>${esc(cur.customer)}</dd><dt>Isi</dt><dd>${esc(cur.summary)}</dd>
+              <dt>Lokasi</dt><dd class="mono">${esc(cur.path)}/</dd><dt>Diubah</dt><dd>${esc(cur.modified)}</dd></dl>
+          <div class="btns"><a href="/review/${encodeURIComponent(cur.name)}?batch={{ batch|urlencode }}">Buka di Periksa order</a></div>`;
       }
       el('f-prev').innerHTML = prev;
 
@@ -148,8 +150,8 @@
       if (cur) crumbs.push(`› <span>${FOLDER}<b>${esc(cur.name)}</b></span>`);
       if (f) crumbs.push(`› <span><b>${esc(f.name)}</b></span>`);
       el('f-path').innerHTML = crumbs.join(' ');
-      el('f-title').textContent = cur ? cur.name : (tag || 'bundles');
-      el('f-count').textContent = cur ? `${cur.files.length} items` : `${fs.length} folder${fs.length === 1 ? '' : 's'}`;
+      el('f-title').textContent = cur ? cur.name : (tag || 'berkas');
+      el('f-count').textContent = cur ? `${cur.files.length} file` : `${fs.length} folder`;
       el('f-back').disabled = !back.length; el('f-fwd').disabled = !fwd.length;
       document.querySelector('#f-folders .sel')?.scrollIntoView({block: 'nearest'});
       document.querySelector('#f-files .sel')?.scrollIntoView({block: 'nearest'});
@@ -185,41 +187,41 @@
   })();
   </script>
 
-  <section>
-    <h2>Held: {{ d.bundles|length - d.complete }} bundle{{ '' if d.bundles|length - d.complete == 1 else 's' }} waiting for their FP ·
-      {{ d.held|length }} document{{ '' if d.held|length == 1 else 's' }} waiting for a key</h2>
+  <section id="held">
+    <h2>Menunggu: {{ d.bundles|length - d.complete }} order belum lengkap ·
+      {{ d.held|length }} dokumen menunggu nomornya dipastikan</h2>
     {% for b in d.bundles if b.hold %}
     <div class="alert warn" style="padding:10px 14px;margin:10px 0">
       <p><strong class="mono">{{ b.sor }}</strong>{% if b.customer %} · {{ b.customer }}{% endif %}
-        · <strong>held</strong>: {{ b.why }} · <span class="mono muted small">{{ b.folder }}</span></p>
+        · <strong>ditahan</strong>: {{ b.why }} · <span class="mono muted small">{{ b.folder }}</span></p>
       <table class="grid small">
-        <thead><tr><th>Pages</th><th>Type</th><th>How it joined</th></tr></thead>
+        <thead><tr><th>Halaman</th><th>Jenis</th><th>Bergabung lewat <span class="muted">(teknis)</span></th></tr></thead>
         <tbody>{% for doc in b.documents %}
-          <tr><td>{% for n in doc.pages %}<a href="/batches/{{ batch }}/pages/{{ n }}">p{{ n }}</a>{% if not loop.last %}, {% endif %}{% endfor %}</td>
-            <td><span class="tchip t-{{ doc.type }}">{{ doc.type }}</span></td>
+          <tr><td>{% for n in doc.pages %}<a href="/batches/{{ batch }}/pages/{{ n }}">hal. {{ n }}</a>{% if not loop.last %}, {% endif %}{% endfor %}</td>
+            <td><span class="tchip t-{{ doc.type }}">{{ DOC_SHORT.get(doc.type, doc.type) }}</span></td>
             <td class="small">{{ (doc.evidence or [])|join(' · ') }}</td></tr>
         {% endfor %}</tbody>
       </table>
     </div>
     {% endfor %}
-    {% if not d.held %}<p class="muted">No document waits for a key.</p>{% endif %}
+    {% if not d.held %}<p class="muted">✓ Tidak ada dokumen yang menunggu nomor.</p>{% endif %}
     {% for h in d.held %}
     <div class="alert warn" style="padding:10px 14px;margin:10px 0">
-      <p><a href="/batches/{{ batch }}/pages/{{ h.page_from }}">p{{ h.page_from }}{% if h.page_to != h.page_from %}–{{ h.page_to }}{% endif %}</a>
-        <span class="tchip t-{{ h.type }}">{{ h.type }}</span> · {{ h.why }}
-        {% if h.suggested_sor %} · suggestion: <strong class="mono">{{ h.suggested_sor }}</strong> <span class="muted small">(a hint, never a link)</span>{% endif %}</p>
+      <p><a href="/batches/{{ batch }}/pages/{{ h.page_from }}">hal. {{ h.page_from }}{% if h.page_to != h.page_from %}–{{ h.page_to }}{% endif %}</a>
+        <span class="tchip t-{{ h.type }}">{{ DOC_SHORT.get(h.type, h.type) }}</span> · {{ h.why }}
+        {% if h.suggested_sor %} · saran: <strong class="mono">{{ h.suggested_sor }}</strong> <span class="muted small">(hanya petunjuk, tidak otomatis dihubungkan)</span>{% endif %}</p>
       {% if h.confirm %}
-      <p class="small">It waits for its <span class="mono">{{ h.confirm.field }}</span>{% if h.confirm.read %}, read as
-        <span class="mono">{{ h.confirm.read }}</span>{% endif %}. Its line on the page, zoomed:</p>
-      <img src="/crop/{{ batch }}/{{ h.page_from }}/{{ h.confirm.field }}" alt="" style="max-width:100%;border:1px solid #ccc"
-           onerror="this.replaceWith(document.createTextNode('(no picture of the spot: open the page)'))">
+      <p class="small">Menunggu <b>{{ field_id(h.confirm.field, h.type) }}</b>-nya dipastikan{% if h.confirm.read %}; terbaca
+        <span class="mono">{{ h.confirm.read }}</span>{% endif %}. Bagian halamannya, diperbesar:</p>
+      <img src="/crop/{{ batch }}/{{ h.page_from }}/{{ h.confirm.field }}" alt="" style="max-width:100%;border:1px solid var(--line)"
+           onerror="this.replaceWith(document.createTextNode('(tidak ada potongan gambar: buka halamannya)'))">
       <form method="post" action="/bundles/confirm" class="small" style="margin-top:6px">
         <input type="hidden" name="batch" value="{{ batch }}"><input type="hidden" name="page" value="{{ h.page_from }}">
         <input type="hidden" name="field" value="{{ h.confirm.field }}">
-        <label>{{ h.confirm.field }} as printed <input name="value" value="{{ h.confirm.value or '' }}" class="mono" size="18" required></label>
-        <input name="by" placeholder="your name" size="12" required>
-        <button type="submit">Confirm</button>
-        <span class="muted">The page is re-checked (Satellite settles the rest of an FP) and the batch regrouped.</span>
+        <label>{{ field_id(h.confirm.field, h.type) }}, seperti tercetak <input name="value" value="{{ h.confirm.value or '' }}" class="mono" size="18" required></label>
+        <input name="by" placeholder="nama Anda" size="12" required aria-label="Nama Anda">
+        <button type="submit" class="btn primary">Pastikan</button>
+        <span class="muted">Halaman dicek ulang, lalu scan ini dikelompokkan ulang.</span>
       </form>
       {% endif %}
     </div>
@@ -227,8 +229,10 @@
   </section>
 
   <section>
-    <h2>Not grouped yet: {{ d.unplaced|length }} page{{ '' if d.unplaced|length == 1 else 's' }}</h2>
-    <p class="small">{% for u in d.unplaced %}<a href="/batches/{{ batch }}/pages/{{ u.page }}">p{{ u.page }}</a> <span class="muted">({{ u.why }})</span>{% if not loop.last %} · {% endif %}{% endfor %}</p>
+    <h2>Belum dikelompokkan: {{ d.unplaced|length }} halaman</h2>
+    <p class="small">{% for u in d.unplaced %}<a href="/batches/{{ batch }}/pages/{{ u.page }}">hal. {{ u.page }}</a> <span class="muted">({{ u.why }})</span>{% if not loop.last %} · {% endif %}{% else %}<span class="muted">✓ Semua halaman sudah masuk ke dokumen.</span>{% endfor %}</p>
   </section>
-  {% else %}<p class="muted">No batch yet.</p>{% endif %}
+  {% if p6 %}<details class="tech"><summary>Detail teknis <small>· uji penerimaan pengelompokan (fase 6)</small></summary>
+    {% with batch_id=batch %}{% include "_phase6.html" %}{% endwith %}</details>{% endif %}
+  {% else %}<p class="muted">Belum ada scan. <a href="/upload">Unggah scan</a> dulu.</p>{% endif %}
 {% endblock %}

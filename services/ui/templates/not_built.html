@@ -1,11 +1,14 @@
 {% extends "base.html" %}
+{% block title %}{{ tab[2] if tab else 'Tidak ditemukan' }}{% endblock %}
 {% block main %}
   <section class="head">
     {% if tab %}
       <h1>{{ tab[2] }}</h1>
-      <p class="lede">This screen is built in <strong>phase {{ tab[0] }}</strong>. You are looking at a build through phase {{ built }}.</p>
+      <p class="lede">Layar ini belum dibuat (fase {{ tab[0] }}). Sistem saat ini sudah sampai fase {{ built }}.</p>
     {% else %}
-      <h1>Not found</h1>
+      <h1>Halaman tidak ditemukan</h1>
+      <p class="lede">Alamat ini tidak ada. Mungkin tautannya sudah berubah.</p>
     {% endif %}
+    <p><a class="btn primary" href="/">Kembali ke Beranda</a></p>
   </section>
 {% endblock %}

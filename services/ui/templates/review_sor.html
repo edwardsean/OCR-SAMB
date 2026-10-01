@@ -1,5 +1,5 @@
 {% extends "base.html" %}
-{% block title %}Review {{ v.sor }}{% endblock %}
+{% block title %}Periksa {{ v.sor }}{% endblock %}
 {% block main %}
   <style>
     .rv { max-width: 1080px; margin: 0 auto; padding-bottom: 90px; }
@@ -7,7 +7,9 @@
     .rv-top h1 { margin: 2px 0 6px; font-size: 22px; }
     .rv-sor { font-family: var(--mono); color: var(--muted); font-size: 13px; }
     .rv-me { display: flex; align-items: center; gap: 6px; font-size: 13px; color: var(--muted); }
-    .rv-me input { width: 130px; padding: 5px 8px; border: 1px solid var(--line); border-radius: 6px; background: var(--panel); color: var(--text); }
+    .rv-me-wrap { display: flex; flex-direction: column; align-items: flex-end; gap: 4px; }
+    .me-warn { color: var(--bad); font-size: 12.5px; font-weight: 600; max-width: 260px; text-align: right; }
+    .rv-me input { width: 150px; padding: 5px 8px; border: 1px solid var(--line); border-radius: 6px; background: var(--panel); color: var(--text); }
     .pill { display: inline-block; padding: 3px 10px; border-radius: 99px; font-size: 12px; font-weight: 600; letter-spacing: .02em; }
     .pill.need { background: color-mix(in srgb, var(--bad) 18%, transparent); color: var(--bad); }
     .pill.wait { background: color-mix(in srgb, var(--warn) 18%, transparent); color: var(--warn); }
@@ -78,9 +80,9 @@
     .passed { margin-top: 16px; display: flex; flex-wrap: wrap; gap: 6px; align-items: center; font-size: 12px; }
     .chip { padding: 3px 9px; border-radius: 99px; background: color-mix(in srgb, var(--ok) 14%, transparent); color: var(--ok); }
 
-    .bar { position: fixed; left: 0; right: 0; bottom: 0; background: var(--panel); border-top: 1px solid var(--line);
+    .rv-bar { position: fixed; left: 0; right: 0; bottom: 0; background: var(--panel); border-top: 1px solid var(--line);
            padding: 10px 16px; display: flex; justify-content: center; gap: 14px; align-items: center; z-index: 5; }
-    .bar .left { font-weight: 600; }
+    .rv-bar .left { font-weight: 600; }
     .rv-all { margin-top: 28px; }
     .rv-all > summary { cursor: pointer; color: var(--muted); }
     .rv-box { border: 1px solid var(--line); border-radius: 10px; padding: 12px 14px; margin: 12px 0; }
@@ -95,37 +97,38 @@
   {% set n_todo = (v.open_items|selectattr('kind', 'ne', 'wait')|list|length) + (v.calibration.asks|length if v.calibration else 0) %}
   {% set published = v.bundle.status == 'published' %}
   <div class="rv">
-    <p class="crumbs"><a href="/review?batch={{ batch }}">← All bundles</a></p>
+    <p class="crumbs"><a href="/review?batch={{ batch }}">← Semua order</a></p>
     <div class="rv-top">
       <div>
         <div class="rv-sor">{{ v.sor }}</div>
-        <h1>{{ (v.so or {}).customer_name or 'Unknown customer' }}</h1>
-        {% if published %}<span class="pill done">Published</span>
-        {% elif v.can_approve %}<span class="pill done">Ready to approve</span>
-        {% elif n_todo %}<span class="pill need">Needs you · {{ n_todo }} decision{{ 's' if n_todo != 1 }}</span>
-        {% else %}<span class="pill wait">Waiting · nothing to do yet</span>{% endif %}
+        <h1>{{ (v.so or {}).customer_name or 'Pelanggan belum diketahui' }}</h1>
+        {% if published %}<span class="pill done">Terkirim ke Satellite</span>
+        {% elif v.can_approve %}<span class="pill done">Siap disetujui</span>
+        {% elif n_todo %}<span class="pill need">Perlu Anda · {{ n_todo }} keputusan</span>
+        {% else %}<span class="pill wait">Menunggu sistem · belum ada yang perlu dilakukan</span>{% endif %}
       </div>
-      {% if not published %}<label class="rv-me">You are <input id="me" placeholder="your name" autocomplete="name"></label>{% endif %}
+      {% if not published %}<div class="rv-me-wrap"><label class="rv-me">Nama Anda <input id="me" placeholder="tulis nama Anda" autocomplete="name"></label>
+        <div class="me-warn" id="me-warn" hidden>Tulis nama Anda dulu: setiap keputusan dicatat atas nama Anda.</div></div>{% endif %}
     </div>
-    {% if fixed and fpage and vf %}<div class="fx-saved">✓ Saved your answer on page {{ fpage }}. The page was checked again and the bundle re-checked.
+    {% if fixed and fpage and vf %}<div class="fx-saved">✓ Jawaban Anda untuk halaman {{ fpage }} tersimpan. Halaman dan order ini sudah dicek ulang.
       <div hx-get="/partials/lesson?batch={{ batch|urlencode }}&page={{ fpage }}&field={{ fixed|urlencode }}" hx-trigger="load" hx-swap="outerHTML"></div></div>{% endif %}
 
     <div class="rv-strip">
       {% for s in v.strip %}
-        <a class="rv-thumb{{ ' flag' if s.flag }}" href="/batches/{{ batch }}/pages/{{ s.page }}" title="Open page {{ s.page }}">
+        <a class="rv-thumb{{ ' flag' if s.flag }}" href="/batches/{{ batch }}/pages/{{ s.page }}" title="Buka halaman {{ s.page }}">
           <div class="img" style="background-image:url('{{ s.thumb or '' }}')">{% if s.flag %}<span class="dot">!</span>{% endif %}</div>
-          <b>{{ {'FP': 'Invoice (FP)', 'TTG': 'Receipt', 'PO': 'PO'}.get(s.type, s.kind) }}</b>page {{ s.page }}
+          <b>{{ DOC_SHORT.get(s.type, s.kind) }}</b>hal. {{ s.page }}
         </a>
       {% endfor %}
     </div>
 
     {% if published %}{% set pj = v.bundle.json or {} %}
       <div class="rv-steps"><div class="card" style="grid-template-columns:1fr"><div>
-        <h2>Published {{ v.bundle.published_at.strftime('%-d %b %Y, %H:%M') if v.bundle.published_at else '' }}</h2>
-        <p class="sub">Written to Satellite, with one PDF for this order. It is never checked again.</p>
-        <div class="acts"><a class="btn primary" href="/documents/{{ v.sor }}.pdf">Open {{ v.sor }}.pdf</a></div>
-        <div class="passed">{% for d in pj.documents or [] %}<span class="chip">{{ {'FP': 'Invoice', 'PO': 'PO', 'TTG': 'Receipt'}.get(d.type, d.type) }}
-          · {{ d.lines }} line{{ 's' if d.lines != 1 }} · {{ '%.0f' % (d.confidence * 100) if d.confidence is not none else '—' }}% verified</span>{% endfor %}</div>
+        <h2>Terkirim ke Satellite{{ ' · ' ~ (v.bundle.published_at|tgl) if v.bundle.published_at else '' }}</h2>
+        <p class="sub">Data sudah ditulis ke Satellite, beserta satu PDF untuk order ini. Order yang sudah terkirim tidak dicek lagi.</p>
+        <div class="acts"><a class="btn primary" href="/documents/{{ v.sor }}.pdf">Buka {{ v.sor }}.pdf</a></div>
+        <div class="passed">{% for d in pj.documents or [] %}<span class="chip">{{ DOC_SHORT.get(d.type, d.type) }}
+          · {{ d.lines }} baris · {{ '%.0f' % (d.confidence * 100) if d.confidence is not none else '—' }}% terverifikasi</span>{% endfor %}</div>
       </div></div></div>
     {% else %}
 
@@ -142,117 +145,117 @@
 
           {% if it.pair %}
           <div class="cmp">
-            {% for label, val in it.pair %}<div class="box"><small>{{ label }}</small><span>{{ '{:,.2f}'.format(val) if val is not none else '—' }}</span></div>{% endfor %}
-            {% if it.gap is not none %}<div class="gap">{{ '{:,.2f}'.format(it.gap) }}<small>difference · allowed Rp {{ '%g' % (it.allow or 5) }}</small></div>{% endif %}
+            {% for label, val in it.pair %}<div class="box"><small>{{ label }}</small><span>{{ val|angka }}</span></div>{% endfor %}
+            {% if it.gap is not none %}<div class="gap">{{ it.gap|angka }}<small>selisih · batas Rp {{ (it.allow or 5)|qty }}</small></div>{% endif %}
           </div>
           {% endif %}
 
           {% if it.qty_lines %}
           {% if it.qty_pack %}
-          <div class="cause"><div class="row"><span><strong>The numbers read are the products' pack sizes</strong> (e.g. 20 on a
-            20X200GR product), not quantities: the AI read the wrong column. Type what the receipt says was received.</span></div></div>
+          <div class="cause"><div class="row"><span><strong>Angka yang terbaca adalah isi kemasan produk</strong> (mis. 20 pada
+            produk 20X200GR), bukan jumlah: AI membaca kolom yang salah. Ketik jumlah yang tertulis diterima di Tanda Terima.</span></div></div>
           {% endif %}
           <div class="qrows">
             {% for x in it.qty_fix %}
             <div class="qrow{{ ' pack' if x.pack }}">
-              <div class="what">{{ x.desc or 'a row' }}<span class="fine"> · receipt page {{ x.page }}, row {{ x.i + 1 }}{% if x.line %} · SAMB's line {{ x.line }}{% endif %}</span></div>
-              {% if x.key %}<img class="rowcrop" src="/crop/{{ batch }}/{{ x.page }}/row/{{ x.key|urlencode }}" alt="the row as printed" loading="lazy" onerror="this.style.display='none'">{% endif %}
+              <div class="what">{{ x.desc or 'sebuah baris' }}<span class="fine"> · Tanda Terima hal. {{ x.page }}, baris {{ x.i + 1 }}{% if x.line %} · barang order SAMB no. {{ x.line }}{% endif %}</span></div>
+              {% if x.key %}<img class="rowcrop" src="/crop/{{ batch }}/{{ x.page }}/row/{{ x.key|urlencode }}" alt="baris seperti tercetak" loading="lazy" onerror="this.style.display='none'">{% endif %}
               <div class="nums">
-                <span>read <b class="mono">{{ x.qty or 'nothing' }}{{ ' ' ~ x.uom if x.uom and x.uom not in (x.qty or '') else '' }}</b>{% if x.pieces is not none %}
-                  <span class="fine">→ {{ '%g' % x.pieces }} pcs</span>{% endif %}</span>
-                {% if x.line %}<span>Satellite received <b class="mono">{{ '%g' % x.want }} pcs</b>{% if x.per and x.per > 1 %}
-                  <span class="fine">= {{ '%g' % (x.want / x.per) }} ctn of {{ '%g' % x.per }}</span>{% endif %}</span>{% endif %}
-                {% if x.pack %}<span class="flag">= its pack size</span>{% endif %}
-                {% if not x.line %}<span class="flag">not paired with SAMB's lines</span>{% endif %}
+                <span>terbaca <b class="mono">{{ x.qty or 'kosong' }}{{ ' ' ~ x.uom if x.uom and x.uom not in (x.qty or '') else '' }}</b>{% if x.pieces is not none %}
+                  <span class="fine">→ {{ x.pieces|qty }} pcs</span>{% endif %}</span>
+                {% if x.line %}<span>diterima menurut Satellite <b class="mono">{{ x.want|qty }} pcs</b>{% if x.per and x.per > 1 %}
+                  <span class="fine">= {{ (x.want / x.per)|qty }} karton isi {{ x.per|qty }}</span>{% endif %}</span>{% endif %}
+                {% if x.pack %}<span class="flag">= isi kemasannya</span>{% endif %}
+                {% if not x.line %}<span class="flag">belum dipasangkan dengan barang order SAMB</span>{% endif %}
               </div>
               {% if x.key and x.line %}
               <form method="post" action="/review/confirm" class="fixrow js-by">
                 <input type="hidden" name="batch" value="{{ batch }}"><input type="hidden" name="sor" value="{{ v.sor }}">
                 <input type="hidden" name="page" value="{{ x.page }}"><input type="hidden" name="field" value="lines[{{ x.key }}].qty">
                 <input type="hidden" name="row_key" value="{{ x.key }}"><input type="hidden" name="shown" value="{{ x.qty or '' }}"><input type="hidden" name="by">
-                <span class="lab">Received, as printed on the receipt (with its unit)</span>
-                <input name="value" placeholder="e.g. 2 CTN or 48 PCS" required>
-                {% if x.per and x.per > 1 %}<button type="button" class="btn" data-fill="{{ '%g' % (x.want / x.per) }} CTN" title="what Satellite recorded">{{ '%g' % (x.want / x.per) }} CTN</button>{% endif %}
-                <button type="button" class="btn" data-fill="0">0 (nothing received)</button>
-                <button class="btn primary">Save</button>
-                <a class="btn pick" href="/batches/{{ batch }}/pages/{{ x.page }}?fix={{ ('lines[' ~ x.key ~ '].qty')|urlencode }}&back={{ ('/review/' ~ v.sor ~ '?batch=' ~ batch)|urlencode }}">Pick it on the page ›</a>
+                <span class="lab">Jumlah diterima, seperti tertulis di Tanda Terima (dengan satuannya)</span>
+                <input name="value" placeholder="mis. 2 CTN atau 48 PCS" required>
+                {% if x.per and x.per > 1 %}<button type="button" class="btn" data-fill="{{ '%g' % (x.want / x.per) }} CTN" title="yang dicatat Satellite">{{ '%g' % (x.want / x.per) }} CTN</button>{% endif %}
+                <button type="button" class="btn" data-fill="0">0 (tidak ada yang diterima)</button>
+                <button class="btn primary">Simpan</button>
+                <a class="btn pick" href="/batches/{{ batch }}/pages/{{ x.page }}?fix={{ ('lines[' ~ x.key ~ '].qty')|urlencode }}&back={{ ('/review/' ~ v.sor ~ '?batch=' ~ batch)|urlencode }}">Pilih di halaman ›</a>
               </form>
               {% elif not x.line %}
               <form method="post" action="/review/pair" class="fixrow js-by">
                 <input type="hidden" name="batch" value="{{ batch }}"><input type="hidden" name="sor" value="{{ v.sor }}">
                 <input type="hidden" name="page" value="{{ x.page }}"><input type="hidden" name="row" value="{{ x.i }}">
                 <input type="hidden" name="by"><input type="hidden" name="note" value="">
-                <span class="fine">This row is SAMB's line:</span>
+                <span class="fine">Baris ini adalah barang order SAMB:</span>
                 <select name="line_no" class="btn" required onchange="this.form.note.value = this.value === 'none' ? 'not in SAMB\'s order' : ''">
-                  <option value="" selected disabled>choose…</option>
+                  <option value="" selected disabled>pilih…</option>
                   {% for s in v.lines %}<option value="{{ s.line_no }}">{{ s.line_no }} · {{ s.description }}</option>{% endfor %}
-                  <option value="none">none: not in SAMB's order</option>
+                  <option value="none">tidak ada: bukan barang order SAMB</option>
                 </select>
-                <button class="btn primary">Pair</button>
+                <button class="btn primary">Pasangkan</button>
               </form>
               {% endif %}
             </div>
             {% endfor %}
             {% for y in it.qty_missing %}
-            <div class="qrow"><div class="what">{{ y.desc }}<span class="fine"> · SAMB's line {{ y.line_no }}</span></div>
-              <div class="nums"><span>Satellite received <b class="mono">{{ '%g' % y.satellite }} pcs</b></span><span class="flag">not on the receipt</span></div></div>
+            <div class="qrow"><div class="what">{{ y.desc }}<span class="fine"> · barang order SAMB no. {{ y.line_no }}</span></div>
+              <div class="nums"><span>diterima menurut Satellite <b class="mono">{{ y.satellite|qty }} pcs</b></span><span class="flag">tidak ada di Tanda Terima</span></div></div>
             {% endfor %}
           </div>
-          {% set good = it.qty_lines|length - it.qty_bad|length %}{% if good %}<p class="fine">✓ {{ good }} other line{{ 's' if good != 1 }} match what Satellite received.</p>{% endif %}
-          <p class="fine"><a href="/batches/{{ batch }}/pages/{{ (it.qty_fix|first or {}).page or '' }}">Open the receipt</a> to read its rows.</p>
+          {% set good = it.qty_lines|length - it.qty_bad|length %}{% if good %}<p class="fine">✓ {{ good }} barang lain sesuai dengan yang diterima menurut Satellite.</p>{% endif %}
+          <p class="fine"><a href="/batches/{{ batch }}/pages/{{ (it.qty_fix|first or {}).page or '' }}">Buka Tanda Terima</a> untuk membaca baris-barisnya.</p>
           {% endif %}
 
           {% if it.suspect %}
-          <div class="cause"><div class="row"><span><strong>This doesn't look like the same amount.</strong> The AI probably read the wrong
-            number on the page: check it below.</span></div></div>
+          <div class="cause"><div class="row"><span><strong>Angka ini tampaknya bukan jumlah yang sama.</strong> Kemungkinan AI
+            membaca angka yang salah di halaman: periksa di bawah.</span></div></div>
           {% endif %}
 
           {% if it.odd_rows %}
           <div class="cause">
             {% for x in it.odd_rows %}<div class="row"><span>{{ x.desc }} <span class="fine">· {{ x.qty or '' }} {{ x.uom or '' }}</span></span>
-              <span><span class="amt">{{ '{:,.2f}'.format(x.amount) if x.amount is not none else '—' }}</span>
-              <span class="why">· not in SAMB's order</span></span></div>{% endfor %}
-            {% for s in it.missing_lines or [] %}<div class="row"><span class="fine">SAMB's line {{ s.line_no }} · {{ s.description }}</span>
-              <span class="why">not on the PO</span></div>{% endfor %}
+              <span><span class="amt">{{ x.amount|angka }}</span>
+              <span class="why">· tidak ada di order SAMB</span></span></div>{% endfor %}
+            {% for s in it.missing_lines or [] %}<div class="row"><span class="fine">Barang order SAMB no. {{ s.line_no }} · {{ s.description }}</span>
+              <span class="why">tidak ada di PO</span></div>{% endfor %}
           </div>
-          <p class="fine">✓ {{ it.ok_rows }} other row{{ 's' if it.ok_rows != 1 }} match SAMB's order.</p>
+          <p class="fine">✓ {{ it.ok_rows }} baris lain sesuai dengan order SAMB.</p>
           {% elif it.tolakan %}
-          <div class="cause"><div class="row"><span>Rejected at the store (Satellite): {{ it.tolakan|join('; ') }}</span></div></div>
+          <div class="cause"><div class="row"><span>Ditolak di toko (menurut Satellite): {{ it.tolakan|join('; ') }}</span></div></div>
           {% endif %}
 
-          {% if it.held_link %}<p class="sub">If it is in this scan, it waits on <a href="{{ it.held_link }}">Bundles</a> for its number to be confirmed.</p>{% endif %}
+          {% if it.held_link %}<p class="sub">Jika dokumennya ada di scan ini, ia menunggu nomornya dipastikan di <a href="{{ it.held_link }}">Berkas per SOR</a>.</p>{% endif %}
 
           {% if it.accept %}
           <form method="post" action="/review/accept" class="acts js-by">
             <input type="hidden" name="batch" value="{{ batch }}"><input type="hidden" name="sor" value="{{ v.sor }}">
             <input type="hidden" name="check" value="{{ it.key }}"><input type="hidden" name="input_print" value="{{ it.print }}">
             <input type="hidden" name="by">
-            <span class="lbl">Accept, because:</span>
-            {% for r in v.accept_reasons if r != "other (say in the note)" %}<button class="btn" name="reason" value="{{ r }}">{{ r[:1]|upper }}{{ r[1:] }}</button>{% endfor %}
-            <button type="button" class="btn js-other">Other…</button>
-            <input class="note-in" name="note" placeholder="say why">
-            <button class="btn primary note-in" name="reason" value="other (say in the note)">Accept</button>
+            <span class="lbl">Terima selisih ini, karena:</span>
+            {% for r in v.accept_reasons if r != "other (say in the note)" %}<button class="btn" name="reason" value="{{ r }}">{{ REASON.get(r, r) }}</button>{% endfor %}
+            <button type="button" class="btn js-other">Lainnya…</button>
+            <input class="note-in" name="note" placeholder="tulis alasannya">
+            <button class="btn primary note-in" name="reason" value="other (say in the note)">Terima</button>
           </form>
-          {% else %}<p class="sub">Nothing to do yet: {{ 'the AI looks at it again first' if it.status != 'waiting' else "waiting for Satellite's record" }}.</p>{% endif %}
+          {% else %}<p class="sub">Belum ada yang perlu dilakukan: {{ 'AI membaca ulang dulu' if it.status != 'waiting' else 'menunggu data dari Satellite' }}.</p>{% endif %}
 
 
           {% if it.fix %}
-          <button type="button" class="btn ghost js-fix">{{ 'Check the page ›' if it.suspect else 'A number was read wrong? Fix it ›' }}</button>
+          <button type="button" class="btn ghost js-fix">{{ 'Cek halamannya ›' if it.suspect else 'Ada angka yang salah baca? Perbaiki ›' }}</button>
           <div class="fix{{ ' open' if it.suspect }}">
             {% for f in it.fix %}
             <form method="post" action="/review/confirm" class="js-by">
               <input type="hidden" name="batch" value="{{ batch }}"><input type="hidden" name="sor" value="{{ v.sor }}">
               <input type="hidden" name="page" value="{{ f.page }}"><input type="hidden" name="field" value="{{ f.name }}">
               <input type="hidden" name="shown" value="{{ f.value if f.value is not none else '' }}"><input type="hidden" name="by">
-              <div class="fine">Page {{ f.page }} · {{ f.label }} · read as <b class="mono">{{ f.value if f.value is not none else 'nothing' }}</b></div>
+              <div class="fine">Hal. {{ f.page }} · {{ f.label }} · terbaca <b class="mono">{{ f.value if f.value is not none else 'kosong' }}</b></div>
               <img class="crop" src="/crop/{{ batch }}/{{ f.page }}/{{ f.name }}" alt="" loading="lazy" onerror="this.style.display='none'">
               <div class="fixrow">
-                <span class="lab">{{ f.label }}, as printed</span>
-                <input name="value" placeholder="type it, or pick it on the page" required>
+                <span class="lab">{{ f.label }}, seperti tercetak</span>
+                <input name="value" placeholder="ketik, atau pilih di halaman" required>
                 {% for val, why in f.suggest %}<button type="button" class="btn" data-fill="{{ val }}" title="{{ why }}">{{ val }}</button>{% endfor %}
-                <button type="button" class="btn" data-fill="(not printed)">Not printed on this page</button>
-                <button class="btn primary">Save</button>
-                <a class="btn pick" href="/batches/{{ batch }}/pages/{{ f.page }}?fix={{ f.name|urlencode }}&back={{ ('/review/' ~ v.sor ~ '?batch=' ~ batch)|urlencode }}">Pick it on the page ›</a>
+                <button type="button" class="btn" data-fill="(not printed)">Tidak tercetak di halaman ini</button>
+                <button class="btn primary">Simpan</button>
+                <a class="btn pick" href="/batches/{{ batch }}/pages/{{ f.page }}?fix={{ f.name|urlencode }}&back={{ ('/review/' ~ v.sor ~ '?batch=' ~ batch)|urlencode }}">Pilih di halaman ›</a>
               </div>
             </form>
             {% endfor %}
@@ -260,8 +263,8 @@
           {% endif %}
 
         {% elif it.kind == 'page' %}
-          <h2>Page {{ it.page }}: confirm its {{ it.fields|map(attribute='label')|join(', ') }}</h2>
-          <p class="sub">The AI read it, but nothing else could confirm it. Pick it on the page, or type it as printed.</p>
+          <h2>Halaman {{ it.page }}: pastikan {{ it.fields|map(attribute='label')|join(', ') }}</h2>
+          <p class="sub">AI sudah membacanya, tetapi belum ada yang bisa memastikannya. Pilih di halaman, atau ketik seperti tercetak.</p>
           {% for f in it.fields %}
           <form method="post" action="/review/confirm" class="js-by">
             <input type="hidden" name="batch" value="{{ batch }}"><input type="hidden" name="sor" value="{{ v.sor }}">
@@ -269,23 +272,23 @@
             <input type="hidden" name="shown" value="{{ f.value if f.value is not none else '' }}"><input type="hidden" name="by">
             <img class="crop" src="/crop/{{ batch }}/{{ it.page }}/{{ f.name }}" alt="" loading="lazy" onerror="this.style.display='none'">
             <div class="fixrow">
-              <span class="lab">{{ f.label }}, as printed</span>
-              <input name="value" placeholder="type it, or pick it on the page" required>
-              {% if f.value is not none %}<button type="button" class="btn suggest" data-fill="{{ f.value }}">{{ f.value }} (the AI's reading)</button>{% endif %}
+              <span class="lab">{{ f.label }}, seperti tercetak</span>
+              <input name="value" placeholder="ketik, atau pilih di halaman" required>
+              {% if f.value is not none %}<button type="button" class="btn suggest" data-fill="{{ f.value }}">{{ f.value }} (bacaan AI)</button>{% endif %}
               {% for val, why in f.suggest %}<button type="button" class="btn" data-fill="{{ val }}" title="{{ why }}">{{ val }}</button>{% endfor %}
-              <button type="button" class="btn" data-fill="(not printed)">Not printed</button>
-              <button class="btn primary">Save</button>
-              <a class="btn pick" href="/batches/{{ batch }}/pages/{{ it.page }}?fix={{ f.name|urlencode }}&back={{ ('/review/' ~ v.sor ~ '?batch=' ~ batch)|urlencode }}">Pick it on the page ›</a>
+              <button type="button" class="btn" data-fill="(not printed)">Tidak tercetak</button>
+              <button class="btn primary">Simpan</button>
+              <a class="btn pick" href="/batches/{{ batch }}/pages/{{ it.page }}?fix={{ f.name|urlencode }}&back={{ ('/review/' ~ v.sor ~ '?batch=' ~ batch)|urlencode }}">Pilih di halaman ›</a>
             </div>
           </form>
           {% endfor %}
 
         {% elif it.kind == 'label' %}
           <h2>{{ it.title }}</h2>
-          <div class="acts"><a class="btn primary" href="/label?batch={{ batch }}">Open the Label screen</a></div>
+          <div class="acts"><a class="btn primary" href="/label?batch={{ batch }}">Buka layar Jenis halaman</a></div>
         {% else %}
           <h2>{{ it.title }}</h2>
-          <p class="sub">Nothing to do: it continues by itself.</p>
+          <p class="sub">Tidak perlu tindakan: berlanjut otomatis.</p>
         {% endif %}
         </div>
       </div>
@@ -297,9 +300,9 @@
           <div class="num">{{ ns.k }}</div>
           <div>
             {% if a.what == 'allowance' %}
-              <h2>First time we see {{ cust }}: how much rounding is normal for them?</h2>
-              <p class="sub">Asked once for this customer. Later differences up to this amount pass without you.
-                {% if cal.suggest is none %}<br>This order's differences are bigger than rounding: decide them first (above), then pick the rounding.{% endif %}</p>
+              <h2>Pelanggan baru ({{ cust }}): berapa selisih pembulatan yang wajar?</h2>
+              <p class="sub">Hanya ditanyakan sekali untuk pelanggan ini. Selisih berikutnya sampai batas ini lolos tanpa perlu Anda cek.
+                {% if cal.suggest is none %}<br>Selisih order ini lebih besar dari pembulatan: putuskan dulu yang di atas, lalu pilih batasnya.{% endif %}</p>
               <form method="post" action="/review/calibrate" class="acts js-by">
                 <input type="hidden" name="batch" value="{{ batch }}"><input type="hidden" name="sor" value="{{ v.sor }}">
                 <input type="hidden" name="chain" value="{{ cal.chain }}"><input type="hidden" name="name" value="{{ cal.name }}">
@@ -307,14 +310,14 @@
                 {% for s in cal.steps %}<button class="btn{{ ' suggest' if s == cal.suggest }}" name="allowance" value="{{ s }}">Rp {{ s }}</button>{% endfor %}
               </form>
             {% else %}
-              <h2>After goods are rejected, what does {{ cust }}'s receipt show?</h2>
-              <p class="sub">Satellite recorded goods rejected at the store on this order. Asked once for this customer.</p>
+              <h2>Jika ada barang ditolak, apa yang tertulis di Tanda Terima {{ cust }}?</h2>
+              <p class="sub">Satellite mencatat ada barang yang ditolak toko pada order ini. Hanya ditanyakan sekali untuk pelanggan ini.</p>
               <form method="post" action="/review/calibrate" class="acts js-by">
                 <input type="hidden" name="batch" value="{{ batch }}"><input type="hidden" name="sor" value="{{ v.sor }}">
                 <input type="hidden" name="chain" value="{{ cal.chain }}"><input type="hidden" name="name" value="{{ cal.name }}">
                 <input type="hidden" name="by">
-                <button class="btn{{ ' suggest' if a.suggest == 'received' }}" name="receipt_shows" value="received">Only what was received</button>
-                <button class="btn" name="receipt_shows" value="ordered">The whole order</button>
+                <button class="btn{{ ' suggest' if a.suggest == 'received' }}" name="receipt_shows" value="received">Hanya yang diterima</button>
+                <button class="btn" name="receipt_shows" value="ordered">Seluruh pesanan</button>
               </form>
             {% endif %}
           </div>
@@ -324,73 +327,73 @@
 
       {% if not v.open_items and not v.calibration %}
       <div class="card" style="grid-template-columns:1fr"><div>
-        {% if v.can_approve %}<h2>Everything checks out.</h2><p class="sub">Approve it below and it can be published.</p>
-        {% else %}<h2>Nothing to do yet</h2><p class="sub">{{ v.left|join('; ') }}</p>{% endif %}
+        {% if v.can_approve %}<h2>Semua sudah sesuai.</h2><p class="sub">Setujui di bawah, lalu order ini bisa dikirim ke Satellite.</p>
+        {% else %}<h2>Belum ada yang perlu dilakukan</h2><p class="sub">{{ left_id(v.left)|join(' ') }}</p>{% endif %}
       </div></div>
       {% endif %}
     </div>
 
-    {% if v.passed %}<div class="passed"><span class="fine">Already verified:</span>{% for p in v.passed %}<span class="chip">✓ {{ p }}</span>{% endfor %}</div>{% endif %}
+    {% if v.passed %}<div class="passed"><span class="fine">Sudah terverifikasi:</span>{% for p in v.passed %}<span class="chip">✓ {{ p }}</span>{% endfor %}</div>{% endif %}
     {% endif %}
 
   {% macro field_form(f, d) %}
       <div class="rv-field">
-        <p><strong>{{ f.label }}</strong> · read <span class="mono">{{ f.value if f.value is not none else '—' }}</span> ·
+        <p><strong>{{ f.label }}</strong> · terbaca <span class="mono">{{ f.value if f.value is not none else '—' }}</span> ·
           <span class="muted">{{ f.why }}</span></p>
         <form method="post" action="/review/confirm" class="small js-by">
           <input type="hidden" name="batch" value="{{ batch }}"><input type="hidden" name="sor" value="{{ v.sor }}">
           <input type="hidden" name="page" value="{{ d.page }}"><input type="hidden" name="field" value="{{ f.name }}">
           <input type="hidden" name="shown" value="{{ f.value if f.value is not none else '' }}"><input type="hidden" name="by">
           <span class="rv-sugg">{% for val, why in f.suggest %}<button type="button" data-fill="{{ val }}">{{ val }} · {{ why }}</button>{% endfor %}
-            {% if f.value is not none %}<button type="button" data-fill="{{ f.value }}">{{ f.value }} · as the AI read it</button>{% endif %}
-            <button type="button" data-fill="(not printed)">not printed on this page</button></span>
-          <label>as printed <input name="value" class="mono" size="18" required></label> <button type="submit">Confirm</button>
+            {% if f.value is not none %}<button type="button" data-fill="{{ f.value }}">{{ f.value }} · bacaan AI</button>{% endif %}
+            <button type="button" data-fill="(not printed)">tidak tercetak di halaman ini</button></span>
+          <label>seperti tercetak <input name="value" class="mono" size="18" required></label> <button type="submit">Pastikan</button>
         </form>
       </div>
   {% endmacro %}
 
-  <details class="rv-all" id="all"><summary>Show every value of this bundle (not needed to finish)</summary>
+  <details class="rv-all" id="all"><summary>Tampilkan semua nilai order ini (tidak perlu untuk menyelesaikan)</summary>
   <section class="rv-box" id="checks">
-    <h3>All checks</h3>
-    <table class="grid small"><thead><tr><th>Check</th><th>Result</th><th>Why</th></tr></thead>
+    <h3>Semua cek</h3>
+    <table class="grid small"><thead><tr><th>Cek</th><th>Hasil</th><th>Alasan <span class="muted">(teknis)</span></th></tr></thead>
       <tbody>{% for k, c in v.checks.items() %}
         <tr class="{{ 'ok' if c.status in ('pass', 'accepted') else ('bad' if c.status == 'fail' else ('warn' if c.status == 'unknown' else '')) }}">
-          <td>{{ v.labels[k] }}</td><td>{{ c.status }}</td><td>{{ c.why }}</td></tr>{% endfor %}</tbody></table>
+          <td>{{ v.labels[k] }}</td><td>{{ CHECK_STATUS.get(c.status, c.status) }}</td><td>{{ c.why }}</td></tr>{% endfor %}</tbody></table>
   </section>
   {% for d in v.documents %}
   <section class="rv-box" id="p{{ d.page }}">
-    <h3>Page {{ d.page }}{% if d.pages|length > 1 %}–{{ d.pages[-1] }}{% endif %} · {{ d.kind }} <span class="muted">({{ d.outcome }})</span>
-      <a class="small" href="/batches/{{ batch }}/pages/{{ d.page }}">open the page</a></h3>
+    <h3>Halaman {{ d.page }}{% if d.pages|length > 1 %}–{{ d.pages[-1] }}{% endif %} · {{ d.kind }} <span class="muted">({{ OUTCOME.get(d.outcome, d.outcome) }})</span>
+      <a class="small" href="/batches/{{ batch }}/pages/{{ d.page }}">buka halaman</a></h3>
     {% for f in d.head %}{{ field_form(f, d) }}{% endfor %}
-    {% if d.kept %}<details><summary class="muted">Kept as read ({{ d.kept|length }}): never holds this bundle</summary>
+    {% if d.kept %}<details><summary class="muted">Disimpan seperti terbaca ({{ d.kept|length }}): tidak menahan order ini</summary>
       {% for f in d.kept %}{{ field_form(f, d) }}{% endfor %}</details>{% endif %}
     {% if d.rows %}
     <table class="grid small rv-lines">
-      <thead><tr><th>Row</th><th>As read</th><th>Confirm a cell</th><th>SAMB's line</th></tr></thead>
+      <thead><tr><th>Baris</th><th>Terbaca</th><th>Pastikan sel</th><th>Barang order SAMB</th></tr></thead>
       <tbody>{% for r in d.rows %}
         <tr class="{{ '' if r.bonus else ('ok' if r.match.status == 'matched' and not r.todo else 'warn') }}">
           <td class="mono">{{ r.i + 1 }}</td>
           <td>{{ r.row.product_description or r.row.material_description or r.row.nama_produk or '' }}
             <div class="mono">{% if d.type == 'FP' %}{{ r.row.qty_crt }} / {{ r.row.qty_pcs }}{% else %}{{ r.row.qty }} {{ r.row.uom or '' }}{% if r.row.unit_price %} · {{ r.row.unit_price }}{% endif %}{% endif %}</div></td>
-          <td>{% if r.bonus %}<span class="muted">free (bonus) row</span>{% elif not r.todo %}<span class="muted">—</span>
+          <td>{% if r.bonus %}<span class="muted">baris gratis (bonus)</span>{% elif not r.todo %}<span class="muted">—</span>
             {% else %}{% for x in r.todo %}
               <form method="post" action="/review/confirm" class="small js-by">
                 <input type="hidden" name="batch" value="{{ batch }}"><input type="hidden" name="sor" value="{{ v.sor }}">
                 <input type="hidden" name="page" value="{{ d.page }}"><input type="hidden" name="field" value="lines[{{ r.key }}].{{ x.col }}">
                 <input type="hidden" name="row_key" value="{{ r.key }}"><input type="hidden" name="shown" value="{{ x.read or '' }}"><input type="hidden" name="by">
                 <span class="rv-sugg">{% for val, why in x.hints %}<button type="button" data-fill="{{ val }}">{{ val }} · {{ why }}</button>{% endfor %}</span>
-                <label>{{ x.label }} <input name="value" class="mono" size="10" required></label> <button type="submit">Confirm</button>
+                <label>{{ x.label }} <input name="value" class="mono" size="10" required></label> <button type="submit">Pastikan</button>
               </form>{% endfor %}{% endif %}</td>
-          <td>{% if r.bonus %}<span class="muted">none</span>
-            {% elif r.match.status == 'matched' %}<span class="mono">line {{ r.line.line_no }}</span> {{ r.line.description }}
+          <td>{% if r.bonus %}<span class="muted">tidak ada</span>
+            {% elif r.match.status == 'matched' %}<span class="mono">no. {{ r.line.line_no }}</span> {{ r.line.description }}
             {% elif d.type != 'FP' %}
               <form method="post" action="/review/pair" class="rv-pick js-by">
                 <input type="hidden" name="batch" value="{{ batch }}"><input type="hidden" name="sor" value="{{ v.sor }}">
                 <input type="hidden" name="page" value="{{ d.page }}"><input type="hidden" name="row" value="{{ r.i }}">
                 <input type="hidden" name="by"><input type="hidden" name="note" value="">
-                {% for s in v.lines %}<button type="submit" name="line_no" value="{{ s.line_no }}">line {{ s.line_no }} · {{ s.description }}</button>{% endfor %}
-                <span>none of these, because: {% for r2 in v.none_reasons %}<button type="submit" name="line_no" value="none"
-                  onclick="this.form.note.value='{{ r2 }}'">{{ r2 }}</button> {% endfor %}</span>
+                {% for s in v.lines %}<button type="submit" name="line_no" value="{{ s.line_no }}">no. {{ s.line_no }} · {{ s.description }}</button>{% endfor %}
+                <span>bukan salah satunya, karena: {% for r2 in v.none_reasons %}<button type="submit" name="line_no" value="none"
+                  onclick="this.form.note.value='{{ r2 }}'">{{ NONE_REASON.get(r2, r2) }}</button> {% endfor %}</span>
               </form>
             {% else %}<span class="muted">—</span>{% endif %}</td>
         </tr>{% endfor %}</tbody>
@@ -402,16 +405,16 @@
   </div>
 
   {% if not published %}
-  <div class="bar">
+  <div class="rv-bar">
     {% if v.can_approve %}
-      <span class="left">Nothing left.</span>
+      <span class="left">✓ Tidak ada yang tersisa.</span>
       <form method="post" action="/review/approve" class="js-by">
         <input type="hidden" name="batch" value="{{ batch }}"><input type="hidden" name="sor" value="{{ v.sor }}"><input type="hidden" name="by">
-        <button class="btn primary">Approve this bundle</button>
+        <button class="btn primary">Setujui order ini</button>
       </form>
     {% else %}
-      <span class="left">{{ n_todo }} decision{{ 's' if n_todo != 1 }} left</span>
-      <button class="btn primary" disabled style="opacity:.45;cursor:not-allowed">Approve this bundle</button>
+      <span class="left">{{ n_todo }} keputusan lagi</span>
+      <button class="btn primary" disabled style="opacity:.45;cursor:not-allowed" title="Selesaikan dulu semua keputusan di atas">Setujui order ini</button>
     {% endif %}
   </div>
   {% endif %}
@@ -420,12 +423,19 @@
     (function () {
       var key = 'rv-name', me = document.getElementById('me'), name = '';
       try { name = localStorage.getItem(key) || ''; } catch (e) {}
-      if (me) { me.value = name; me.addEventListener('input', function () { try { localStorage.setItem(key, me.value); } catch (e) {} }); }
+      if (me) { me.value = name; me.addEventListener('input', function () {
+        try { localStorage.setItem(key, me.value); } catch (e) {}
+        me.style.outline = ''; var w = document.getElementById('me-warn'); if (w) w.hidden = true; }); }
       document.addEventListener('submit', function (e) {       // every form is signed with the name typed once, above
         var by = e.target.querySelector('input[name="by"]');
         if (!by) return;
         var n = (me && me.value.trim()) || name;
-        if (!n) { e.preventDefault(); if (me) { me.focus(); me.style.outline = '2px solid var(--bad)'; } return; }
+        if (!n) {
+          e.preventDefault();
+          if (me) { me.scrollIntoView({block: 'center'}); me.focus(); me.style.outline = '2px solid var(--bad)'; }
+          var w = document.getElementById('me-warn'); if (w) w.hidden = false;
+          return;
+        }
         by.value = n;
       });
       document.addEventListener('click', function (e) {
