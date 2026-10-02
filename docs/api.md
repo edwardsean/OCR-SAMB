@@ -6,6 +6,7 @@ too: a script or another agent.
 
 - **Base URL:** `http://localhost:8002` (the API's own port, `API_PORT`). Through the web app it's the same path on
   its address: `http://localhost:3002/api/v1/…`.
+- **Postman:** import [docs/postman/](postman/) (a collection in the order of the work, reads and writes kept apart). [docs/testing.md](testing.md) walks through it.
 - **Live docs:** `http://localhost:8002/docs` lets you try every endpoint and shows every payload with its fields;
   the raw schema is `/openapi.json`. This page is the guide: the usual flow first, then the reference.
 

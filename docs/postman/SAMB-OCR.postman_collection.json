@@ -1,0 +1,1541 @@
+{
+  "info": {
+    "name": "SAMB Rekonsiliasi AR API",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json",
+    "description": "The REST API the web app calls (`/api/v1`). Guide: docs/api.md (every endpoint and payload) and docs/testing.md (how to test the whole workflow).\n\n1. Set `baseUrl` (the API, default http://localhost:8002) and `by` (your name: it signs every decision).\n2. Run **1 · Look around**: read-only. Each request fills the variables the next one needs (`batch`, `page`, `sor`, …), so run them in order the first time.\n3. **3 · See the errors** shows the error payloads; nothing is written.\n4. **2 · Do the work** changes data: read each request's description first. Use it on a test stack.\n\nNo login yet: `by` is a name, as typed."
+  },
+  "item": [
+    {
+      "name": "1 · Look around (read only)",
+      "item": [
+        {
+          "name": "Session: the top bar",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/session",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "session"
+              ]
+            },
+            "description": "The counts the top bar shows: orders that need a person (`needs_you`), pages whose type is unsure (`unsure_left`), the teacher's line, today's date."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"answers 200\", () => pm.response.to.have.status(200));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Health: services that don't answer",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/health",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "health"
+              ]
+            },
+            "description": "`{bad: [...], n}`: the services that don't answer, out of `n`. Takes a moment: it probes each one."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"answers 200\", () => pm.response.to.have.status(200));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Words: the Indonesian wording",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/words",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "words"
+              ]
+            },
+            "description": "Every word the screens show for a stored value: document types, statuses, check names, field names, reasons."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"answers 200\", () => pm.response.to.have.status(200));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Beranda: work waiting, recent scans",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/home",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "home"
+              ]
+            },
+            "description": "What waits for a person over every scan (`todo`), and the recent scans with their orders by status."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"answers 200\", () => pm.response.to.have.status(200));",
+                  "try { const v = (() => { const j = pm.response.json(); return j.todo.need.batch || (j.scans[0] || {}).id; })(); if (!pm.collectionVariables.get(\"batch\") && v !== undefined && v !== null && v !== \"\") pm.collectionVariables.set(\"batch\", String(v)); } catch (e) {}"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Recent scans",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/scans?limit=20",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "scans"
+              ],
+              "query": [
+                {
+                  "key": "limit",
+                  "value": "20"
+                }
+              ]
+            },
+            "description": "Recent uploads, newest first. Sets `batch` (if empty) to the newest."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"answers 200\", () => pm.response.to.have.status(200));",
+                  "try { const v = (() => { const j = pm.response.json(); return (j.scans[0] || {}).id; })(); if (!pm.collectionVariables.get(\"batch\") && v !== undefined && v !== null && v !== \"\") pm.collectionVariables.set(\"batch\", String(v)); } catch (e) {}"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "One scan: its pages and orders",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/scans/{{batch}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "scans",
+                "{{batch}}"
+              ]
+            },
+            "description": "One scan: its status (received → splitting → split → queued → reading → read), every page with its type and flags, its orders by status. Sets `page` to its first page with a known type, and `thumbKey`."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"answers 200\", () => pm.response.to.have.status(200));",
+                  "try { const v = (() => { const j = pm.response.json(); return (j.pages.find(p => p.doc_type) || j.pages[0] || {}).page_no; })(); if (v !== undefined && v !== null && v !== \"\") pm.collectionVariables.set(\"page\", String(v)); } catch (e) {}",
+                  "try { const v = (() => { const j = pm.response.json(); return (j.pages[0] || {}).thumb_upright_path || (j.pages[0] || {}).thumb_path; })(); if (v !== undefined && v !== null && v !== \"\") pm.collectionVariables.set(\"thumbKey\", String(v)); } catch (e) {}"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "One page: its fields and where each sits",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/scans/{{batch}}/pages/{{page}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "scans",
+                "{{batch}}",
+                "pages",
+                "{{page}}"
+              ]
+            },
+            "description": "One page. `fix` (once the page is read) has its fields with the value read, where it sits on the paper (`box`: ymin,xmin,ymax,xmax on 0-1000) and what backed it (`verdict`, `by`), its table rows, and the words a person can click. Sets `field` to its first field."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"answers 200\", () => pm.response.to.have.status(200));",
+                  "try { const v = (() => { const j = pm.response.json(); return ((j.fix || {}).fields || [])[0] && j.fix.fields[0].name; })(); if (v !== undefined && v !== null && v !== \"\") pm.collectionVariables.set(\"field\", String(v)); } catch (e) {}"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "What a region of the page holds",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/scans/{{batch}}/pages/{{page}}/region?box=100,100,200,500",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "scans",
+                "{{batch}}",
+                "pages",
+                "{{page}}",
+                "region"
+              ],
+              "query": [
+                {
+                  "key": "box",
+                  "value": "100,100,200,500"
+                }
+              ]
+            },
+            "description": "The words Tesseract read in a box marked on the paper, and a suggested value."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"answers 200\", () => pm.response.to.have.status(200));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Key check: does Satellite know this number?",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/keycheck?field=sor&value=SOR26110200123",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "keycheck"
+              ],
+              "query": [
+                {
+                  "key": "field",
+                  "value": "sor"
+                },
+                {
+                  "key": "value",
+                  "value": "SOR26110200123"
+                }
+              ]
+            },
+            "description": "Before a person saves an SOR or PO number: does Satellite have an order with it? A warning, never a refusal."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"answers 200\", () => pm.response.to.have.status(200));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Lesson status after a fix",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/lessons?batch={{batch}}&page={{page}}&field={{field}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "lessons"
+              ],
+              "query": [
+                {
+                  "key": "batch",
+                  "value": "{{batch}}"
+                },
+                {
+                  "key": "page",
+                  "value": "{{page}}"
+                },
+                {
+                  "key": "field",
+                  "value": "{{field}}"
+                }
+              ]
+            },
+            "description": "What a correction is doing now: kept as a lesson, the teacher writing a tip, tested, switched on. `final: true` when nothing more will happen by itself."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"answers 200\", () => pm.response.to.have.status(200));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Jenis halaman: the next unsure page",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/labels?batch={{batch}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "labels"
+              ],
+              "query": [
+                {
+                  "key": "batch",
+                  "value": "{{batch}}"
+                }
+              ]
+            },
+            "description": "The next page of the scan whose type the system couldn't decide (`page` null when none is left), its neighbours, and the choices. Sets `labelPage`."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"answers 200\", () => pm.response.to.have.status(200));",
+                  "try { const v = (() => { const j = pm.response.json(); return j.page; })(); if (v !== undefined && v !== null && v !== \"\") pm.collectionVariables.set(\"labelPage\", String(v)); } catch (e) {}"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Berkas per SOR: orders and held documents",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/bundles?batch={{batch}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "bundles"
+              ],
+              "query": [
+                {
+                  "key": "batch",
+                  "value": "{{batch}}"
+                }
+              ]
+            },
+            "description": "The scan's orders with their documents and how each joined, the documents held because their number isn't sure (`view.held`, each with `confirm.field`), and pages in no order yet. Sets `heldPage`, `heldField`, `heldValue` from the first held document."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"answers 200\", () => pm.response.to.have.status(200));",
+                  "try { const v = (() => { const j = pm.response.json(); return ((j.view || {}).held || [])[0] && j.view.held[0].page_from; })(); if (v !== undefined && v !== null && v !== \"\") pm.collectionVariables.set(\"heldPage\", String(v)); } catch (e) {}",
+                  "try { const v = (() => { const j = pm.response.json(); return ((j.view || {}).held || [])[0] && (j.view.held[0].confirm || {}).field; })(); if (v !== undefined && v !== null && v !== \"\") pm.collectionVariables.set(\"heldField\", String(v)); } catch (e) {}",
+                  "try { const v = (() => { const j = pm.response.json(); return ((j.view || {}).held || [])[0] && (j.view.held[0].confirm || {}).value; })(); if (v !== undefined && v !== null && v !== \"\") pm.collectionVariables.set(\"heldValue\", String(v)); } catch (e) {}"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Periksa order: the scan's orders",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/orders?batch={{batch}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "orders"
+              ],
+              "query": [
+                {
+                  "key": "batch",
+                  "value": "{{batch}}"
+                }
+              ]
+            },
+            "description": "The scan's orders, the ones that need a person first, each with its status and short `issues`. Sets `sor` to the first that needs a person."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"answers 200\", () => pm.response.to.have.status(200));",
+                  "try { const v = (() => { const j = pm.response.json(); return (j.rows.find(r => r.status === 'needs_review') || j.rows[0] || {}).sor_no; })(); if (v !== undefined && v !== null && v !== \"\") pm.collectionVariables.set(\"sor\", String(v)); } catch (e) {}"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "One order: what is left to decide",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/orders/{{sor}}?batch={{batch}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "orders",
+                "{{sor}}"
+              ],
+              "query": [
+                {
+                  "key": "batch",
+                  "value": "{{batch}}"
+                }
+              ]
+            },
+            "description": "Everything one order's review needs. `open_items` is what a person must decide (see docs/api.md for how to answer each kind); `can_approve` and `left` say whether it can be approved. Sets `checkKey`/`checkPrint` from the first difference that can be accepted, and `chain`/`chainName` from the customer's calibration."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"answers 200\", () => pm.response.to.have.status(200));",
+                  "try { const v = (() => { const j = pm.response.json(); return (j.open_items.find(i => i.kind === 'check' && i.accept) || {}).key; })(); if (v !== undefined && v !== null && v !== \"\") pm.collectionVariables.set(\"checkKey\", String(v)); } catch (e) {}",
+                  "try { const v = (() => { const j = pm.response.json(); return (j.open_items.find(i => i.kind === 'check' && i.accept) || {}).print; })(); if (v !== undefined && v !== null && v !== \"\") pm.collectionVariables.set(\"checkPrint\", String(v)); } catch (e) {}",
+                  "try { const v = (() => { const j = pm.response.json(); return (j.calibration || {}).chain; })(); if (v !== undefined && v !== null && v !== \"\") pm.collectionVariables.set(\"chain\", String(v)); } catch (e) {}",
+                  "try { const v = (() => { const j = pm.response.json(); return (j.calibration || {}).name; })(); if (v !== undefined && v !== null && v !== \"\") pm.collectionVariables.set(\"chainName\", String(v)); } catch (e) {}"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Data terkirim: published orders",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/published",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "published"
+              ]
+            },
+            "description": "Every order published to Satellite, newest first. Sets `publishedSor`."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"answers 200\", () => pm.response.to.have.status(200));",
+                  "try { const v = (() => { const j = pm.response.json(); return (j.rows[0] || {}).sor_no; })(); if (v !== undefined && v !== null && v !== \"\") pm.collectionVariables.set(\"publishedSor\", String(v)); } catch (e) {}"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "One published order, as Satellite stores it",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/published/{{publishedSor}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "published",
+                "{{publishedSor}}"
+              ]
+            },
+            "description": "Each document's values beside its scan pages (where each sits, what backed it), and the database rows exactly as stored (`tables`)."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"answers 200\", () => pm.response.to.have.status(200));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "A page image",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/img/{{thumbKey}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "img",
+                "{{thumbKey}}"
+              ]
+            },
+            "description": "A page image by its storage key (here the first page's thumbnail)."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"answers 200\", () => pm.response.to.have.status(200));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "A published order's PDF",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/documents/{{publishedSor}}.pdf",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "documents",
+                "{{publishedSor}}.pdf"
+              ]
+            },
+            "description": "The PDF written to Satellite for one SOR."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"answers 200\", () => pm.response.to.have.status(200));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Status (developers)",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/status",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "status"
+              ]
+            },
+            "description": "Every service's health, the tables, the AI models' usage, and the scheduler's jobs (`jobs`: when each last ran and what it did)."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"answers 200\", () => pm.response.to.have.status(200));"
+                ]
+              }
+            }
+          ]
+        }
+      ],
+      "description": "Every read, in the order of the work. Safe on any stack."
+    },
+    {
+      "name": "2 · Do the work (writes to the database)",
+      "item": [
+        {
+          "name": "Upload a scanned PDF",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/scans",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "scans"
+              ]
+            },
+            "description": "Choose a PDF in Body → form-data → `file`. Answers 201 `{batch_id}` and sets `batch`. The scan is recorded at once (status `received`) and put on q.intake; the intake worker splits it and the page workers read each page (this uses the AI OCR's quota). The same file again answers 409 with the earlier scan. **Writes to the database.**",
+            "body": {
+              "mode": "formdata",
+              "formdata": [
+                {
+                  "key": "file",
+                  "type": "file",
+                  "src": []
+                }
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"answers 201\", () => pm.response.to.have.status(201));",
+                  "try { const v = (() => { const j = pm.response.json(); return j.batch_id || (j.dup || {}).id; })(); if (v !== undefined && v !== null && v !== \"\") pm.collectionVariables.set(\"batch\", String(v)); } catch (e) {}"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Say what a page is",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/labels",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "labels"
+              ]
+            },
+            "description": "Labels a page whose type is unsure (`labelPage`, from \"Jenis halaman\"). `label`: FP, TTG, PO, SJ, FPJ, PEL, CONTINUATION or OTHER. The page then resumes reading. **Writes to the database.**",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"batch\": \"{{batch}}\",\n  \"page\": \"{{labelPage}}\",\n  \"label\": \"TTG\",\n  \"customer\": \"\",\n  \"note\": \"\",\n  \"labelled_by\": \"{{by}}\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"answers 200\", () => pm.response.to.have.status(200));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Confirm a held document's number",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/bundles/confirmations",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "bundles",
+                "confirmations"
+              ]
+            },
+            "description": "Confirms the number (SOR or PO) of a document held out of every order (`heldPage`/`heldField`/`heldValue`, from \"Berkas per SOR\"). `value` is the number as printed: check it on the page first. **Writes to the database.**",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"batch\": \"{{batch}}\",\n  \"page\": \"{{heldPage}}\",\n  \"field\": \"{{heldField}}\",\n  \"value\": \"{{heldValue}}\",\n  \"by\": \"{{by}}\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"answers 200\", () => pm.response.to.have.status(200));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Correct a value on a page",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/scans/{{batch}}/pages/{{page}}/fixes",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "scans",
+                "{{batch}}",
+                "pages",
+                "{{page}}",
+                "fixes"
+              ]
+            },
+            "description": "A correction made on the page viewer: `field` (a header field, or `lines[<row key>].<column>`), `value` as printed (or \"(not printed)\"), and where it was marked (`region`, optional). The page is checked again and the correction kept as a lesson. **Writes to the database.**",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"field\": \"{{field}}\",\n  \"value\": \"TYPE THE VALUE AS PRINTED\",\n  \"by\": \"{{by}}\",\n  \"region\": \"\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"answers 200\", () => pm.response.to.have.status(200));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Confirm or correct a value on an order",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/orders/{{sor}}/confirmations",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "orders",
+                "{{sor}}",
+                "confirmations"
+              ]
+            },
+            "description": "Answers a page card or a fix of an open item (\"One order\"): `page`, `field` and `value` as printed. **Writes to the database.**",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"batch\": \"{{batch}}\",\n  \"page\": \"{{page}}\",\n  \"field\": \"total\",\n  \"value\": \"TYPE THE VALUE AS PRINTED\",\n  \"by\": \"{{by}}\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"answers 200\", () => pm.response.to.have.status(200));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Pair a customer's row with an SO line",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/orders/{{sor}}/pairings",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "orders",
+                "{{sor}}",
+                "pairings"
+              ]
+            },
+            "description": "Says which line of SAMB's order (`lines[].line_no` in \"One order\") a PO/receipt row is, or `\"none\"` with a `note` from `none_reasons`. `row` is the row's index on the page, from 0. **Writes to the database.**",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"batch\": \"{{batch}}\",\n  \"page\": \"{{page}}\",\n  \"row\": 0,\n  \"line_no\": \"none\",\n  \"note\": \"not in SAMB's order\",\n  \"by\": \"{{by}}\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"answers 200\", () => pm.response.to.have.status(200));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Accept a difference",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/orders/{{sor}}/acceptances",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "orders",
+                "{{sor}}",
+                "acceptances"
+              ]
+            },
+            "description": "Accepts an open check with a reason from `accept_reasons` (`checkKey`/`checkPrint`, from \"One order\"). It holds only while the check says exactly what it said (`input_print`). **Writes to the database.**",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"batch\": \"{{batch}}\",\n  \"check\": \"{{checkKey}}\",\n  \"input_print\": \"{{checkPrint}}\",\n  \"reason\": \"rounding\",\n  \"note\": \"\",\n  \"by\": \"{{by}}\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"answers 200\", () => pm.response.to.have.status(200));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Calibrate a customer (once per customer)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/orders/{{sor}}/calibrations",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "orders",
+                "{{sor}}",
+                "calibrations"
+              ]
+            },
+            "description": "The customer's rounding allowance in rupiah (one of `calibration.steps`), or what its receipts print after a rejection (`receipt_shows`: received / ordered). Every order of the customer is checked again. **Writes to the database.**",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"chain\": \"{{chain}}\",\n  \"name\": \"{{chainName}}\",\n  \"allowance\": \"20\",\n  \"by\": \"{{by}}\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"answers 200\", () => pm.response.to.have.status(200));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Approve an order",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/orders/{{sor}}/approval",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "orders",
+                "{{sor}}",
+                "approval"
+              ]
+            },
+            "description": "Approves the order once nothing is left; answers 409 `{error: \"not yet\", left: [...]}` otherwise. It regroups the scan first. **Writes to the database.**",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"batch\": \"{{batch}}\",\n  \"by\": \"{{by}}\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"answers 200\", () => pm.response.to.have.status(200));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Mark the needs-you notices seen",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/notices/seen",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "notices",
+                "seen"
+              ]
+            },
+            "description": "What Periksa order sends once a browser shows it. Answers 204. **Writes to the database.**"
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"answers 204\", () => pm.response.to.have.status(204));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Publish the scan's finished orders",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/publications",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "publications"
+              ]
+            },
+            "description": "Writes every finished order of the scan (auto_ok or reviewed) to Satellite's tables, with one PDF per SOR. Answers `{result: [SOR, ...]}` and sets `publishedSor`. **Writes to Satellite's tables.**",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"batch\": \"{{batch}}\",\n  \"by\": \"{{by}}\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"answers 200\", () => pm.response.to.have.status(200));",
+                  "try { const v = (() => { const j = pm.response.json(); return (j.result || [])[0]; })(); if (v !== undefined && v !== null && v !== \"\") pm.collectionVariables.set(\"publishedSor\", String(v)); } catch (e) {}"
+                ]
+              }
+            }
+          ]
+        }
+      ],
+      "description": "A person's decisions, in the order of the work. Each one changes data: use a test stack."
+    },
+    {
+      "name": "3 · See the errors (nothing is written)",
+      "item": [
+        {
+          "name": "A decision without a name → 400",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/orders/SOR0/confirmations",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "orders",
+                "SOR0",
+                "confirmations"
+              ]
+            },
+            "description": "Every decision is signed: `by` is required. Refused before anything is written.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"batch\": \"b-0\",\n  \"page\": 1,\n  \"field\": \"total\",\n  \"value\": \"1\",\n  \"by\": \"\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"answers 400\", () => pm.response.to.have.status(400));",
+                  "pm.test(\"says why\", () => pm.expect(pm.response.json()).to.have.any.keys(\"error\", \"detail\"));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "An unknown page type → 400",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/labels",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "labels"
+              ]
+            },
+            "description": "Refused before anything is written.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"batch\": \"b-0\",\n  \"page\": 1,\n  \"label\": \"BANANA\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"answers 400\", () => pm.response.to.have.status(400));",
+                  "pm.test(\"says why\", () => pm.expect(pm.response.json()).to.have.any.keys(\"error\", \"detail\"));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "An allowance that isn't a number → 400",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/orders/SOR0/calibrations",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "orders",
+                "SOR0",
+                "calibrations"
+              ]
+            },
+            "description": "Refused before anything is written.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"chain\": \"x\",\n  \"by\": \"{{by}}\",\n  \"allowance\": \"abc\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"answers 400\", () => pm.response.to.have.status(400));",
+                  "pm.test(\"says why\", () => pm.expect(pm.response.json()).to.have.any.keys(\"error\", \"detail\"));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Approving without a name → 400",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/orders/SOR0/approval",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "orders",
+                "SOR0",
+                "approval"
+              ]
+            },
+            "description": "Refused before anything is written (approving regroups the scan, so the test leaves the name out).",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"batch\": \"b-0\",\n  \"by\": \"\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"answers 400\", () => pm.response.to.have.status(400));",
+                  "pm.test(\"says why\", () => pm.expect(pm.response.json()).to.have.any.keys(\"error\", \"detail\"));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "A body with fields missing → 422",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/orders/SOR0/pairings",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "orders",
+                "SOR0",
+                "pairings"
+              ]
+            },
+            "description": "The body is checked before the action runs: `detail` lists what is missing.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"batch\": \"b-0\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"answers 422\", () => pm.response.to.have.status(422));",
+                  "pm.test(\"says why\", () => pm.expect(pm.response.json()).to.have.any.keys(\"error\", \"detail\"));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "An order that doesn't exist → 404",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/orders/SOR0?batch=b-0",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "orders",
+                "SOR0"
+              ],
+              "query": [
+                {
+                  "key": "batch",
+                  "value": "b-0"
+                }
+              ]
+            },
+            "description": ""
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"answers 404\", () => pm.response.to.have.status(404));",
+                  "pm.test(\"says why\", () => pm.expect(pm.response.json()).to.have.any.keys(\"error\", \"detail\"));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "A region box that isn't four numbers → 400",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/scans/{{batch}}/pages/{{page}}/region?box=5,5",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "scans",
+                "{{batch}}",
+                "pages",
+                "{{page}}",
+                "region"
+              ],
+              "query": [
+                {
+                  "key": "box",
+                  "value": "5,5"
+                }
+              ]
+            },
+            "description": ""
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"answers 400\", () => pm.response.to.have.status(400));",
+                  "pm.test(\"says why\", () => pm.expect(pm.response.json()).to.have.any.keys(\"error\", \"detail\"));"
+                ]
+              }
+            }
+          ]
+        }
+      ],
+      "description": "How a refusal looks: a status and `{error}` (or FastAPI's `detail` for a malformed body)."
+    }
+  ],
+  "variable": [
+    {
+      "key": "baseUrl",
+      "value": "http://localhost:8002"
+    },
+    {
+      "key": "by",
+      "value": "Postman test"
+    },
+    {
+      "key": "batch",
+      "value": ""
+    },
+    {
+      "key": "page",
+      "value": "1"
+    },
+    {
+      "key": "field",
+      "value": "total"
+    },
+    {
+      "key": "sor",
+      "value": ""
+    },
+    {
+      "key": "checkKey",
+      "value": ""
+    },
+    {
+      "key": "checkPrint",
+      "value": ""
+    },
+    {
+      "key": "chain",
+      "value": ""
+    },
+    {
+      "key": "chainName",
+      "value": ""
+    },
+    {
+      "key": "labelPage",
+      "value": ""
+    },
+    {
+      "key": "heldPage",
+      "value": ""
+    },
+    {
+      "key": "heldField",
+      "value": ""
+    },
+    {
+      "key": "heldValue",
+      "value": ""
+    },
+    {
+      "key": "publishedSor",
+      "value": ""
+    },
+    {
+      "key": "thumbKey",
+      "value": ""
+    }
+  ]
+}
