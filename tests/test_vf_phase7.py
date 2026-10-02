@@ -12,7 +12,7 @@ import httpx
 import pytest
 
 pytestmark = pytest.mark.skipif(os.environ.get("PIPELINE") != "vlm-first", reason="vlm-first only")
-UI = os.environ.get("UI_URL", "http://ui:8000")
+UI = os.environ.get("API_URL", "http://localhost:8000")
 BID = "b-4bab9b736d"
 RIGHT_AFTER_7A = 137       # right values with ✅ once 7a was adopted (2026-09-25); later stages only add to it
 
@@ -51,7 +51,7 @@ def test_right_checkmarks_kept(p7):
 # ---- the grader itself: it must not call a wrong value right, nor a right one wrong ----
 
 def test_quantities_in_pieces():
-    from ui.app import _pieces
+    from api.app import _pieces
     assert _pieces("3 KTN", "KTN", 48) == 144
     assert _pieces("40.00", "PC", 40) == 40
     assert _pieces("52 CT", None, 24) == 1248
@@ -63,7 +63,7 @@ def test_quantities_in_pieces():
 def test_a_pack_size_is_never_a_quantity():
     """Hari Hari prints '40.00 PC' (pieces per carton) beside '1 KTN' received: reading the first is wrong even though
     one carton holds 40. A Hero PO prints the same quantity twice ('52 CT' and '1,248 EA'): either is right."""
-    from ui.app import _grade_customer_cell
+    from api.app import _grade_customer_cell
     hari = {"qty": "1 KTN", "uom": "KTN", "pack": 40, "pcs": 40}
     assert _grade_customer_cell("qty", "40.00", {"uom": "PC"}, hari)[0] == "WRONG"
     assert _grade_customer_cell("qty", "1 KTN", {"uom": "KTN"}, hari)[0] == "right"
@@ -76,7 +76,7 @@ def test_a_pack_size_is_never_a_quantity():
 
 
 def test_rows_pair_by_code_then_description_then_quantity():
-    from ui.app import _codes, _pair, _pieces
+    from api.app import _codes, _pair, _pieces
     key = [{"code": "81244379", "ean": "8852021647335", "description": "PRODIET 85G TUNA", "pack": 48, "pcs": 144},
            {"code": "81244379", "ean": "8852021647335", "description": "PRODIET 85G TUNA", "pack": 48, "pcs": 48,
             "bonus": True},
@@ -90,7 +90,7 @@ def test_rows_pair_by_code_then_description_then_quantity():
 
 
 def test_fp_rows_pair_by_description_so_a_misread_code_is_wrong():
-    from ui.app import _grade_fp_cell, _pair
+    from api.app import _grade_fp_cell, _pair
     so = [{"line_no": 10, "item_code": "1000566", "description": "PRODIET ADULT 85GR OCEAN FISH", "pcs_per_uom": 48,
            "invoice_qty": 144, "qty_pcs": 144},
           {"line_no": 40, "item_code": "1000564", "description": "PRODIET KITTEN 85GR TUNA", "pcs_per_uom": 48,
@@ -107,7 +107,7 @@ def test_fp_rows_pair_by_description_so_a_misread_code_is_wrong():
 
 
 def test_fp_quantity_and_pack_size():
-    from ui.app import _grade_fp_cell
+    from api.app import _grade_fp_cell
     hari = {"item_code": "1000371", "description": "SENNA KRUPUKKU 500GR UDANG", "pcs_per_uom": 24, "invoice_qty": 72,
             "qty_pcs": 72}
     assert _grade_fp_cell("qty_crt", "3", hari)[0] == "right"     # 72 pieces at 24 a carton print '3 / 0'
@@ -122,7 +122,7 @@ def test_fp_quantity_and_pack_size():
 def test_answer_key_rows_add_up():
     """Each row read by eye: pieces = cartons × pieces per carton; only PO and TTG pages carry rows."""
     import json
-    g = json.load(open("/app/testdata/golden_p1-32.json"))
+    g = json.load(open(os.path.join(os.path.dirname(__file__), "..", "testdata", "golden_p1-32.json")))
     for pg, rows in g["lines"].items():
         assert g["page_types"][pg] in ("PO", "TTG"), pg
         for k in rows:

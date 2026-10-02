@@ -23,18 +23,17 @@
                          [--note …] | gate <type> <version> | approve <type> <version> --by NAME
                          | reject <type> <version> | apply <type> | lint [<type>] | backfill
 """
-import os
 import sys
 
 from psycopg.types.json import Json
 
-from common import context, customer, db, knowledge, satellite, transcript, wiki
+from common import config, context, customer, db, knowledge, satellite, transcript, wiki
 from common.fields import DOCS, TYPE_MAP
 from common.verify import flat
 from worker import classify, vf
 from worker import main as v1
 
-TEACH_MODEL = os.environ.get("WIKI_TEACHER_MODEL", "glm-4.7-flash")   # text, free on Z.ai (vf-teacher has the key)
+TEACH_MODEL = config.WIKI_TEACHER_MODEL   # text, free on Z.ai (vf-teacher has the key)
 TEACH_TRIES = 2          # the teacher gets a second try, told why its first claim wasn't kept
 
 

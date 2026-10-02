@@ -1,0 +1,148 @@
+{% extends "base.html" %}
+{# A page's technical detail for the developers (as scanned, Tesseract's words, classification, the AI OCR's reading,
+   measurements). The page itself, with its fields and the fixer, is the web app's /batches/<id>/pages/<n>. #}
+{% block title %}Halaman {{ page_no }} · teknis{% endblock %}
+{% block main %}
+  <section class="head">
+    <p class="crumbs"><a href="/teknis/scan/{{ batch_id }}">{{ b.file_name if b else batch_id }}</a> / halaman {{ page_no }} / detail teknis</p>
+    <h1>Halaman {{ page_no }}: detail teknis</h1>
+    <p class="pager"><a href="/batches/{{ batch_id }}/pages/{{ page_no }}">Buka halaman ini di aplikasi</a>
+      {% if page_no > 1 %}<a href="/teknis/halaman/{{ batch_id }}/{{ page_no - 1 }}">Halaman sebelumnya</a>{% endif %}
+      {% if b and page_no < b.page_total %}<a href="/teknis/halaman/{{ batch_id }}/{{ page_no + 1 }}">Halaman berikutnya</a>{% endif %}</p>
+  </section>
+  {% if not p %}
+    <section class="alert bad">Halaman ini tidak ditemukan.</section>
+  {% elif not p.upright_path %}
+    <section class="alert">Not read yet ({{ p.status }}).{% if p.error %} <code>{{ p.error }}</code>{% endif %}</section>
+  {% else %}
+  <div class="three">
+    <section class="img">
+      <h2>1 · As scanned</h2>
+      <a href="/img/{{ p.original_path }}" target="_blank"><img src="/img/{{ p.original_path }}" alt="original"></a>
+    </section>
+    <section class="img">
+      <h2>2 · Upright
+        <span class="tabs"><button data-show="up" class="on">upright</button><button data-show="clean">cleaned</button><button data-show="boxes">word boxes</button></span></h2>
+      <div class="stack" data-view="up">
+        <img class="v-up" src="/img/{{ p.upright_path }}" alt="upright">
+        <img class="v-clean" src="/img/{{ p.clean_path }}" alt="cleaned">
+        {% if size %}
+        <svg class="v-boxes" viewBox="0 0 {{ size[0] }} {{ size[1] }}" preserveAspectRatio="none">
+          {% for w in words %}<rect x="{{ w[2] }}" y="{{ w[3] }}" width="{{ w[4] }}" height="{{ w[5] }}" class="{{ 'lo' if w[1] < 50 else ('mid' if w[1] < 70 else 'hi') }}"><title>{{ w[0] }} · {{ w[1] }}</title></rect>{% endfor %}
+        </svg>
+        {% endif %}
+      </div>
+      <p class="note">Word boxes: <span class="k hi"></span>≥ 70 confident <span class="k mid"></span>50–69 <span class="k lo"></span>&lt; 50. Hover a box for the word.</p>
+    </section>
+    <section>
+      <h2>3 · Tesseract text</h2>
+      <div class="ocrtext">{% for w in words %}<span class="{{ 'lo' if w[1] < 50 else ('mid' if w[1] < 70 else '') }}" title="{{ w[1] }}">{{ w[0] }}</span> {% endfor %}</div>
+    </section>
+  </div>
+
+  {% if p.type_status %}
+  {% set v = p.type_votes or {} %}{% set jv = v.get('jev', {}) %}
+  <section class="classify">
+    <h2>Phase 3 · What is this page?
+      {% if p.type_status == 'decided' %}<span class="tchip t-{{ p.doc_type }} big">{{ p.doc_type }}</span>
+      {% elif p.type_status == 'labelled' %}<span class="tchip t-{{ p.doc_type }} big">{{ p.doc_type }}</span>
+        {% set m = v.get('machine') or {} %}<span class="muted">the machine said {{ m.get('doc_type') if m.get('status') == 'decided' else 'unsure' }}</span>
+      {% else %}<span class="tchip t-unsure big">unsure</span> <span class="muted">best guess {{ p.type_guess or '—' }} · shown to a person, never used to link</span>{% endif %}
+      <span class="muted">— {{ v.get('reason') }}</span></h2>
+    <div class="votes">
+      <div><h3>Title keywords</h3><p class="big">{{ v.get('keyword') or '—' }}</p><p class="note">short title lines in the top 35%, no AI</p></div>
+      <div><h3>Jev</h3>
+        {% if jv.get('choice') %}
+          <p class="big">{{ jv.choice }} <span class="muted">confidence {{ jv.confidence }}</span></p>
+          {% for t, pr in (jv.probabilities or {}).items()|sort(attribute='1', reverse=true) %}{% if pr >= 0.01 %}
+            <div class="pbar"><span>{{ t }}</span><i style="width: {{ (pr * 100)|round|int }}%"></i><b>{{ pr }}</b></div>
+          {% endif %}{% endfor %}
+        {% else %}<p class="muted">{{ jv.get('skipped') or jv.get('error') or '—' }}</p>{% endif %}
+      </div>
+      <div><h3>FP layout</h3><p class="big">{{ p.layout_score }}</p><p class="note">similarity to SAMB's Faktur Penjualan print layout · FP vote at ≥ 0.70</p></div>
+      <div><h3>QR</h3><p class="big">{{ 'SOR QR' if v.get('qr_sor') else '—' }}</p><p class="note">only a Faktur Penjualan carries an SOR QR</p></div>
+    </div>
+  </section>
+  {% endif %}
+
+  {% if vfp %}{% include "_vf_page.html" %}{% endif %}
+
+  {% if p.extract_status %}
+  <section class="extract">
+    <h2>Phase 4 · AI OCR
+      {% if p.extract_status == 'done' %}<span class="pill s-queued">{% if p.doc_type %}read as {{ p.doc_type }}{% elif vfp %}read every field on the combined list · type not decided yet{% else %}read{% endif %}</span>
+      {% elif p.extract_status == 'failed' %}<span class="pill s-failed">failed</span> <span class="mono muted">{{ p.extract_error }}</span>
+      {% else %}<span class="pill">skipped</span> <span class="muted">{{ 'still unsure after the second try — held for a person' if p.type_status == 'unsure' else 'no field list for this type' }}</span>{% endif %}
+      {% for k, m in (p.vlm_meta or {}).items() %}<span class="muted mono"> · {{ k }}: {{ m.model }}{% if m.fell_back_from %} (fallback from {{ m.fell_back_from|join(', ') }}){% endif %}, {% if m.ms %}{{ (m.ms / 1000)|round(1) }} s, {% endif %}{% if m.tokens_thinking is not none %}{{ m.tokens_thinking }} thinking tokens{% elif m.tokens_in %}{{ m.tokens_in }} tokens in, {{ m.tokens_out }} out{% endif %}</span>{% endfor %}
+    </h2>
+    {% if vfp and p.extract_status == 'done' and not p.doc_type %}<p class="note" style="margin-top:0">The AI OCR read this page, but its type isn't decided yet, so there are no per-type fields here. The whole reading is in the vlm-first section below.</p>{% endif %}
+    {% set sec = (p.type_votes or {}).get('second_try') %}
+    {% if sec %}<p class="note" style="margin-top:0">Second classification try (Jev on the AI OCR's reading): <strong>{{ p.doc_type or ('unsure, guess ' ~ (p.type_guess or '—')) }}</strong> — {{ sec.reason }} · Jev {{ sec.jev.choice }} {{ sec.jev.confidence }}</p>{% endif %}
+    {% if p['keys'] %}
+    <div class="keys2">{% for k, v in p['keys'].items() %}
+      <span class="keychip {{ 'ok' if v.confirmed_by else 'bad' }}"><b>{{ k }}</b> {{ v.value }} · {{ ('confirmed by ' ~ v.confirmed_by) if v.confirmed_by else 'UNCONFIRMED' }}{% for pr in v.problems %} · {{ pr }}{% endfor %}</span>
+    {% endfor %}</div>
+    {% endif %}
+    {% if p.fields %}
+    <table class="grid small">
+      <thead><tr><th>Field</th><th>Value</th><th>As printed</th><th>Check · what it does</th></tr></thead>
+      <tbody>
+      {% set hc = (pc or {}).get('header', {}) %}
+      {% for k, f in p.fields.items() if k != 'lines' %}
+        {% set c = hc.get(k) %}
+        <tr class="{{ {'ok': 'ok', 'check': 'warn'}.get(c.verdict, '') if c else '' }}"><td class="mono">{{ k }}</td><td class="mono">{{ f.value if f and f.value is not none else '—' }}{% if f and f.ai_value is defined and f.ai_value != f.value %} <span class="muted small">(read {{ f.ai_value if f.ai_value is not none else 'nothing' }})</span>{% endif %}</td><td class="mono muted">{{ f.source_text if f and f.source_text else '' }}</td>
+          <td>{% if not c %}<span class="muted">not checked yet</span>{% elif c.verdict == 'ok' %}✓ {{ {'text': "printed in Tesseract's text", 'qr': 'equals the QR code', 'adds_up': 'DPP + PPN = Total', 'zoom': "Tesseract read its spot zoomed in", 'second_look': 'second look, backed by print', 'satellite': "Satellite's SO record", 'person': 'a person'}.get(c.by, c.by) }}{% if c.by in ('satellite', 'person') and c.why %} <span class="muted small">({{ c.why }})</span>{% endif %}{% elif c.verdict == 'check' and roles and roles.get(k) == 'bundle' %}<span class="muted">⚠ judged by the bundle against Satellite (never holds the page) — {{ c.why }}</span>{% elif c.verdict == 'check' and roles and roles.get(k) is none %}<span class="muted">kept as read, never blocks — {{ c.why }}</span>{% elif c.verdict == 'check' and roles and roles.get(k) == 'support' %}<span class="muted">⚠ Satellite settles it once the SOR is known; blocks only if print contradicts Satellite — {{ c.why }}</span>{% elif c.verdict == 'check' and roles and roles.get(k) == 'keys' and p.outcome == 'clear' %}<span class="muted">not needed: the page linked by another key — {{ c.why }}</span>{% elif c.verdict == 'check' and (p.second_look or {}).get('waiting') %}⚠ not backed yet, waiting for the AI OCR to look again — {{ c.why }}{% elif c.verdict == 'check' %}⚠ holds the page{{ ' (its key)' if roles and roles.get(k) == 'keys' else '' }}: a person checks it — {{ c.why }}{% else %}<span class="muted">nothing read</span>{% endif %}</td></tr>
+      {% endfor %}
+      </tbody>
+    </table>
+    {% if p.fields.get('lines') %}
+    {% set ls = ((pc or {}).get('summary') or {}).get('lines') %}
+    <details><summary>{{ p.fields['lines']|length }} line items{% if ls %} · ✓ {{ ls.ok }} · ⚠ {{ ls.check }} for a person{% endif %}</summary>
+      <table class="grid small"><thead><tr>{% for c in p.fields['lines'][0].keys() if c != 'row_text' %}<th>{{ c }}</th>{% endfor %}</tr></thead>
+      {% set lc = (pc or {}).get('lines', []) %}
+      <tbody>{% for l in p.fields['lines'] %}{% set rc = lc[loop.index0] if loop.index0 < lc|length else {} %}<tr title="{{ l.row_text }}">{% for c, v in l.items() if c != 'row_text' %}{% set cv = rc.get(c) %}<td class="mono {{ 'cell-ok' if cv and cv.verdict == 'ok' else ('cell-check' if cv and cv.verdict == 'check' else '') }}" title="{{ ('✓ on this row in Tesseract\'s text' if cv.verdict == 'ok' else '⚠ ' ~ (cv.why or '')) if cv else '' }}">{{ v if v is not none else '—' }}</td>{% endfor %}</tr>{% endfor %}</tbody></table>
+      <p class="note">Green = on this row in Tesseract's text. Amber = a person checks it (hover for why). Tesseract can't read most table rows on these 1-bit scans.</p>
+    </details>{% endif %}
+    {% endif %}
+  </section>
+  {% endif %}
+
+  <div class="two">
+    <section>
+      <h2>Measurements</h2>
+      <table class="kv">
+        <tr><th>rotation</th><td>{{ p.rotation }}°{% if p.osd_conf is not none %} <span class="muted">(Tesseract OSD confidence {{ p.osd_conf }})</span>{% endif %}</td></tr>
+        <tr><th>straightened by</th><td>{{ p.skew_angle }}°</td></tr>
+        <tr><th>black area · dark bands</th><td>{{ (p.black_ratio * 100)|round(1) }}% · {{ (p.dark_band_ratio * 100)|round(1) }}% of rows</td></tr>
+        <tr><th>OCR confidence (mean)</th><td><strong>{{ p.ocr_conf }}</strong> <span class="muted">faint below 55</span></td></tr>
+        <tr><th>confident characters</th><td>{{ p.confident_chars }}</td></tr>
+        <tr><th>QR code</th><td class="mono">{{ p.qr_text or '—' }}</td></tr>
+        <tr><th>time</th><td>{% if p.ms_enhance_ocr %}{{ (p.ms_enhance_ocr / 1000)|round(1) }} s{% else %}<span class="muted">—</span>{% endif %}</td></tr>
+      </table>
+    </section>
+    <section>
+      <h2>Which cleanup won <span class="muted">full page, read at 2×</span></h2>
+      <table class="grid small">
+        <thead><tr><th>Variant</th><th>Confident chars</th><th>Mean conf</th></tr></thead>
+        <tbody>
+        {% for name, sc in (p.variant_scores or {}).items() %}
+          <tr class="{{ 'ok' if name == p.ocr_variant }}"><td>{% if name == p.ocr_variant %}<span class="dot"></span>{% endif %}{{ name }}</td><td>{{ sc.confident_chars }}</td><td>{{ sc.mean_conf }}</td></tr>
+        {% endfor %}
+        </tbody>
+      </table>
+      <p class="note">close = dotted strokes reconnected, then softened · smooth = softened only. Every page is read with close; smooth is tried only when that read is weak (confidence below 55), and the one with more confident characters wins. The stored image stays 1×.</p>
+    </section>
+  </div>
+
+  <details><summary>Ticket and raw row</summary>
+    <pre class="mono">{{ ticket }}</pre>
+  </details>
+  {% endif %}
+  <script>
+    document.querySelectorAll('.tabs button').forEach(b => b.addEventListener('click', () => {
+      const st = b.closest('section').querySelector('.stack');
+      st.dataset.view = b.dataset.show;
+      b.parentElement.querySelectorAll('button').forEach(x => x.classList.toggle('on', x === b));
+    }));
+  </script>
+{% endblock %}

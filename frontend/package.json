@@ -1,0 +1,24 @@
+{
+  "name": "samb-rekonsiliasi-web",
+  "version": "0.1.0",
+  "private": true,
+  "description": "The screens Finance Invoicing works in, as a Next.js app over the FastAPI REST API (/api/v1).",
+  "scripts": {
+    "dev": "next dev",
+    "build": "next build",
+    "start": "next start",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "next": "16.3.8",
+    "react": "19.3.0",
+    "react-dom": "19.3.0",
+    "server-only": "^0.0.1"
+  },
+  "devDependencies": {
+    "@types/node": "^20",
+    "@types/react": "^19",
+    "@types/react-dom": "^19",
+    "typescript": "^5"
+  }
+}

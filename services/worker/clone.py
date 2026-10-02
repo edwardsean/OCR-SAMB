@@ -7,13 +7,12 @@ reads, classifies and checks every page itself. v1's database is opened read-onl
   python -m worker.clone <batch_id> <pages, e.g. 1-31,48,52,57>
 Safe to run twice (nothing is overwritten). It does not queue anything.
 """
-import os
 import sys
 
 import psycopg
 from psycopg.rows import dict_row
 
-from common import db
+from common import config, db
 
 
 def pages_arg(spec):
@@ -25,7 +24,7 @@ def pages_arg(spec):
 
 
 def main_db():
-    return psycopg.connect(os.environ["MAIN_DATABASE_URL"], row_factory=dict_row)
+    return psycopg.connect(config.required("MAIN_DATABASE_URL"), row_factory=dict_row)
 
 
 def clone(batch_id, pages):

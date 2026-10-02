@@ -459,24 +459,20 @@ def test_a_tip_is_applied_once_per_page_and_never_to_a_published_order():
     assert [p["page_no"] for p in wiki.to_apply(pages)] == [1, 3]
 
 
-def test_the_status_bar_renders_and_asks_again_until_final():
-    import jinja2
-    here = os.path.dirname(__file__)                  # the repo (tests/ beside services/) or the container (/app)
-    where = next(d for d in (os.path.join(here, "..", "services", "ui", "templates"),
-                             os.path.join(here, "..", "ui", "templates")) if os.path.isdir(d))
-    env = jinja2.Environment(loader=jinja2.FileSystemLoader(where), autoescape=True)
-    t = env.get_template("_lesson_status.html")
-    live = t.render(lp=wiki.lesson_progress(_lesson_ex("teaching")), batch="b-1 x", page=3, field="lines[A1].qty")
-    assert 'hx-trigger="every 3s"' in live and "field=lines%5BA1%5D.qty" in live and "batch=b-1%20x" in live
-    assert '<li class="now"' in live and "The teacher is writing a tip" in live
-    final = t.render(lp=wiki.lesson_progress(_lesson_ex("already_right")), batch="b", page=3, field="no_ref")
-    assert "hx-get" not in final and '<li class="skip"' in final
+def test_the_status_bar_says_it_in_indonesian_and_asks_again_until_final():
+    """What the web app's status bar after a fix shows (/api/v1/lessons): it asks again until the lesson is final."""
+    from api import bahasa
+    live = bahasa.lesson(wiki.lesson_progress(_lesson_ex("teaching")))
+    assert not live["final"] and live["headline"] == "Guru AI sedang menulis kiat dari perbaikan Anda…"
+    assert ("Guru AI menulis kiat", "now") in live["steps"]
+    final = bahasa.lesson(wiki.lesson_progress(_lesson_ex("already_right")))
+    assert final["final"] and any(state == "skip" for _, state in final["steps"])
 
 
 @pytest.mark.skipif(not os.environ.get("DATABASE_URL"), reason="needs the database (and migration 023)")
 def test_the_status_queries_run_on_the_database():
     from common import db
-    from ui import app
+    from api import app
     with db.connect() as c:
         lp = app.lesson_status(c, "no-such-batch", 1, "purchase_order_no")
         assert lp["final"] and "wasn't found" in lp["headline"]          # no fix there: no example

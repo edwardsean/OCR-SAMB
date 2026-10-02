@@ -1,0 +1,46 @@
+<!doctype html>
+<html lang="id">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{% block title %}Beranda{% endblock %} · SAMB Rekonsiliasi AR</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap">
+  <link rel="stylesheet" href="/static/app.css?v={{ static_v('app.css') }}">
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='2' fill='%231A1D22'/%3E%3Ctext x='16' y='22' font-family='Arial' font-weight='800' font-size='17' text-anchor='middle' fill='white'%3ES%3C/text%3E%3C/svg%3E">
+  <script src="https://cdn.jsdelivr.net/npm/htmx.org@2.0.4/dist/htmx.min.js"></script>
+</head>
+<body>
+  <a class="skip" href="#isi">Langsung ke isi</a>
+  <header class="top">
+    <a class="brand" href="/" title="Ke Beranda"><b>SAMB</b><small>Rekonsiliasi AR</small></a>
+    <nav class="main" aria-label="Menu utama">
+      {% for href, label, count in nav %}
+        {% set on = (path == '/') if href == '/' else (path == href or path.startswith(href + '/')) %}
+        {% set n = needs_you if count == 'needs_you' else (unsure_left if count == 'unsure_left' else 0) %}
+        <a href="{{ href }}" class="{{ 'on' if on }}" {% if on %}aria-current="page"{% endif %}>{{ label }}
+          {%- if n %}<span class="nbadge{{ ' amber' if count == 'unsure_left' }}" title="{{ 'order baru yang perlu Anda cek' if count == 'needs_you' else 'halaman yang jenisnya belum pasti' }}">{{ n }}</span>{% endif %}</a>
+      {% endfor %}
+    </nav>
+    <div class="top-right">
+      {% if vf %}<div class="teacher-now" hx-get="/partials/teacher" hx-trigger="load, every 5s" hx-swap="innerHTML"></div>{% endif %}
+      <details class="techmenu{{ ' on' if tech_on }}">
+        <summary>Teknis</summary>
+        <div class="menu">
+          <p>Untuk tim pengembang</p>
+          {% for href, label in tech %}<a href="{{ href }}" class="{{ 'on' if path == href or path.startswith(href + '/') }}">{{ label }}</a>{% endfor %}
+        </div>
+      </details>
+    </div>
+  </header>
+  {% if tech_on %}<div class="techbar">Halaman teknis untuk tim pengembang (isinya berbahasa Inggris). Pekerjaan sehari-hari ada di <a href="/">Beranda</a>.</div>{% endif %}
+  <main id="isi">{% block main %}{% endblock %}</main>
+  <script>
+    // the Teknis menu closes when you click anywhere else
+    document.addEventListener('click', function (e) {
+      document.querySelectorAll('details.techmenu[open]').forEach(function (d) { if (!d.contains(e.target)) d.open = false; });
+    });
+  </script>
+</body>
+</html>

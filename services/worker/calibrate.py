@@ -1,15 +1,18 @@
-"""Run phase 2 on hand-labelled pages and print the raw metrics used to set thresholds."""
+"""Run phase 2 on hand-labelled pages and print the raw metrics used to set thresholds.
+
+python -m worker.calibrate <batch> <pages, e.g. 1,4,15>"""
 import io, re, sys, json
 import numpy as np
 from PIL import Image
-from common import storage
+from common import config, storage
 from worker import enhance
 
-BATCH = "b-4bab9b736d"
-pages = [int(x) for x in sys.argv[1].split(",")]
+BATCH = sys.argv[1]
+pages = [int(x) for x in sys.argv[2].split(",")]
+PREFIX = config.STORAGE_PREFIX
 print(f"{'pg':>3} {'rot':>4} {'osd':>5} {'skew':>5} {'band':>5} {'speck':>5} {'variant':>11} {'conf':>5} {'chars':>5}  flags / checks                    secs")
 for n in pages:
-    o = storage.client().get_object("scans", f"pages/{BATCH}/original/p{n:03d}.png")
+    o = storage.client().get_object(storage.bucket(), f"{PREFIX}pages/{BATCH}/original/p{n:03d}.png")
     a = np.array(Image.open(io.BytesIO(o.read())).convert("L")); o.close()
     _, _, r = enhance.process(a)
     flat = re.sub(r"[^A-Z0-9]", "", r["classical_text"].upper())

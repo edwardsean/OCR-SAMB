@@ -10,7 +10,7 @@ import pytest
 from common import db, knowledge
 
 pytestmark = pytest.mark.skipif(os.environ.get("PIPELINE") != "vlm-first", reason="vlm-first only")
-UI = os.environ.get("UI_URL", "http://ui:8000")
+UI = os.environ.get("API_URL", "http://localhost:8000")
 
 BLOCKS = [
     {"id": "b4", "kind": "printed", "text": "Ref. PO No. : 4505832724", "box": [90, 600, 110, 820]},
@@ -59,10 +59,9 @@ def page12():
 
 def test_a_correction_marked_on_the_paper_fixes_the_page_and_keeps_an_example(page12):
     bid, n = page12
-    r = httpx.post(f"{UI}/page/fix", data={"batch": bid, "page": n, "field": "posting_date", "value": "2026-09-14",
-                                           "by": "test", "region": "300,500,330,700", "shown": "",
-                                           "back": "/review/SORX?batch=" + bid}, follow_redirects=False, timeout=120)
-    assert r.status_code == 303 and r.headers["location"].startswith("/review/SORX?batch=" + bid)
+    r = httpx.post(f"{UI}/api/v1/scans/{bid}/pages/{n}/fixes", json={"field": "posting_date", "value": "2026-09-14",
+                                                                    "by": "test", "region": "300,500,330,700"}, timeout=120)
+    assert r.status_code == 200 and r.json()["ok"]
     with db.connect() as c:
         conf = c.execute("SELECT value, confirmed_by FROM staging.field_confirmation WHERE batch_id=%s AND page_no=%s "
                          "AND field='posting_date'", (bid, n)).fetchone()
@@ -71,8 +70,8 @@ def test_a_correction_marked_on_the_paper_fixes_the_page_and_keeps_an_example(pa
     e = ex[0]
     assert e["source"] == "marked" and e["region"] == [300, 500, 330, 700] and e["doc_type"] == "TTG"
     assert e["field"] == "posting_date" and e["kind"] == "value" and e["pile"] in ("practice", "exam")
-    r = httpx.post(f"{UI}/page/fix", data={"batch": bid, "page": n, "field": "posting_date", "value": "(not printed)",
-                                           "by": "test", "region": ""}, follow_redirects=False, timeout=120)
+    r = httpx.post(f"{UI}/api/v1/scans/{bid}/pages/{n}/fixes", json={"field": "posting_date", "value": "(not printed)",
+                                                                    "by": "test", "region": ""}, timeout=120)
     with db.connect() as c:
         rows = c.execute("SELECT kind, status FROM staging.extract_example WHERE batch_id=%s AND page_no=%s ORDER BY id",
                          (bid, n)).fetchall()
@@ -80,8 +79,9 @@ def test_a_correction_marked_on_the_paper_fixes_the_page_and_keeps_an_example(pa
 
 
 def test_the_viewer_shows_the_fields_and_the_region_api_answers():
-    r = httpx.get(f"{UI}/batches/b-c80bbbde4d/pages/12?fix=purchase_order_no", timeout=60)
-    assert r.status_code == 200 and 'id="fixer"' in r.text and 'data-f="purchase_order_no"' in r.text
-    j = httpx.get(f"{UI}/api/region/b-c80bbbde4d/12?box=225,587,255,781", timeout=60).json()
+    fix = httpx.get(f"{UI}/api/v1/scans/b-c80bbbde4d/pages/12", timeout=60).json()["fix"]
+    assert "purchase_order_no" in [f["name"] for f in fix["fields"]]
+    region = f"{UI}/api/v1/scans/b-c80bbbde4d/pages/12/region"
+    j = httpx.get(region, params={"box": "225,587,255,781"}, timeout=60).json()
     assert "13,987,409.70" in j["suggest"]
-    assert httpx.get(f"{UI}/api/region/b-c80bbbde4d/12?box=9,9,1,1", timeout=60).status_code == 400
+    assert httpx.get(region, params={"box": "9,9,1,1"}, timeout=60).status_code == 400

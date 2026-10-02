@@ -6,7 +6,7 @@ import pytest
 
 from common import db
 
-UI = os.environ.get("UI_URL", "http://ui:8000")   # vlm-first sets its own UI
+UI = os.environ.get("API_URL", "http://localhost:8000")
 BID = "test-labels"
 
 
@@ -29,7 +29,11 @@ def fake_batch():
 
 
 def save(page, label, **kw):
-    return httpx.post(f"{UI}/label", data={"batch": BID, "page": page, "label": label, **kw}, follow_redirects=False)
+    return httpx.post(f"{UI}/api/v1/labels", json={"batch": BID, "page": page, "label": label, **kw}, timeout=60)
+
+
+def next_page():
+    return httpx.get(f"{UI}/api/v1/labels", params={"batch": BID}, timeout=60).json()["page"]
 
 
 def pile(page):
@@ -38,16 +42,16 @@ def pile(page):
 
 
 def test_save_relabel_keeps_pile_and_queue_moves_on():
-    assert "Halaman 2" in httpx.get(f"{UI}/label?batch={BID}").text        # first unsure page
+    assert next_page() == 2                                                  # first unsure page
     r = save(2, "PO", customer="Indomaret", note="no title")
-    assert r.status_code == 303 and r.headers["location"].startswith(f"/label?batch={BID}")
+    assert r.status_code == 200 and r.json()["ok"]
     first = pile(2)
     assert first["pile"] in ("practice", "exam") and first["label"] == "PO"
     for _ in range(5):                                                       # relabel: label changes, pile never does
         save(2, "CONTINUATION")
         assert pile(2)["pile"] == first["pile"]
     assert pile(2)["label"] == "CONTINUATION"
-    assert "Halaman 3" in httpx.get(f"{UI}/label?batch={BID}").text         # queue skips the labelled page
+    assert next_page() == 3                                                  # queue skips the labelled page
 
 
 def test_unknown_type_refused():

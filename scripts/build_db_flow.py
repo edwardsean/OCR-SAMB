@@ -144,7 +144,7 @@ def _col_line(t, line, tag):
 # 2. The touch map: which phase reads / writes which columns
 # ---------------------------------------------------------------------------
 ALL = "*"
-SRC_UI, SRC_INTAKE, SRC_WORKER = "services/ui/app.py", "services/common/intake.py", "services/worker/main.py"
+SRC_UI, SRC_INTAKE, SRC_WORKER = "services/api/app.py", "services/common/intake.py", "services/worker/main.py"
 
 
 def op(label, table, verb, r=(), w=(), note="", src=None, missing=(), auto=()):
@@ -1839,7 +1839,7 @@ PIPES = [
                 "to its tables.",
      "sources": "services/worker/vf.py, clone.py, lesson.py, services/common/context.py, verify.py, satellite.py, "
                 "fields.py, notice.py, services/grouper/group.py, crosscheck.py, matching.py, services/publisher/publish.py, "
-                "scripts/load_satellite.py and services/ui/app.py"},
+                "scripts/load_satellite.py and services/api/app.py"},
     {"id": "v1", "name": "v1", "sub": "branch main · database ocr",
      "files": SCHEMA_FILES, "phases": PHASES, "groups": PAGE_GROUPS, "counts": (20, 47, 12), "overview": overview_svg,
      "gaps": GAPS,
@@ -1848,7 +1848,7 @@ PIPES = [
              "the sample) from upload to Satellite.",
      "caption": "The v1 map. Phases 1 to 5 are built; 6 to 8 exist only in the schema and the plan. Click a phase to jump "
                 "to its tables.",
-     "sources": "services/common/intake.py, services/worker/main.py and services/ui/app.py"},
+     "sources": "services/common/intake.py, services/worker/main.py and services/api/app.py"},
 ]
 
 

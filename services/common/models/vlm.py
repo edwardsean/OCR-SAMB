@@ -8,16 +8,16 @@ Every value comes with source_text: the characters exactly as printed, so phase 
 """
 import base64
 import json
-import os
 import time
 from datetime import datetime
 from zoneinfo import ZoneInfo
 
 import httpx
 
+from common import config
 from common.models import schemas
 
-URL = "https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent"
+URL = config.GEMINI_BASE_URL + "/models/{model}:generateContent"
 THINKING_BUDGET = 2048
 _EXHAUSTED = {}   # model -> date its free-tier DAILY quota ran out; skipped until the next day (no retry waits)
 RULES = """You are reading ONE scanned page of Indonesian accounts-receivable paperwork for PT Sarana Abadi Makmur Bersama (SAMB).
@@ -30,13 +30,12 @@ Rules, strictly:
 
 def _models():
     """Pinned model first, then fallbacks for when the free tier says 'high demand' (503)."""
-    first = os.environ.get("GEMINI_MODEL", "gemini-3.8-flash")
-    rest = [m.strip() for m in os.environ.get("GEMINI_FALLBACK_MODELS", "gemini-3.7-flash,gemini-3.5-flash").split(",") if m.strip()]
-    return [first] + [m for m in rest if m != first]
+    first = config.GEMINI_MODEL
+    return [first] + [m for m in config.GEMINI_FALLBACK_MODELS if m != first]
 
 
 def _call(parts, schema, retries=4, timeout=180):
-    key = os.environ.get("GEMINI_API_KEY")
+    key = config.GEMINI_API_KEY
     if not key:
         raise RuntimeError("no GEMINI_API_KEY")
     body = {"contents": [{"role": "user", "parts": parts}],

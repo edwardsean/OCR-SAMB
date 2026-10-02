@@ -5,7 +5,6 @@ After a page is done: tick the batch scoreboard; the worker that ticks it to N o
 """
 import io
 import json
-import os
 import time
 import traceback
 
@@ -15,7 +14,7 @@ import pika
 from PIL import Image
 from psycopg.types.json import Json
 
-from common import db, health, queue, storage, verify
+from common import config, db, health, queue, storage, verify
 from common import keys as keymod
 from common.models import schemas, vlm
 from worker import classify, enhance
@@ -200,7 +199,7 @@ def ring_bell(ch, bid, run):
                      pika.BasicProperties(delivery_mode=2, content_type="application/json"))
 
 
-PIPELINE = os.environ.get("PIPELINE", "v1")
+PIPELINE = config.PIPELINE
 
 
 def on_message(ch, method, props, body):

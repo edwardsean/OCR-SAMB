@@ -1,13 +1,14 @@
-// Browser test for the page viewer (read-then-map, Stage 2a). Not run by pytest: run by hand, it drives real Chrome.
-//   PUPPETEER=<path to puppeteer-core's lib/puppeteer/puppeteer-core.js> BASE=http://localhost:8002 node pick_all.mjs <args>
+// Browser test for the page viewer (read-then-map, Stage 2a; the web app's, frontend/). Not run by pytest: run by
+// hand, it drives real Chrome (CHROME_PATH). BASE is the web app.
+//   PUPPETEER=<path to puppeteer-core's lib/puppeteer/puppeteer-core.js> BASE=http://localhost:3002 node pick_all.mjs <args>
 // puppeteer-core ships with @mermaid-js/mermaid-cli (npx caches it under ~/.npm/_npx/*/node_modules/puppeteer-core).
 // pick_all.mjs <page_no> [word,word,…]: hover and click EVERY box on the page in Fix mode (zoomed as Fix zooms);
 //   prints how many hover and click right; saves hover crops of the words named (hover_<page>_<word>.png) and
 //   the zoomed viewer (zoomed_<page>.png) into OUT (default /tmp).
 const puppeteer = (await import(process.env.PUPPETEER)).default;
-const BASE = process.env.BASE || 'http://localhost:8002', OUT = process.env.OUT || '/tmp';
+const BASE = process.env.BASE || 'http://localhost:3002', OUT = process.env.OUT || '/tmp';
 const page_no = process.argv[2] || '3', want = (process.argv[3] || '').split(',').filter(Boolean);
-const b = await puppeteer.launch({executablePath: '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome', args: ['--no-sandbox']});
+const b = await puppeteer.launch({executablePath: process.env.CHROME_PATH || '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome', args: ['--no-sandbox']});
 const p = await b.newPage(); await p.setViewport({width: 1500, height: 1100, deviceScaleFactor: 2});
 await p.goto(BASE + '/batches/b-c80bbbde4d/pages/' + page_no, {waitUntil: 'networkidle0'});
 await p.evaluate(() => localStorage.setItem('rv-name', 'visual-test'));

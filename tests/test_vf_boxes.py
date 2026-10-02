@@ -12,7 +12,7 @@ import pytest
 from common import boxes, db
 from worker import boxes as made
 
-UI = os.environ.get("UI_URL", "http://ui:8000")
+UI = os.environ.get("API_URL", "http://localhost:8000")
 SIZE = (2500, 10000)                                   # a page 2500 pixels wide, 10000 tall: 0-1000 = pixels / 10
 
 
@@ -182,7 +182,7 @@ def test_the_viewer_uses_the_boxes_the_worker_stored():
             pytest.skip("no staging.page.pick here (schema/021 not applied)")
     if not p or not p["pick"] or p["pick"].get("v") != made.version(p["transcript_version"]):
         pytest.skip("page 3's boxes not made here: python -m worker.boxes b-c80bbbde4d")
-    r = httpx.get(f"{UI}/batches/b-c80bbbde4d/pages/3", timeout=60)
-    assert r.status_code == 200 and r.text.count('class="u"') == len(p["pick"]["units"])
-    assert 'data-m="ink"' in r.text or 'data-m="split"' in r.text
-    assert 'id="fx-lines">{' in r.text
+    fix = httpx.get(f"{UI}/api/v1/scans/b-c80bbbde4d/pages/3", timeout=60).json()["fix"]
+    assert len(fix["units"]) == len(p["pick"]["units"])
+    assert any(u["match"] in ("ink", "split") for u in fix["units"])
+    assert fix["lines"]                                                   # the copy's lines, to cut a pick from

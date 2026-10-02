@@ -4,14 +4,14 @@
 //   by their copied line and token numbers (data-b, data-i), so the drag covers exactly their boxes. Saves the drag
 //   in progress (drag_<n>.png: the words lit, the label by the pointer) and the panel after it (drag_<n>_panel.png).
 const puppeteer = (await import(process.env.PUPPETEER)).default;
-const BASE = process.env.BASE || 'http://localhost:8002', OUT = process.env.OUT || '/tmp';
+const BASE = process.env.BASE || 'http://localhost:3002', OUT = process.env.OUT || '/tmp';
 const cases = [
   {page: 1, from: ['b1', 1], to: ['b1', 4], want: 'SARANA ABADI MAKMUR BERSAMA'},              // one line
   {page: 1, from: ['b41', 2], to: ['b41', 4], want: '15:16:50'},                                // cut as written
   {page: 12, from: ['b11', 2], to: ['b12', 4], want: 'JL. DR IDE ANAK AGUNG GDE KUNINGAN TIMUR, SETIABUDI'},  // two lines
   {page: 3, region: [163, 13, 190, 80], want: '321'},                                           // no box: read there
 ];
-const b = await puppeteer.launch({executablePath: '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome', args: ['--no-sandbox']});
+const b = await puppeteer.launch({executablePath: process.env.CHROME_PATH || '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome', args: ['--no-sandbox']});
 const p = await b.newPage(); await p.setViewport({width: 1500, height: 1100, deviceScaleFactor: 2});
 let ok = 0;
 for (const [n, c] of cases.entries()) {

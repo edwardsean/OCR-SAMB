@@ -15,14 +15,13 @@ Where is the spot?
   python -m worker.zoom report <batch_id> [pages]   try it on v1's stored readings (read-only, no model calls)
 """
 import io
-import os
 import re
 import sys
 
 import cv2
 import numpy as np
 
-from common import verify
+from common import config, verify
 from worker import enhance
 
 ZOOM = 3
@@ -254,7 +253,7 @@ def report(batch_id, pages=None):
     from common import storage
     from common.fields import CANON, TYPE_MAP
 
-    with psycopg.connect(os.environ["MAIN_DATABASE_URL"], row_factory=dict_row) as m:   # read-only
+    with psycopg.connect(config.required("MAIN_DATABASE_URL"), row_factory=dict_row) as m:   # read-only
         rows = m.execute("""SELECT p.page_no, p.doc_type::text AS t, p.fields, p.ocr_words, p.upright_path,
                                    f.field_path, f.status, f.confirmed_by
                               FROM staging.field_check f JOIN staging.page p USING (batch_id, page_no)

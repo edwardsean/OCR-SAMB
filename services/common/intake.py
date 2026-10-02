@@ -1,28 +1,33 @@
-"""Phase 1 intake: one PDF → page images + page rows → one queue message per page.
+"""Intake: one uploaded PDF → page images + page rows → one queue message per page. No n8n (the mentor, 2026-10-02:
+n8n struggles with thousands of records and several workers): RabbitMQ carries the work.
 
-n8n calls these two steps in order (see n8n/intake.workflow.json):
-  split(batch)   render every page, store images, write scan_batch + page rows
-  enqueue(batch) publish one ticket per page to q.pages
-The vlm-first experiment calls them itself from its upload (n8n belongs to v1): its database, its RabbitMQ vhost, and
-its files under STORAGE_PREFIX (vf/), so it never writes v1's.
+  receive(data, file_name)   the upload: store the PDF, record the scan ('received'), put it on q.intake
+  split(batch_id)            the intake worker (intake/serve.py): render every page, write the page rows ('split')
+  enqueue(batch_id)          then one ticket per page on q.pages ('queued')
+  waiting(minutes)           scans received but not split after a while: the scheduler puts them back on q.intake
+
+Each step is safe to repeat: a scan is split by one worker at a time (a lock per scan), only 'received' (or a split a
+worker died in) is split, and only the call that moves 'split' → 'queued' publishes the pages.
 """
+import hashlib
 import io
 import json
 import os
 import subprocess
 import tempfile
 from concurrent.futures import ThreadPoolExecutor
+from datetime import datetime, timedelta, timezone
 
 import pika
 from PIL import Image
 from pypdf import PdfReader
 
-from . import db, queue, storage
+from . import config, db, queue, storage
 
 RENDER_DPI = 300        # the scans are 300 dpi bilevel; this keeps every pixel
-RENDER_WORKERS = 6
+RENDER_WORKERS = config.RENDER_WORKERS
 THUMB_WIDTH = 220
-PREFIX = os.environ.get("STORAGE_PREFIX", "")        # "" for v1; "vf/" for the vlm-first experiment
+PREFIX = config.STORAGE_PREFIX                       # "" for v1; "vf/" for the vlm-first experiment
 
 
 def batch_id_for(sha256: str) -> str:
@@ -60,37 +65,90 @@ def _render_one(pdf_path, batch_id, page_no, tmpdir):
     return page_no
 
 
-def split(batch_id, object_key, file_name, sha256, scanned_day):
-    """Render all pages. Safe to call twice: the second call sees the batch exists and returns it."""
+WIB = timezone(timedelta(hours=7))                   # the scans' day is Jakarta's
+
+
+class NotReadable(ValueError):
+    """The file says it is a PDF but its pages can't be read."""
+
+
+def receive(data, file_name):
+    """The upload: the PDF stored under scans/<day>/<batch>/, the scan recorded as 'received', a ticket on q.intake.
+    Returns {"batch_id", "duplicate": False}, or the earlier scan with "duplicate": True when the same file (by its
+    SHA-256) came before. A ticket that can't be sent now is sent by the scheduler later (waiting): the scan is
+    recorded either way."""
+    sha = hashlib.sha256(data).hexdigest()
     with db.connect() as conn:
-        existing = conn.execute("SELECT id, status, page_total FROM staging.scan_batch WHERE sha256 = %s",
-                                (sha256,)).fetchone()
-    if existing:
-        return {"batch_id": existing["id"], "page_total": existing["page_total"],
-                "status": existing["status"], "duplicate": True}
-
-    with tempfile.TemporaryDirectory() as tmp:
-        pdf_path = os.path.join(tmp, "in.pdf")
-        storage.client().fget_object(storage.bucket(), object_key, pdf_path)
-        page_total = len(PdfReader(pdf_path).pages)
-
+        dup = conn.execute("SELECT id, file_name, received_at FROM staging.scan_batch WHERE sha256=%s", (sha,)).fetchone()
+    if dup:
+        return {"batch_id": dup["id"], "duplicate": True, "earlier": dict(dup)}
+    try:
+        page_total = len(PdfReader(io.BytesIO(data)).pages)
+    except Exception as e:
+        raise NotReadable(f"{type(e).__name__}: {e}") from e
+    if not page_total:
+        raise NotReadable("the PDF has no pages")
+    batch_id, day = batch_id_for(sha), datetime.now(WIB).date().isoformat()
+    key = f"{PREFIX}scans/{day}/{batch_id}/{file_name}"
+    storage.ensure_bucket().put_object(storage.bucket(), key, io.BytesIO(data), len(data), content_type="application/pdf")
+    with db.connect() as conn:
+        row = conn.execute("""INSERT INTO staging.scan_batch (id, file_name, file_path, sha256, scanned_day, page_total, status)
+                              VALUES (%s, %s, %s, %s, %s, %s, 'received') ON CONFLICT DO NOTHING RETURNING id""",
+                           (batch_id, file_name, key, sha, day, page_total)).fetchone()
+    if not row:                                         # the same file, uploaded twice at the same moment
         with db.connect() as conn:
-            conn.execute("""
-                INSERT INTO staging.scan_batch (id, file_name, file_path, sha256, scanned_day, page_total, status)
-                VALUES (%s, %s, %s, %s, %s, %s, 'splitting')""",
-                (batch_id, file_name, object_key, sha256, scanned_day, page_total))
-        try:
-            with ThreadPoolExecutor(RENDER_WORKERS) as ex:
-                list(ex.map(lambda n: _render_one(pdf_path, batch_id, n, tmp), range(1, page_total + 1)))
-        except Exception as e:
-            with db.connect() as conn:
-                conn.execute("UPDATE staging.scan_batch SET status='failed', error=%s WHERE id=%s",
-                             (f"{type(e).__name__}: {e}"[:500], batch_id))
-            raise
+            dup = conn.execute("SELECT id, file_name, received_at FROM staging.scan_batch WHERE sha256=%s",
+                               (sha,)).fetchone()
+        if not dup:
+            raise RuntimeError(f"{batch_id} is taken by another file")   # two files sharing 10 hex digits of SHA-256
+        return {"batch_id": dup["id"], "duplicate": True, "earlier": dict(dup)}
+    try:
+        queue.send(queue.Q_INTAKE, [{"batch_id": batch_id}])
+    except Exception as e:                              # recorded: the scheduler sends it later
+        print(f"{batch_id}: received, not queued yet ({type(e).__name__}: {e})", flush=True)
+    return {"batch_id": batch_id, "duplicate": False}
 
+
+def split(batch_id):
+    """Render all pages of a received scan. One worker at a time per scan (an advisory lock held while it renders,
+    released by itself if the worker dies): a second ticket for the scan finds it busy, or past this step, and does
+    nothing. A split a worker died in starts over."""
+    with db.connect() as lock:
+        if not lock.execute("SELECT pg_try_advisory_lock(hashtext(%s)) AS ok", ("intake:" + batch_id,)).fetchone()["ok"]:
+            return {"batch_id": batch_id, "status": "splitting", "busy": True}
+        lock.commit()                                   # the lock is the connection's: it lasts until it closes
+        with db.connect() as conn:
+            row = conn.execute("""UPDATE staging.scan_batch SET status='splitting', pages_rendered=0, error=NULL
+                                   WHERE id=%s AND status IN ('received', 'splitting')
+                               RETURNING file_path, page_total""", (batch_id,)).fetchone()
+            if not row:
+                cur = conn.execute("SELECT status FROM staging.scan_batch WHERE id=%s", (batch_id,)).fetchone()
+                return {"batch_id": batch_id, "status": cur and cur["status"]}
+            conn.execute("DELETE FROM staging.page WHERE batch_id=%s", (batch_id,))   # what a dead split left
+        page_total = row["page_total"]
+        with tempfile.TemporaryDirectory() as tmp:
+            pdf_path = os.path.join(tmp, "in.pdf")
+            try:
+                storage.client().fget_object(storage.bucket(), row["file_path"], pdf_path)
+                with ThreadPoolExecutor(RENDER_WORKERS) as ex:
+                    list(ex.map(lambda n: _render_one(pdf_path, batch_id, n, tmp), range(1, page_total + 1)))
+            except Exception as e:
+                with db.connect() as conn:
+                    conn.execute("UPDATE staging.scan_batch SET status='failed', error=%s WHERE id=%s",
+                                 (f"{type(e).__name__}: {e}"[:500], batch_id))
+                raise
+        with db.connect() as conn:
+            conn.execute("UPDATE staging.scan_batch SET status='split' WHERE id=%s", (batch_id,))
+    return {"batch_id": batch_id, "page_total": page_total, "status": "split"}
+
+
+def waiting(minutes):
+    """Scans received (or being split) longer than `minutes` ago and not split yet: their ticket was never sent, or
+    its worker died. Putting them back on q.intake is harmless: a scan being split is busy, a split one is past it."""
     with db.connect() as conn:
-        conn.execute("UPDATE staging.scan_batch SET status='split' WHERE id=%s", (batch_id,))
-    return {"batch_id": batch_id, "page_total": page_total, "status": "split", "duplicate": False}
+        return [r["id"] for r in conn.execute(
+            """SELECT id FROM staging.scan_batch WHERE status IN ('received', 'splitting')
+                 AND received_at < now() - make_interval(mins => %s) ORDER BY received_at""", (minutes,))]
 
 
 def enqueue(batch_id, only_rendered=False):

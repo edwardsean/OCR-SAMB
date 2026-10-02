@@ -29,7 +29,7 @@ from concurrent.futures import ThreadPoolExecutor
 
 from psycopg.types.json import Json
 
-from common import context, db, verify
+from common import config, context, db, verify
 from common.models import teacher
 from worker import classify, vf
 from worker import main as v1
@@ -158,7 +158,7 @@ def jev_decides(fields_all, ctx, qr_text, layout_score, bid, n, purpose, title=N
     return _decide(fields_all, ctx, qr_text, layout_score, bid, n, purpose, title)[0]
 
 
-JEV_AT_ONCE = 6                                       # replay calls are independent: ask Jev about several at once
+JEV_AT_ONCE = config.JEV_AT_ONCE  # replay calls are independent: ask Jev about several at once
 
 
 def replay(old, new, trial=None):

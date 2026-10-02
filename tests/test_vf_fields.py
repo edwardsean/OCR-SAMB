@@ -8,6 +8,8 @@ from psycopg.rows import dict_row
 
 from common.fields import CANON, DOCS, LINE_CANON, LINE_MAP, TYPE_MAP, lift, project
 
+from common import config
+
 
 def test_29_per_type_fields_become_18_plus_2_clues():
     per_type = sum(len(d["header"]) for d in DOCS.values())
@@ -42,7 +44,7 @@ def test_every_line_column_maps_once_with_the_same_kind():
 
 @pytest.mark.skipif(not os.environ.get("MAIN_DATABASE_URL"), reason="needs v1's database (vlm-first runtime)")
 def test_project_lift_round_trip_on_v1_readings():
-    with psycopg.connect(os.environ["MAIN_DATABASE_URL"], row_factory=dict_row) as m:
+    with psycopg.connect(config.required("MAIN_DATABASE_URL"), row_factory=dict_row) as m:
         rows = m.execute("""SELECT page_no, doc_type::text AS t, fields FROM staging.page
                             WHERE extract_status='done' AND fields <> '{}'::jsonb""").fetchall()
     assert rows

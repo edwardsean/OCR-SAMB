@@ -18,7 +18,6 @@
   python -m publisher.publish <batch> --undo <SOR> …  take a publication back (development): rows, PDF, status
 """
 import io
-import os
 import re
 import sys
 from datetime import date
@@ -27,10 +26,10 @@ from decimal import Decimal
 from PIL import Image
 from psycopg.types.json import Json
 
-from common import db, storage, verify
+from common import config, db, storage, verify
 from common.fields import DOCS, column, project
 
-PREFIX = os.environ.get("STORAGE_PREFIX", "")
+PREFIX = config.STORAGE_PREFIX
 READY = ("auto_ok", "reviewed")
 ORDER = {"FP": 0, "PO": 1, "TTG": 2}
 TABLE = {t: d["table"] for t, d in DOCS.items()}

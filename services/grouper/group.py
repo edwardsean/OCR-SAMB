@@ -24,16 +24,15 @@ Re-runnable: each run replaces this batch's documents; pages join their bundle a
 """
 import io
 import json
-import os
 import re
 import sys
 
 from minio.commonconfig import CopySource
 from psycopg.types.json import Json
 
-from common import db, satellite, storage
+from common import config, db, satellite, storage
 
-PREFIX = os.environ.get("STORAGE_PREFIX", "")
+PREFIX = config.STORAGE_PREFIX
 LINKABLE = ("FP", "TTG", "PO")
 WHY = {
     "not_read": "the AI OCR hasn't read it yet",

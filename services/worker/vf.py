@@ -43,7 +43,6 @@
                         change before adopting it; adopt with `python -m grouper.group <batch> --recheck`.
 """
 import json
-import os
 import re
 import sys
 import time
@@ -56,7 +55,7 @@ import psycopg
 from psycopg.rows import dict_row
 from psycopg.types.json import Json
 
-from common import context, db, gates, satellite, transcript, verify, wiki
+from common import config, context, db, gates, satellite, transcript, verify, wiki
 from common import keys as keymod
 from common.fields import DECIDES, DOCS, TYPE_MAP, decides, lift, project
 from common.models import openai_vlm, vlm
@@ -65,14 +64,14 @@ from worker import main as v1
 
 PREP_VERSION = 1
 JEV_DECIDE = 0.85
-PREFIX = os.environ.get("STORAGE_PREFIX", "")
-AI_OCR = os.environ.get("VF_AI_OCR", "gemini")                      # gemini, or provider:model
-AI_MAP = os.environ.get("VF_AI_MAP") or AI_OCR                       # the text model that maps a transcript (provider:model)
-DAILY_CAP = int(os.environ.get("VF_AI_OCR_DAILY_CAP", "40" if AI_OCR == "gemini" else "150"))
-MAP_CAP = int(os.environ.get("VF_AI_MAP_DAILY_CAP", "300"))
+PREFIX = config.STORAGE_PREFIX
+AI_OCR = config.VF_AI_OCR                    # gemini, or provider:model
+AI_MAP = config.VF_AI_MAP                    # the text model that maps a transcript (provider:model)
+DAILY_CAP = config.VF_AI_OCR_DAILY_CAP
+MAP_CAP = config.VF_AI_MAP_DAILY_CAP
 CAPS = {AI_OCR: DAILY_CAP, **({AI_MAP: MAP_CAP} if AI_MAP != AI_OCR else {})}   # per model: each has its own quota
-READER = os.environ.get("VF_READER", "one_step")   # two_step: the mentor's transcribe, then map (read_then_map)
-MAP_TWICE = os.environ.get("VF_MAP_TWICE", "1") != "0"   # map each transcript twice and merge (transcript.merge)
+READER = config.VF_READER                    # two_step: the mentor's transcribe, then map (read_then_map)
+MAP_TWICE = config.VF_MAP_TWICE              # map each transcript twice and merge (transcript.merge)
 STARTING = {"read_all", "transcribe"}      # a page's first call; everything else finishes a page already started
 TEXT_PURPOSES = {"map", "map_b"}           # calls that go to the text model (map_b: pass B, with knowledge)
 REQUIRED = {code: [f["name"] for f in d["header"] if f["source"] == "6.1"] for code, d in DOCS.items()}
@@ -88,7 +87,8 @@ class OutOfBudget(Exception):
 # ---------------------------------------------------------------------------------------------- bookkeeping
 
 def pacific_day():
-    return datetime.now(ZoneInfo("America/Los_Angeles")).date()
+    """The day the providers' daily quotas count in (Gemini resets at midnight Pacific; VF_QUOTA_TZ for another)."""
+    return datetime.now(ZoneInfo(config.VF_QUOTA_TZ)).date()
 
 
 def ledger(provider, purpose, bid, n, ok, meta=None, error=None):
@@ -834,7 +834,7 @@ def once(bid, pages, use_v1_reading=False, second_look=True):
     """Run pages now, without the queue. With use_v1_reading, v1's stored reading stands in for Gemini (dry run)."""
     readings = {}
     if use_v1_reading:
-        with psycopg.connect(os.environ["MAIN_DATABASE_URL"], row_factory=dict_row) as m:
+        with psycopg.connect(config.required("MAIN_DATABASE_URL"), row_factory=dict_row) as m:
             for r in m.execute("""SELECT page_no, doc_type::text AS t, fields FROM staging.page WHERE batch_id=%s
                                   AND page_no = ANY(%s) AND extract_status='done'""", (bid, pages)):
                 readings[r["page_no"]] = lift(r["fields"], r["t"])
@@ -1282,7 +1282,7 @@ def enqueue(bid, pages, waits=None, tries=0):
 
 
 def sweep():
-    """n8n's safety net ("vf — sweep", every 3 hours; /internal/vf/sweep): every page still waiting for the AI OCR
+    """The scheduler's safety net ("sweep", every SWEEP_EVERY_MINUTES): every page still waiting for the AI OCR
     with no ticket goes back on q.pages, and each batch with a bundle still waiting (grouping) regroups. A page whose
     calls failed gets ONE more try per sweep (tries = MAX_TRIES - 1), so a page the AI can't answer costs at most one
     call per sweep. Nothing is sent while the AI is refused (its parked pages come back by themselves)."""

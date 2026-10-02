@@ -9,7 +9,7 @@ import httpx
 import pytest
 
 pytestmark = pytest.mark.skipif(os.environ.get("PIPELINE") != "vlm-first", reason="vlm-first only")
-UI = os.environ.get("UI_URL", "http://ui:8000")
+UI = os.environ.get("API_URL", "http://localhost:8000")
 BID = "b-" + hashlib.sha256(open("/data/sample.pdf", "rb").read()).hexdigest()[:10]
 
 

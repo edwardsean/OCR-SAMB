@@ -15,7 +15,7 @@ BID = "b-4bab9b736d"
 
 @pytest.fixture(scope="module")
 def world():
-    golden = json.load(open("/app/testdata/golden_p1-32.json"))
+    golden = json.load(open(os.path.join(os.path.dirname(__file__), "..", "testdata", "golden_p1-32.json")))
     truth = {n: b["sor"] for b in golden["bundles"] for n in b["pages"]}
     with db.connect() as c:
         sos = satellite.load(c)

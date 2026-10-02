@@ -3,12 +3,13 @@ or the tests would be grading the pipeline against itself."""
 import pathlib
 import re
 
-PIPELINE = ["common", "worker", "grouper", "publisher"]
+PIPELINE = ["common", "worker", "grouper", "publisher", "intake", "scheduler"]
 FORBIDDEN = re.compile(r"golden|testdata|answer.?key", re.I)
 
 
 def test_pipeline_never_references_the_answer_key():
-    root = pathlib.Path("/app")
+    here = pathlib.Path(__file__).resolve().parent.parent     # the container's /app, or the repo (code under services/)
+    root = here if (here / "common").is_dir() else here / "services"
     hits = []
     for pkg in PIPELINE:
         for f in (root / pkg).rglob("*"):

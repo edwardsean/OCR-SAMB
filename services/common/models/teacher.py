@@ -10,19 +10,20 @@ isn't JSON). Rate limits aren't published: one call at a time, backing off on 42
 """
 import base64
 import json
-import os
 import re
 import time
 
 import httpx
 
-URL = "https://api.z.ai/api/paas/v4/chat/completions"
-MODEL = os.environ.get("TEACHER_MODEL", "glm-4.6v-flash")
+from common import config
+
+URL = config.PROVIDER_URLS["zai"] + "/chat/completions"
+MODEL = config.TEACHER_MODEL
 
 
 def _post(messages, model=None):
     """model: another Z.ai model for a text-only task (the product matching, grouper/matching.py)."""
-    key = os.environ.get("ZAI_API_KEY")
+    key = config.ZAI_API_KEY
     if not key:
         raise RuntimeError("no ZAI_API_KEY: add a free Z.ai key to .env to run the teacher")
     model = model or MODEL

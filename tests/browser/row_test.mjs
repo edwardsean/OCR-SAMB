@@ -1,11 +1,12 @@
-// Browser test for the page viewer (read-then-map, Stage 2a). Not run by pytest: run by hand, it drives real Chrome.
-//   PUPPETEER=<path to puppeteer-core's lib/puppeteer/puppeteer-core.js> BASE=http://localhost:8002 node row_test.mjs <args>
+// Browser test for the page viewer (read-then-map, Stage 2a; the web app's, frontend/). Not run by pytest: run by
+// hand, it drives real Chrome (CHROME_PATH). BASE is the web app.
+//   PUPPETEER=<path to puppeteer-core's lib/puppeteer/puppeteer-core.js> BASE=http://localhost:3002 node row_test.mjs <args>
 // puppeteer-core ships with @mermaid-js/mermaid-cli (npx caches it under ~/.npm/_npx/*/node_modules/puppeteer-core).
 // row_test.mjs : Fix row 1's qty on page 3, check the row's copied cells appear as buttons, click 0.00,
 //   check the value; saves row_fix.png into OUT.
 const puppeteer = (await import(process.env.PUPPETEER)).default;
-const BASE = process.env.BASE || 'http://localhost:8002', OUT = process.env.OUT || '/tmp';
-const b = await puppeteer.launch({executablePath: '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome', args: ['--no-sandbox']});
+const BASE = process.env.BASE || 'http://localhost:3002', OUT = process.env.OUT || '/tmp';
+const b = await puppeteer.launch({executablePath: process.env.CHROME_PATH || '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome', args: ['--no-sandbox']});
 const p = await b.newPage(); await p.setViewport({width: 1500, height: 1000});
 await p.goto(BASE + '/batches/b-c80bbbde4d/pages/3', {waitUntil: 'networkidle0'});
 await p.evaluate(() => localStorage.setItem('rv-name', 'Edward')); await p.reload({waitUntil: 'networkidle0'});

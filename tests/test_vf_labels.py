@@ -10,7 +10,7 @@ from common import db
 from common.models import teacher
 
 pytestmark = pytest.mark.skipif(os.environ.get("PIPELINE") != "vlm-first", reason="vlm-first only")
-UI = os.environ.get("UI_URL", "http://ui:8000")
+UI = os.environ.get("API_URL", "http://localhost:8000")
 BID = "test-vf-labels"
 READING = {"document_no": {"value": "6155059", "source_text": "6155059"}, "lines": []}
 
@@ -42,8 +42,8 @@ def batch():
 
 
 def label(page, value):
-    r = httpx.post(f"{UI}/label", data={"batch": BID, "page": page, "label": value}, follow_redirects=False)
-    assert r.status_code == 303
+    r = httpx.post(f"{UI}/api/v1/labels", json={"batch": BID, "page": page, "label": value}, timeout=60)
+    assert r.status_code == 200
 
 
 def lessons():

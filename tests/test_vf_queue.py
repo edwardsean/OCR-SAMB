@@ -146,6 +146,6 @@ def test_the_grouper_sends_back_only_pages_a_bundle_asked(pages, monkeypatch):
 
 def test_a_labelled_page_uploaded_here_goes_back_to_a_worker():
     """A label on a page uploaded to vlm-first (vf/pages/…) must resume it: page 12 of 7000363700-03 stayed unsure."""
-    from ui import app
+    from api import app
     assert app.resumable("vf/pages/b-c80bbbde4d/original/p012.png") and app.resumable("pages/b-1/original/p001.png")
     assert not app.resumable("x") and not app.resumable(None)

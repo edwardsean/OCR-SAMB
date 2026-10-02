@@ -11,22 +11,23 @@ here: every field comes back as {value, source_text, box}, with box converted to
 import base64
 import io
 import json
-import os
 import re
 import time
 
 import httpx
 from PIL import Image
 
+from common import config
 from common.models import vlm
 
+_URL = config.PROVIDER_URLS     # where each provider answers (common/config.py: <PROVIDER>_BASE_URL)
 PROVIDERS = {   # name -> (base URL, key variable, max images per request)
-    "groq": ("https://api.groq.com/openai/v1", "GROQ_API_KEY", 3),
-    "openrouter": ("https://openrouter.ai/api/v1", "OPENROUTER_API_KEY", 8),
-    "zai": ("https://api.z.ai/api/paas/v4", "ZAI_API_KEY", 8),
-    "mistral": ("https://api.mistral.ai/v1", "MISTRAL_API_KEY", 8),
-    "dashscope": ("https://dashscope-intl.aliyuncs.com/compatible-mode/v1", "DASHSCOPE_API_KEY", 8),
-    "ollama": (os.environ.get("OLLAMA_URL", "http://host.docker.internal:11434") + "/v1", None, 8),
+    "groq": (_URL["groq"], "GROQ_API_KEY", 3),
+    "openrouter": (_URL["openrouter"], "OPENROUTER_API_KEY", 8),
+    "zai": (_URL["zai"], "ZAI_API_KEY", 8),
+    "mistral": (_URL["mistral"], "MISTRAL_API_KEY", 8),
+    "dashscope": (_URL["dashscope"], "DASHSCOPE_API_KEY", 8),
+    "ollama": (_URL["ollama"], None, 8),
 }
 MAX_IMAGE_BYTES = 3_500_000
 
@@ -70,7 +71,7 @@ def _post(spec, content, max_tokens=4096):
     base, key_var, _ = PROVIDERS[provider]
     headers = {}
     if key_var:
-        key = os.environ.get(key_var)
+        key = config.API_KEYS.get(key_var)
         if not key:
             raise RuntimeError(f"no {key_var} in .env")
         headers["Authorization"] = f"Bearer {key}"

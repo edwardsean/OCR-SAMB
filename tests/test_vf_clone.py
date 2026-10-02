@@ -7,14 +7,14 @@ import psycopg
 import pytest
 from psycopg.rows import dict_row
 
-from common import db
+from common import config, db
 
 pytestmark = pytest.mark.skipif(os.environ.get("PIPELINE") != "vlm-first", reason="vlm-first only")
 BID = "b-" + hashlib.sha256(open("/data/sample.pdf", "rb").read()).hexdigest()[:10]
 
 
 def main_db():
-    return psycopg.connect(os.environ["MAIN_DATABASE_URL"], row_factory=dict_row)
+    return psycopg.connect(config.required("MAIN_DATABASE_URL"), row_factory=dict_row)
 
 
 def test_same_original_images_as_v1():

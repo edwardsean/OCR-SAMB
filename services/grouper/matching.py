@@ -26,15 +26,14 @@ price: only their names tell them apart, which is exactly what an AI can get wro
                                                         (1302). Stops at the rate limit; re-run it later. Rows already
                                                         proposed aren't asked again. Nothing is confirmed.
 """
-import os
 import re
 import sys
 import time
 
-from common import db, satellite, verify
+from common import config, db, satellite, verify
 
-AI_MODEL = os.environ.get("MATCH_MODEL", "glm-4.7-flash")        # text only, free on Z.ai; not Groq's AI OCR budget
-PAUSE = int(os.environ.get("MATCH_PAUSE", "30"))                   # seconds between calls
+AI_MODEL = config.MATCH_MODEL        # text only, free on Z.ai; not Groq's AI OCR budget
+PAUSE = config.MATCH_PAUSE                   # seconds between calls
 COLS = {"TTG": ("item_code", "material_description"), "PO": ("product_code", "product_description")}
 CARTON = {"KTN", "CT", "CTN", "CTNS", "CAR", "CRT", "KRT", "KARTON", "CARTON", "CARTONS", "CASE", "CS", "DUS", "BOX"}
 BARCODE = re.compile(r"(?<!\d)(\d{12,13})(?!\d)")                 # EAN-13 / UPC-A; 8-digit SKUs aren't barcodes here

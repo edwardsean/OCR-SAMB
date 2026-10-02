@@ -7,7 +7,7 @@ import psycopg
 import pytest
 from psycopg.rows import dict_row
 
-from common import context
+from common import config, context
 from common.fields import CANON
 from worker import classify
 
@@ -20,7 +20,7 @@ def seed():
 def test_a_proposal_built_on_an_older_context_is_refused():
     """Two proposals from the same context: approving the second would silently undo the first. Runs in a
     transaction that is rolled back, so the real contexts are untouched."""
-    with psycopg.connect(os.environ["DATABASE_URL"], row_factory=dict_row) as c:
+    with psycopg.connect(config.required("DATABASE_URL"), row_factory=dict_row) as c:
         try:
             now = c.execute("SELECT version, content FROM staging.context_version WHERE status='active'").fetchone()
             a = context.propose(c, now["content"], now["version"], "test", "A")
