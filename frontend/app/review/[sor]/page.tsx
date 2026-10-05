@@ -12,6 +12,12 @@ export default async function OrderPage({ params, searchParams }: { params: Prom
   const sp = await searchParams;
   const v = await need<Order>(`/orders/${sor}`, { batch: one(sp.batch) });
   const pub = v.bundle.status === "published" ? await get<Published>(`/published/${sor}`) : null;
-  const fpage = Number(one(sp.fpage)) || null;
-  return <OrderReview key={`${v.batch}/${sor}`} v={v} pub={pub} fixed={fpage ? { page: fpage, field: one(sp.fixed) ?? "" } : null} />;
+  const raw = Number(one(sp.fpage)) || null;
+  // the page viewer sends back its scan's page number; the order numbers its pages across scans (Order.where)
+  const fpage = raw === null ? null
+    : Number(Object.entries(v.where ?? {}).find(([, w]) => w.batch === v.batch && w.page === raw)?.[0] ?? raw);
+  // the batch the order returns to: the one it was opened from, else the first its documents came in
+  const back = v.uploads?.find((u) => String(u.id) === one(sp.upload)) ?? v.uploads?.[0] ?? null;
+  return <OrderReview key={`${v.batch}/${sor}`} v={v} pub={pub} back={back}
+                      fixed={fpage ? { page: fpage, field: one(sp.fixed) ?? "" } : null} />;
 }

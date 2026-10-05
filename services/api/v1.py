@@ -5,7 +5,7 @@ actions.py. Documented for people in docs/api.md, and live at /docs (generated f
 Reads are GET, a person's decisions are POST with a JSON body (an upload is multipart). A refused action answers
 with its status and {"error", ...}. Values are as stored (amounts are numbers, dates ISO strings); the wording for
 people (bahasa.py) comes from /words, and sentences other modules produce are translated here."""
-from fastapi import APIRouter, File, Query, UploadFile
+from fastapi import APIRouter, File, Form, Query, UploadFile
 from fastapi.encoders import jsonable_encoder
 from fastapi.responses import JSONResponse, Response
 from pydantic import BaseModel, Field
@@ -17,6 +17,7 @@ router = APIRouter(prefix="/api/v1")
 
 FRAME, SCANS, TYPES, ORDERS, BERKAS, SENT = ("Frame", "Scans and pages", "Page types", "Orders (Periksa order)",
                                              "Berkas per SOR", "Published (Data terkirim)")
+UPLOADS = "Upload batches"
 
 
 # ================================================================================================ request bodies
@@ -101,8 +102,17 @@ class Approve(BaseModel):
     by: str = _by()
 
 
+class NewUpload(BaseModel):
+    by: str = Field(description="who uploads: the person's name as typed", examples=["Edward"])
+    date: str | None = Field(None, description="the day the papers were scanned (ISO); default today (WIB)",
+                             examples=["2026-10-05"])
+    note: str | None = Field(None, description="anything worth knowing about this batch", examples=["kiriman Senin"])
+
+
 class Publish(BaseModel):
-    batch: str = _batch()
+    batch: str | None = Field(None, description="the scan whose finished orders to publish; none: every finished order",
+                              examples=["b-1a2b3c4d5e"])
+    upload: int | None = Field(None, description="the upload batch whose finished orders to publish", examples=[3])
     by: str = _by()
 
 
@@ -140,7 +150,8 @@ def _missing(what="not found"):
 
 @router.get("/session", tags=[FRAME], summary="Top bar: counts, the teacher's line, today")
 def session():
-    """The top bar: the counts after Periksa order and Jenis halaman, the teacher's one line, today's date."""
+    """The top bar: how many batches have a step a person can act on now (and the older counts after Periksa order
+    and Jenis halaman), the teacher's one line, today's date."""
     A = _a()
     line = None
     if A.VF:
@@ -149,8 +160,8 @@ def session():
                 line = A.teacher_now(c)
         except Exception:                # before migration 023, or the database is down: nothing to show
             line = None
-    return _ok({"needs_you": A._needs_you(), "unsure_left": A._unsure_left(), "teacher": bahasa.teacher(line),
-                "today": bahasa.hari_ini(), "vf": A.VF})
+    return _ok({"needs_you": A._needs_you(), "unsure_left": A._unsure_left(), "batches_need": A._batches_need(),
+                "teacher": bahasa.teacher(line), "today": bahasa.hari_ini(), "vf": A.VF})
 
 
 @router.get("/words", tags=[FRAME], summary="Every display word (Indonesian)")
@@ -167,6 +178,13 @@ def words():
                 "ROLE": {k or "none": v for k, v in bahasa.ROLE.items()}, "BY": bahasa.BY, "COL": bahasa.COL,
                 "FIELD": bahasa.FIELD, "FIELD_BY_TYPE": fields, "DESC_BY_TYPE": descs,
                 "LABEL_TYPES": [{"key": k, "name": n, "what": w} for k, n, w in bahasa.LABEL_TYPES]})
+
+
+@router.get("/search", tags=[FRAME], summary="Find a batch, an order or a file")
+def search(q: str = Query("", description="part of a batch number, SOR, customer PO number, customer or file name")):
+    """The top bar's search: batches by number, orders by SOR, Nomor CPO or customer, files by name (each up to 20),
+    with the batch each came in."""
+    return _ok(_a().search_view(q))
 
 
 @router.get("/health", tags=[FRAME], summary="Services that don't answer")
@@ -188,12 +206,39 @@ def scans(limit: int = Query(20, ge=1, le=200)):
     return _ok({"scans": _a()._recent_batches(limit)})
 
 
-@router.post("/scans", tags=[SCANS], summary="Upload a scanned PDF")
-async def upload(file: UploadFile = File(...)):
-    """A scanned PDF: stored, recorded as 'received', and put on q.intake (the intake worker splits it into pages and
-    queues them). 201 {batch_id}; 400 when it isn't a readable PDF; 409 with the earlier scan when it's the same file."""
+@router.post("/uploads", tags=[UPLOADS], summary="Start an upload batch")
+def new_upload(body: NewUpload):
+    """One upload action, however many files: a generated batch number (BATCH-YYYYMMDD-NN), who uploads, and the
+    day the papers were scanned. Then POST /scans once per file with its id. 201 {id, code, uploaded_by, doc_date};
+    400 without a name, or with a date in the future."""
     try:
-        out = actions.upload(await file.read(), file.filename)
+        out = actions.new_upload(body.by, body.date, body.note)
+    except actions.ActionError as e:
+        return JSONResponse(jsonable_encoder(e.body()), status_code=e.status)
+    return JSONResponse(jsonable_encoder(out), status_code=201)
+
+
+@router.get("/uploads", tags=[UPLOADS], summary="Every upload batch, newest first")
+def list_uploads(limit: int = Query(100, ge=1, le=500)):
+    """Each batch: its number, who uploaded it, the scan date, its files and pages, how far reading has come, and
+    its orders by status."""
+    return _ok({"uploads": _a().uploads_view(limit)})
+
+
+@router.get("/uploads/{upload_id}", tags=[UPLOADS], summary="One upload batch: its files and orders")
+def one_upload(upload_id: int):
+    v = _a().upload_view(upload_id)
+    return _ok(v) if v else _missing("no such batch")
+
+
+@router.post("/scans", tags=[SCANS], summary="Upload a scanned PDF")
+async def upload(file: UploadFile = File(...), upload: int | None = Form(None, description="the batch it belongs to "
+                                                                                          "(POST /uploads first)")):
+    """A scanned PDF: stored, recorded as 'received', and put on q.intake (the intake worker splits it into pages and
+    queues them). With `upload`, it joins that batch and takes its scan date. 201 {batch_id}; 400 when it isn't a
+    readable PDF or the batch doesn't exist; 409 with the earlier scan when it's the same file."""
+    try:
+        out = actions.upload(await file.read(), file.filename, upload)
     except actions.ActionError as e:
         return JSONResponse(jsonable_encoder(e.body()), status_code=e.status)
     return JSONResponse(out, status_code=201)
@@ -207,7 +252,7 @@ def scan(batch_id: str):
     if not b:
         return _missing("no such scan")
     return _ok({"scan": b, "pages": pages, "orders": A._batch_orders(batch_id), "flags": A._flag_counts(pages),
-                "depths": A._depths()})
+                "depths": A._depths(), "upload": A._upload_of(batch_id)})
 
 
 @router.get("/scans/{batch_id}/pages/{page_no}", tags=[SCANS], summary="One page, with its fields and where each sits")
@@ -225,7 +270,18 @@ def page(batch_id: str, page_no: int):
         fixv = A._fix_view(c, p, pc) if A.VF else None
     keep = ("page_no", "status", "doc_type", "type_status", "outcome", "quality_flags", "qr_text", "upright_path",
             "original_path", "thumb_upright_path", "thumb_path", "error")
-    return _ok({"scan": b, "page": {k: p.get(k) for k in keep}, "fix": fixv})
+    return _ok({"scan": b, "page": {k: p.get(k) for k in keep}, "fix": fixv, "upload": A._upload_of(batch_id)})
+
+
+class Retry(BaseModel):
+    by: str = _by()
+
+
+@router.post("/scans/{batch_id}/pages/{page_no}/retry", tags=[SCANS], summary="Read a failed page again")
+def retry(batch_id: str, page_no: int, body: Retry):
+    """A page whose reading failed for a technical reason (dead-lettered) goes back on q.pages: it calls the AI again
+    (its quota). 409 when the page didn't fail, or while another page of its file is still being read."""
+    return _run(actions.retry_page, batch_id, page_no, body.by)
 
 
 @router.post("/scans/{batch_id}/pages/{page_no}/fixes", tags=[SCANS], summary="Correct a value on a page")
@@ -265,14 +321,19 @@ def lesson(batch: str, page: int, field: str):
 # ================================================================================================ page types (Label)
 
 @router.get("/labels", tags=[TYPES], summary="The next page whose type is unsure")
-def labels(batch: str | None = None, page: int | None = None, after: int = 0):
+def labels(batch: str | None = None, page: int | None = None, after: int = 0, upload: int | None = None):
     """The Label screen: the next page whose type the system couldn't decide (or the one named), its neighbours,
-    an earlier answer, the progress, the choices."""
-    d = _a().label_data(batch, page, after)
+    an earlier answer, the progress, the choices. With `upload`: over that batch's files (its step 2), the next after
+    `batch`/`after`, with `left` = how many are still unsure there."""
+    from common import uploads
+    d = _a().label_data(batch, page, after, upload)
+    with db.connect() as c:
+        u = uploads.get(c, upload) if upload else None
+    up = u and {k: u[k] for k in ("id", "code", "uploaded_by", "doc_date")}
     if not d["batch"]:
-        return _ok({"batch": None})
+        return _ok({"batch": None, "upload": up, "left": d.get("left")})
     p = d["p"]
-    return _ok({**d, "p": p and {k: p[k] for k in ("page_no", "upright_path", "original_path", "quality_flags")},
+    return _ok({**d, "upload": up, "p": p and {k: p[k] for k in ("page_no", "upright_path", "original_path", "quality_flags")},
                 "types": [{"key": k, "name": n, "what": w} for k, n, w in d["types"]],
                 "near": [{"page_no": n["page_no"], "thumb": n["thumb_upright_path"] or n["thumb_path"],
                           "full": n["upright_path"] or n["original_path"],
@@ -287,21 +348,20 @@ def save_label(body: Label):
 
 # ================================================================================================ orders (Periksa)
 
-@router.get("/orders", tags=[ORDERS], summary="A scan's orders, needs a person first")
-def orders(batch: str | None = None):
+@router.get("/orders", tags=[ORDERS], summary="Every order once (all its scans), needs a person first")
+def orders(batch: str | None = None, upload: int | None = None):
     """Periksa order: the scan's orders with their status and what is left (needs a person first), the scans that
     have orders, and the needs-you notices nobody has seen yet."""
     A = _a()
-    batch = batch or A._latest_batch()
-    rows = A.review_list(batch) if batch else []
+    rows = A.review_list(batch or None, upload)        # nothing chosen: every order (each once, all its scans)
     with db.connect() as c:
         scans_ = A.review_scans(c)
         fresh = []
         if A.VF:
             from common import notice
             fresh = notice.unseen(c)
-    return _ok({"batch": batch, "rows": rows, "scans": scans_, "fresh": fresh,
-                "ready": sum(1 for r in rows if r["status"] in ("auto_ok", "reviewed"))})
+    return _ok({"batch": batch, "upload": upload, "uploads": A.uploads_view(100), "rows": rows, "scans": scans_,
+                "fresh": fresh, "ready": sum(1 for r in rows if r["status"] in ("auto_ok", "reviewed"))})
 
 
 @router.post("/notices/seen", tags=[ORDERS], summary="Mark the needs-you notices seen")
@@ -366,18 +426,18 @@ def approve(sor: str, body: Approve):
 @router.post("/publications", tags=[ORDERS], summary="Publish finished orders to Satellite")
 def publish(body: Publish):
     """Phase 8: the scan's finished orders written to Satellite (rows + one PDF per SOR). {result: [SOR, …]}."""
-    return _run(actions.publish, body.batch, body.by)
+    return _run(actions.publish, body.batch, body.by, body.upload)
 
 
 # ================================================================================================ Berkas, Data terkirim
 
-@router.get("/bundles", tags=[BERKAS], summary="A scan's orders with their documents; what is held")
-def bundles(batch: str | None = None):
+@router.get("/bundles", tags=[BERKAS], summary="Orders with all their documents (every scan); what is held")
+def bundles(batch: str | None = None, upload: int | None = None):
     """Berkas per SOR: the scan's orders with their documents, what is held and why (with the key a person can
     confirm), and the pages not grouped yet."""
-    A = _a()
-    batch = batch or A._latest_batch()
-    return _ok({"batch": batch, "scans": A._recent_batches(), "view": A.bundles_view(batch) if batch else None})
+    A = _a()                                            # no scan chosen: every order, each whole
+    return _ok({"batch": batch or None, "upload": upload, "scans": A._recent_batches(), "uploads": A.uploads_view(100),
+                "view": A.bundles_screen(batch or None, upload)})
 
 
 @router.post("/bundles/confirmations", tags=[BERKAS], summary="Confirm a held document's key")
@@ -386,11 +446,12 @@ def confirm_key(body: ConfirmKey):
 
 
 @router.get("/published", tags=[SENT], summary="Orders published to Satellite")
-def published(batch: str | None = None, just: str = ""):
-    """Data terkirim: every order published to Satellite, newest first, the ones just published on top."""
+def published(batch: str | None = None, just: str = "", upload: int | None = None):
+    """Data terkirim: every order published to Satellite, newest first, the ones just published on top; with
+    `upload`, the orders with a document in that batch."""
     with db.connect() as c:
-        rows, batches = _a().published_rows(c, batch, [x for x in just.split(",") if x])
-    return _ok({"rows": rows, "batches": batches})
+        rows, batches = _a().published_rows(c, batch, [x for x in just.split(",") if x], upload)
+    return _ok({"rows": rows, "batches": batches, "upload": upload, "uploads": _a().uploads_view(100)})
 
 
 @router.get("/published/{sor}", tags=[SENT], summary="One published order, as Satellite stores it")

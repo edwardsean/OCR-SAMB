@@ -6,6 +6,7 @@ import { api } from "@/lib/client";
 import { rp, tgl } from "@/lib/format";
 import type { Published, PubRow } from "@/lib/types";
 import PublishedData from "@/components/PublishedData";
+import { BatchTags } from "@/components/Batch";
 
 export default function PublishedItem({ r, isNew, initial }: { r: PubRow; isNew: boolean; initial: Published | null }) {
   const [open, setOpen] = useState(!!initial);
@@ -25,7 +26,7 @@ export default function PublishedItem({ r, isNew, initial }: { r: PubRow; isNew:
       <summary>
         <span className="pl-chev" aria-hidden="true" />
         <span className="pl-who"><b>{r.customer_name || "Pelanggan tidak diketahui"}</b>
-          <span className="sor">{r.sor_no}</span>{isNew && <> <span className="chip ok">baru dikirim</span></>}</span>
+          <span className="sor">{r.sor_no}</span> <BatchTags list={r.uploads} />{isNew && <> <span className="chip ok">baru dikirim</span></>}</span>
         <span className="pl-total">{rp(r.total)}</span>
         <span className="pl-docs">Faktur{r.pos ? `, ${r.pos} PO` : ""}{r.ttgs ? `, ${r.ttgs} Tanda Terima` : ""}
           <small>{r.page_count} halaman{r.version > 1 ? `, versi ${r.version}` : ""}</small></span>
@@ -33,7 +34,7 @@ export default function PublishedItem({ r, isNew, initial }: { r: PubRow; isNew:
         <span className="pl-acts">
           <a className="btn tiny" href={`/documents/${r.sor_no}.pdf`} target="_blank" rel="noopener" onClick={(e) => e.stopPropagation()}
              title="PDF yang dikirim ke Satellite">PDF</a>
-          <Link className="btn tiny" href={`/review/${r.sor_no}?batch=${encodeURIComponent(r.source_batch)}`} onClick={(e) => e.stopPropagation()}
+          <Link className="btn tiny" href={`/review/${r.sor_no}?batch=${encodeURIComponent(r.source_batch.split(",")[0])}`} onClick={(e) => e.stopPropagation()}
                 title="Halaman order di Periksa order">Order</Link>
         </span>
       </summary>

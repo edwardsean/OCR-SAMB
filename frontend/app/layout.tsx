@@ -7,7 +7,7 @@ import { WordsProvider } from "@/components/Words";
 import "./globals.css";             // the design: frontend/DESIGN.md
 
 export const metadata: Metadata = {
-  title: { template: "%s · SAMB Rekonsiliasi AR", default: "Beranda · SAMB Rekonsiliasi AR" },
+  title: { template: "%s · SAMB Rekonsiliasi AR", default: "Batch · SAMB Rekonsiliasi AR" },
   icons: {
     icon: "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='2' fill='%231A1D22'/%3E%3Ctext x='16' y='22' font-family='Arial' font-weight='800' font-size='17' text-anchor='middle' fill='white'%3ES%3C/text%3E%3C/svg%3E",
   },

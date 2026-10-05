@@ -26,7 +26,11 @@ export type Words = {
   LABEL_TYPES: { key: string; name: string; what: string }[];
 };
 
-export type Session = { needs_you: number; unsure_left: number; teacher: string | null; today: string; vf: boolean };
+export type Session = {
+  needs_you: number; unsure_left: number; teacher: string | null; today: string; vf: boolean;
+  /** batches with a step a person can act on now: the Batch tab's count */
+  batches_need: number;
+};
 
 export type Scan = {
   id: string;
@@ -42,7 +46,7 @@ export type HomeScan = Scan & {
   unsure: number; waiting_ai: number; held: number; need: number; waiting: number; ready: number; published: number;
   orders: number;
 };
-export type Home = { scans: HomeScan[]; todo: Record<"need" | "unsure" | "ready" | "held", { n: number; batch: string | null }> };
+export type Home = { scans: HomeScan[]; uploads: Upload[]; todo: Record<"need" | "unsure" | "ready" | "held", { n: number; batch: string | null }> };
 
 export type PageRow = {
   page_no: number; status: string; thumb_path: string | null; thumb_upright_path: string | null;
@@ -50,7 +54,40 @@ export type PageRow = {
   type_status: string | null; type_guess: string | null;
 };
 export type Orders = { total: number; need: number; waiting: number; ready: number; published: number; held: number };
-export type ScanDetail = { scan: Scan; pages: PageRow[]; orders: Orders; flags: Record<string, number> };
+/** An upload batch (2026-10-05): one upload action, however many files: its number, who uploaded it, the scan date. */
+export type UploadRef = { id: number; code: string; uploaded_by: string; doc_date: string };
+export type Upload = UploadRef & {
+  created_at: string; note: string | null; files: number; pages: number; read: number; busy: number;
+  need: number; waiting: number; ready: number; published: number; orders: number;
+  steps: Step[]; next: StepKey | null; finished: boolean;
+};
+
+/** A batch's five steps (services/api/steps.py), in the order each needs the one before. */
+export type StepKey = "baca" | "jenis" | "cocokkan" | "periksa" | "kirim";
+/** need: a person can act now · sys: the system works, wait · done · none: nothing reached it yet · later: only
+ * what never blocks sending (a Faktur Pajak, an order waiting for another batch's document) */
+export type StepState = "need" | "sys" | "done" | "none" | "later";
+export type Step =
+  | { key: "baca"; state: StepState; pages: number; read: number; failed: number; busy: number; waiting_ai: number; unscheduled: number }
+  | { key: "jenis"; state: StepState; unsure: number; answered: number }
+  | { key: "cocokkan"; state: StepState; block: number; wait: number; later: number; loose_unread: number; loose_unsure: number; loose_other: number }
+  | { key: "periksa"; state: StepState; need: number; depends: number; outside: number; waiting: number; ready: number; published: number; orders: number }
+  | { key: "kirim"; state: StepState; ready: number; published: number };
+/** an order's place in its batch's step 4 */
+export type OrderStep = "need" | "depends" | "outside" | "waiting" | "ready" | "published";
+export type PageRef = { batch_id: string; page_no: number; file_name: string; thumb: string | null; error: string | null };
+export type UploadDetail = {
+  upload: Upload; files: Scan[]; steps: Step[]; next: StepKey | null; finished: boolean;
+  /** the open steps among 1–3: where an order's missing document may still be */
+  blockers: StepKey[];
+  orders: Record<string, OrderStep>; failed: PageRef[]; unsure: PageRef[];
+};
+export type SearchResult = {
+  q: string; uploads: Upload[];
+  orders: { sor_no: string; status: string; customer_name: string | null; cpo_no: string | null; batch: string | null; uploads: UploadRef[]; thumb: string | null }[];
+  files: { id: string; file_name: string; page_total: number; received_at: string; upload: UploadRef | null }[];
+};
+export type ScanDetail = { scan: Scan; pages: PageRow[]; orders: Orders; flags: Record<string, number>; upload: UploadRef | null };
 
 export type FixField = {
   name: string; label: string; desc: string | null; value: string | null; box: Box; verdict: string;
@@ -67,6 +104,7 @@ export type FixView = {
 };
 export type PageDetail = {
   scan: { id: string; file_name: string; page_total: number; status: string };
+  upload: UploadRef | null;
   page: {
     page_no: number; status: string; doc_type: string | null; type_status: string | null; outcome: string | null;
     quality_flags: string[] | null; qr_text: string | null; upright_path: string | null; original_path: string | null;
@@ -80,10 +118,19 @@ export type Lesson = { steps: { label: string; state: string }[]; headline: stri
 export type OrderRow = {
   sor_no: string; status: string; customer_name: string | null; reviewed_by: string | null; docs: string[];
   thumb: string | null; issues: [string, "need" | "wait"][];
+  /** the scan its FP (else its first document) is in: where its review opens; scans = how many files it came in */
+  batch: string | null; scans: number;
+  /** the upload batches its documents came in */
+  uploads: UploadRef[];
+  /** with a batch chosen: where it stands in that batch's step 4 */
+  step?: OrderStep | null;
 };
 export type ReviewScan = { id: string; file_name: string; received_at: string; need: number };
 export type Notice = { sor: string; batch: string; customer: string | null };
-export type OrderList = { batch: string | null; rows: OrderRow[]; scans: ReviewScan[]; fresh: Notice[]; ready: number };
+export type OrderList = {
+  batch: string | null; upload: number | null; uploads: Upload[]; rows: OrderRow[]; scans: ReviewScan[]; fresh: Notice[];
+  ready: number;
+};
 
 export type Suggest = [string, string];
 export type FieldEntry = {
@@ -156,11 +203,16 @@ export type Order = {
   strip: Strip[];
   passed: string[];
   calibration: Calibration | null;
+  /** Each page of the order (numbered within the order) as its own scan and page; an order can span several scans. */
+  where: Record<string, { batch: string; page: number; scan: string }>;
+  multi: boolean;
+  /** the upload batches its pages came in */
+  uploads: UploadRef[];
 };
 
 export type PubRow = {
   sor_no: string; updated_at: string; page_count: number; version: number; source_batch: string;
-  customer_name: string | null; total: number | null; pos: number; ttgs: number;
+  customer_name: string | null; total: number | null; pos: number; ttgs: number; uploads: UploadRef[];
 };
 export type PubField = { name: string; label: string; value: string | null; state: string; page: number | null; box: Box; approx: boolean };
 export type PubDoc = {
@@ -176,17 +228,24 @@ export type Published = {
 };
 
 export type BundleDoc = {
+  /** its own scan (an order's documents can come in several files), and that scan's upload batch */
+  batch_id: string; scan: string; upload: string | null; uploaded_by?: string | null; doc_date?: string | null;
   type: string; page_from: number; page_to: number; pages: number[]; thumb: string | null; joined: string;
   evidence: string[] | null; why?: string; suggested_sor?: string | null;
+  /** a held document's place in step 3: block (a person confirms its number) · wait (the system, SAP) · later */
+  group?: "block" | "wait" | "later";
   confirm?: { field: string; read: string | null; value: string | null; done: unknown } | null;
 };
 export type Bundle = {
   sor: string; hold: string | null; folder: string | null; why: string | null; status: string; customer: string | null;
   documents: BundleDoc[];
+  /** its documents came in more than one scan; batch = the scan its review opens from (the FP's) */
+  many_scans: boolean; batch: string | null;
+  uploads: UploadRef[];
 };
 export type Bundles = {
-  batch: string | null; scans: Scan[];
-  view: { bundles: Bundle[]; held: BundleDoc[]; unplaced: { page: number; type: string | null; thumb: string | null; why: string }[]; complete: number } | null;
+  batch: string | null; scans: Scan[]; upload: number | null; uploads: Upload[];
+  view: { bundles: Bundle[]; held: BundleDoc[]; unplaced: { page: number; batch_id: string; scan: string; upload: string | null; type: string | null; thumb: string | null; why: string }[]; complete: number } | null;
 };
 
 export type LabelData = {
@@ -199,4 +258,7 @@ export type LabelData = {
   types?: { key: string; name: string; what: string }[];
   customers?: string[];
   prog?: { unsure: number; unsure_done: number; labelled: number; practice: number; exam: number };
+  /** opened from a batch's step 2: that batch, and how many of its pages are still unsure */
+  upload?: UploadRef | null;
+  left?: number | null;
 };

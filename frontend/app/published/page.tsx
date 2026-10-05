@@ -1,24 +1,24 @@
 // Data terkirim: every order published to Satellite, newest first; the ones just published (after Kirim on Periksa
 // order) on top and open, the others opened on a click (their data loads then).
 import { get, need, one, type SearchParams } from "@/lib/api";
-import type { Published, PubRow } from "@/lib/types";
-import ScanPicker from "@/components/ScanPicker";
+import type { Published, PubRow, Upload } from "@/lib/types";
+import { BatchPicker } from "@/components/Batch";
 import PublishedItem from "./PublishedItem";
 
 export const metadata = { title: "Data terkirim" };
 
 export default async function PublishedPage({ searchParams }: { searchParams: SearchParams }) {
   const sp = await searchParams;
-  const batch = one(sp.batch) || null, just = one(sp.just) ?? "", focus = one(sp.sor);
+  const batch = one(sp.batch) || null, just = one(sp.just) ?? "", focus = one(sp.sor), upload = one(sp.upload) || null;
   const fresh = just.split(",").filter(Boolean);
-  const { rows, batches } = await need<{ rows: PubRow[]; batches: { id: string; name: string }[] }>("/published", { batch, just });
+  const { rows, uploads } = await need<{ rows: PubRow[]; uploads: Upload[] }>("/published", { batch, just, upload });
   const opened = Object.fromEntries(await Promise.all([...fresh, ...(focus ? [focus] : [])].map(
     async (s) => [s, await get<Published>(`/published/${s}`)] as const)));
   return (
     <div className="pl">
       <div className="pl-top">
         <h1>Data terkirim ke Satellite</h1>
-        {batches.length > 1 && <ScanPicker path="/published" value={batch} all="Semua scan" options={batches.map((b) => ({ id: b.id, label: b.name }))} />}
+        {uploads.length > 0 && <BatchPicker path="/published" value={upload ? Number(upload) : null} options={uploads} />}
       </div>
       {fresh.length > 0 && <div className="pl-new">{fresh.length} order baru saja dikirim ke Satellite.</div>}
       {rows.length > 0 && (

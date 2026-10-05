@@ -101,8 +101,13 @@ containment at most.
 
 ## Components
 
-- **Top bar:** the wordmark (SAMB, then "Rekonsiliasi AR"), the Finance screens as text tabs with an ink underline
-  for the current one, a red count after a tab when something waits, "Teknis" at the end.
+- **Top bar:** the wordmark (SAMB, then "Rekonsiliasi AR"), one Finance tab, Batch, with an ink underline when
+  current and a red count of the batches waiting for a person; Unggah batch; the search box; "Teknis" at the end
+  (the screens over every batch, then the developers' screens).
+- **A batch's steps:** `.ws-steps`, five ruled columns (one per step, a list on a phone): its number and who acts
+  (sistem / Anda), its name, then one line in the state's ink (red needs you, amber ◔ the system works, green ✓ done,
+  pencil nothing yet) and one line in pensil. The open step is underlined in tinta on meja muda. In the batch
+  register the same five states are small bordered marks (`.ws-marks`), each a link to its step.
 - **Register:** `table.reg`: header row in pensil 12.5/600, rows ruled in garis, figures right-aligned.
 - **Stamp:** `.cap` (+ `.merah`, `.hijau`, `.kuning`, `.biru`): the order's state, uppercase, bordered in its ink.
   One per order. `.cap.besar` (rotated a few degrees) only in an order's own header.

@@ -22,14 +22,14 @@ import re
 
 from common import config, db, health, intake, keys as keymod, queue as q, storage, verify
 from common.fields import DOCS, decides
-from api import actions, bahasa
+from api import actions, bahasa, steps
 
 HERE = os.path.dirname(__file__)
 app = FastAPI(
     title="SAMB Rekonsiliasi AR API", version="1",
     description="The API the web app (frontend/) calls. Endpoints, payloads and the usual flows: **docs/api.md** in the "
                 "repository. No login yet: every decision carries the person's name in `by`, as typed.",
-    openapi_tags=[{"name": t} for t in ("Frame", "Scans and pages", "Page types", "Orders (Periksa order)",
+    openapi_tags=[{"name": t} for t in ("Frame", "Upload batches", "Scans and pages", "Page types", "Orders (Periksa order)",
                                         "Berkas per SOR", "Published (Data terkirim)", "Files (page images, crops, PDFs)",
                                         "Teknis (status, acceptance checks)")])
 app.mount("/static", StaticFiles(directory=os.path.join(HERE, "static")), name="static")
@@ -78,6 +78,7 @@ if VF:
                           # (012), line_match (013), bundle_decision (014), notice (018), reading_trial (019), extract_example (020),
                           # knowledge_page, knowledge_map (021)
     EXPECTED_TABLES += 1   # + job_run (025): the scheduler's jobs
+    EXPECTED_TABLES += 1   # + upload (026): upload batches
 
 SVC = config.SERVICE_PREFIX                  # this stack's service names: vf-* on main, rtm-* in the worktree
 HEALTH_PORT = config.HEALTH_PORT             # where each worker answers /health
@@ -217,6 +218,105 @@ def _needs_you():
         return 0
 
 
+def uploads_view(limit=100, only=None):
+    """Every upload batch (or `only` that one), newest first: number, who, scan date, files, pages, reading progress,
+    its orders by status (an order counts in each batch it has a document in), and its five steps (api/steps.py)."""
+    from common import uploads
+    with db.connect() as c:
+        rows = [r for r in uploads.listing(c, limit) if only is None or r["id"] == only]
+        orders = {}
+        for r in c.execute("""SELECT s.upload_id, b.status::text AS status, count(DISTINCT b.id) AS n
+                                FROM staging.bundle b JOIN staging.bundle_document bd ON bd.bundle_id = b.id
+                                JOIN staging.document d ON d.id = bd.document_id
+                                JOIN staging.scan_batch s ON s.id = d.batch_id
+                               WHERE s.upload_id IS NOT NULL GROUP BY 1, 2"""):
+            orders.setdefault(r["upload_id"], {})[r["status"]] = r["n"]
+        work = steps.of_uploads(c, [u["id"] for u in rows])
+    for u in rows:
+        o = orders.get(u["id"], {})
+        u.update(need=o.get("needs_review", 0), waiting=o.get("grouping", 0),
+                 ready=o.get("auto_ok", 0) + o.get("reviewed", 0), published=o.get("published", 0),
+                 orders=sum(o.values()))
+        w = work.get(u["id"]) or {}
+        u.update(steps=w.get("steps") or [], next=w.get("next"), finished=w.get("finished", False))
+    return rows
+
+
+def search_view(q):
+    """The top bar's search (the Batch tab replaced the screens over every batch): batches by number or uploader,
+    orders by SOR, Nomor CPO or customer, files by name; up to 20 each, each with the batch it came in."""
+    from common import uploads
+    q = (q or "").strip()
+    if len(q) < 2:
+        return {"q": q, "uploads": [], "orders": [], "files": []}
+    like = f"%{q}%"
+    with db.connect() as c:
+        ids = {r["id"] for r in c.execute("""SELECT id FROM staging.upload WHERE code ILIKE %s OR uploaded_by ILIKE %s
+                                              ORDER BY created_at DESC LIMIT 20""", (like, like))}
+        ups = [u for u in uploads.listing(c, 10_000) if u["id"] in ids]
+        rows = c.execute("""SELECT b.id, b.sor_no, b.status::text AS status, s.customer_name, s.cpo_no
+                              FROM staging.bundle b LEFT JOIN satellite.sor s ON s.sor_no = b.sor_no
+                             WHERE b.sor_no ILIKE %s OR s.cpo_no ILIKE %s OR s.customer_name ILIKE %s
+                             ORDER BY b.id DESC LIMIT 20""", (like, like, like)).fetchall()
+        docs = _order_docs(c, [r["id"] for r in rows])
+        files = [dict(r) for r in c.execute(
+            """SELECT s.id, s.file_name, s.page_total, s.received_at, u.id AS upload_id, u.code, u.uploaded_by,
+                      u.doc_date
+                 FROM staging.scan_batch s LEFT JOIN staging.upload u ON u.id = s.upload_id
+                WHERE s.file_name ILIKE %s ORDER BY s.received_at DESC LIMIT 20""", (like,))]
+    orders = []
+    for r in rows:
+        ds = docs.get(r["id"]) or []
+        fp = next((d for d in ds if d["t"] == "FP"), ds[0] if ds else None)
+        orders.append({"sor_no": r["sor_no"], "status": r["status"], "customer_name": r["customer_name"],
+                       "cpo_no": r["cpo_no"], "batch": fp and fp["batch_id"], "uploads": _uploads_of(ds),
+                       "thumb": _thumb(fp) if fp else None})
+    for f in files:
+        f["upload"] = {"id": f.pop("upload_id"), "code": f.pop("code"), "uploaded_by": f.pop("uploaded_by"),
+                       "doc_date": f.pop("doc_date")} if f.get("code") else None
+    return {"q": q, "uploads": ups, "orders": orders, "files": files}
+
+
+def _batches_need():
+    """How many upload batches have a step a person can act on now (the Batch tab's count)."""
+    try:
+        with db.connect() as c:
+            return sum(1 for w in steps.of_uploads(c).values() if w["next"])
+    except Exception:                    # before migration 026, or the database is down: no count, never an error
+        return 0
+
+
+def upload_view(upload_id):
+    """One upload batch: its record, its files (each a scan, with its progress), its orders by status, its five
+    steps (api/steps.py), and the pages steps 1 and 2 list: those that failed to read, those whose type is unsure."""
+    from common import uploads
+    with db.connect() as c:
+        u = uploads.get(c, upload_id)
+        if not u:
+            return None
+        files = [dict(r) for r in c.execute(
+            """SELECT id, file_name, page_total, pages_rendered, page_done, status, received_at
+                 FROM staging.scan_batch WHERE upload_id=%s ORDER BY file_name""", (upload_id,))]
+        pages = [dict(r) for r in c.execute(
+            """SELECT p.batch_id, p.page_no, p.status::text AS status, p.type_status, p.error, s.file_name,
+                      p.thumb_upright_path, p.thumb_path, l.page_no IS NOT NULL AS labelled
+                 FROM staging.page p JOIN staging.scan_batch s ON s.id = p.batch_id
+                 LEFT JOIN staging.type_label l ON l.batch_id = p.batch_id AND l.page_no = p.page_no
+                WHERE s.upload_id = %s AND (p.status IN ('dead_letter', 'failed')
+                                            OR (p.type_status = 'unsure' AND l.page_no IS NULL))
+                ORDER BY s.file_name, p.page_no""", (upload_id,))]
+        work = steps.of_uploads(c, [upload_id])[upload_id]
+    summary = next(iter(uploads_view(10_000, only=upload_id)), {})
+    page = lambda p: {"batch_id": p["batch_id"], "page_no": p["page_no"], "file_name": p["file_name"],
+                      "thumb": _thumb(p), "error": p["error"]}
+    return {"upload": {**u, **{k: summary.get(k) for k in ("files", "pages", "read", "busy", "need", "waiting",
+                                                             "ready", "published", "orders")}},
+            "files": files, "steps": work["steps"], "next": work["next"], "blockers": work["blockers"],
+            "finished": work["finished"], "orders": work["orders"],
+            "failed": [page(p) for p in pages if p["status"] in ("dead_letter", "failed")],
+            "unsure": [page(p) for p in pages if p["type_status"] == "unsure" and not p["labelled"]]}
+
+
 def home_view():
     """Beranda: what needs a person now, over every scan, and how each recent scan is doing. One row per scan:
     pages read, pages waiting for their type, documents waiting for a number, and its orders by status."""
@@ -244,8 +344,8 @@ def home_view():
     def first(k):                       # the most recent scan where this kind of work waits: where its button goes
         return next((s["id"] for s in scans if s[k]), None)
     todo = {k: {"n": sum(s[k] for s in scans), "batch": first(k)} for k in ("need", "unsure", "ready", "held")}
-    return {"scans": scans, "todo": todo, "busy": [s for s in scans if s["status"] in ("splitting", "queued", "reading")
-                                                    or s["waiting_ai"] or s["waiting"]]}
+    return {"scans": scans, "uploads": uploads_view(8), "todo": todo,
+            "busy": [s for s in scans if s["status"] in ("splitting", "queued", "reading") or s["waiting_ai"] or s["waiting"]]}
 
 
 @app.get("/status", response_class=HTMLResponse, include_in_schema=False)
@@ -521,14 +621,41 @@ def _customers():
     return seen + [x for x in starters if x not in seen]
 
 
-def label_data(batch=None, page=None, after=0):
+def _unsure_in_upload(c, upload):
+    """An upload batch's pages whose type is unsure and nobody has labelled: [(scan, page)] in file order."""
+    return [(r["batch_id"], r["page_no"]) for r in c.execute(
+        """SELECT p.batch_id, p.page_no FROM staging.page p JOIN staging.scan_batch s ON s.id = p.batch_id
+             LEFT JOIN staging.type_label l ON l.batch_id = p.batch_id AND l.page_no = p.page_no
+            WHERE s.upload_id = %s AND p.type_status = 'unsure' AND l.page_no IS NULL
+            ORDER BY s.file_name, p.page_no""", (upload,))]
+
+
+def label_data(batch=None, page=None, after=0, upload=None):
     """What the Label screen shows: the scan (the newest with a page still unsure, when none is named), the page (the
-    next unsure one nobody labelled, when none is named), its neighbours, an earlier answer, and the progress."""
+    next unsure one nobody labelled, when none is named), its neighbours, an earlier answer, and the progress. With an
+    upload batch (its step 2): the next unsure page over all its files, after the one named; `left` = how many."""
+    left = None
+    if upload:
+        with db.connect() as c:
+            todo = _unsure_in_upload(c, upload)
+            files = [r["id"] for r in c.execute(
+                "SELECT id FROM staging.scan_batch WHERE upload_id=%s ORDER BY file_name", (upload,))]
+        left = len(todo)
+        if page is None:
+            rank = {b: i for i, b in enumerate(files)}
+            here = (rank.get(batch, -1), after or 0) if batch else (-1, 0)
+            nxt = next((t for t in todo if (rank[t[0]], t[1]) > here), todo[0] if todo else None)
+            if nxt:
+                batch, page = nxt
+            elif not batch and files:
+                batch = files[0]
+        if not batch:
+            return {"batch": None, "left": 0}
     batch = batch or _batch_with_unsure() or _latest_batch()
     if not batch:
         return {"batch": None}
     with db.connect() as c:
-        if page is None:   # next unsure page nobody has labelled yet
+        if page is None and upload is None:   # next unsure page nobody has labelled yet
             r = c.execute("""SELECT p.page_no FROM staging.page p
                              LEFT JOIN staging.type_label l USING (batch_id, page_no)
                              WHERE p.batch_id=%s AND p.type_status='unsure' AND l.page_no IS NULL AND p.page_no > %s
@@ -544,7 +671,7 @@ def label_data(batch=None, page=None, after=0):
                             WHERE batch_id=%s AND page_no BETWEEN %s AND %s ORDER BY page_no""",
                          (batch, (page or 1) - 2, (page or 1) + 2)).fetchall() if page else []
     return {"batch": batch, "p": p, "page": page, "total": total, "existing": existing, "near": near,
-            "types": LABEL_TYPES, "customers": _customers(), "prog": _label_progress(batch)}
+            "types": LABEL_TYPES, "customers": _customers(), "prog": _label_progress(batch), "left": left}
 
 
 @app.get("/labels", response_class=HTMLResponse, include_in_schema=False)
@@ -1766,6 +1893,141 @@ def bundles_view(batch):
             "complete": sum(1 for b in ordered if not b["hold"]), "prefix": PREFIX}
 
 
+ORDERS_SHOWN = 300            # the newest orders on Berkas per SOR / Periksa order when no scan is chosen
+
+
+def _scans_in(c, batch=None, upload=None):
+    """The scans a screen is narrowed to: one file, the files of one upload batch, or None (every scan)."""
+    if batch:
+        return [batch]
+    if upload:
+        from common import uploads
+        return uploads.scans_of(c, upload)
+    return None
+
+
+def _order_scope(c, batch=None, upload=None):
+    """The orders a screen shows: with a scan or an upload batch chosen, those with a document in it (whole, from
+    every scan); without, every order, the most recently touched first (ORDERS_SHOWN)."""
+    scans = _scans_in(c, batch, upload)
+    return [r["id"] for r in c.execute(
+        """SELECT b.id, max(s.received_at) AS last FROM staging.bundle b
+             JOIN staging.bundle_document bd ON bd.bundle_id = b.id JOIN staging.document d ON d.id = bd.document_id
+             JOIN staging.scan_batch s ON s.id = d.batch_id
+            WHERE (%s::text[] IS NULL OR b.id IN (SELECT bd2.bundle_id FROM staging.bundle_document bd2
+                                                    JOIN staging.document d2 ON d2.id = bd2.document_id
+                                                   WHERE d2.batch_id = ANY(%s)))
+            GROUP BY b.id ORDER BY last DESC, b.id DESC LIMIT %s""", (scans, scans, ORDERS_SHOWN))]
+
+
+def _upload_of(batch_id):
+    """The upload batch a scan belongs to: {id, code, uploaded_by, doc_date}, or None."""
+    from common import uploads
+    with db.connect() as c:
+        return uploads.of_scans(c, [batch_id]).get(batch_id)
+
+
+def _uploads_of(docs):
+    """The distinct upload batches of an order's documents, in order: [{id, code, uploaded_by, doc_date}]."""
+    out = {}
+    for d in docs:
+        if d.get("upload_code"):
+            out.setdefault(d["upload_code"], {"id": d["upload_id"], "code": d["upload_code"],
+                                              "uploaded_by": d["uploaded_by"], "doc_date": d["doc_date"]})
+    return list(out.values())
+
+
+def _order_docs(c, ids):
+    """{bundle id: [document]} for these orders, from every scan, each with its scan's file and its first page's
+    thumbnail, in order (the FP's scan first, then by arrival, then by page)."""
+    from grouper import members
+    rows = c.execute("""SELECT bd.bundle_id, d.*, d.doc_type::text AS t, d.doc_type::text AS type, d.linked_by::text AS linked_by,
+                               s.file_name, s.received_at, p.thumb_upright_path, p.thumb_path,
+                               u.id AS upload_id, u.code AS upload_code, u.uploaded_by, u.doc_date
+                          FROM staging.bundle_document bd JOIN staging.document d ON d.id = bd.document_id
+                          JOIN staging.scan_batch s ON s.id = d.batch_id
+                          LEFT JOIN staging.upload u ON u.id = s.upload_id
+                          LEFT JOIN staging.page p ON p.batch_id = d.batch_id AND p.page_no = d.page_from
+                         WHERE bd.bundle_id = ANY(%s)""", (list(ids),)).fetchall()
+    out = {}
+    for r in rows:
+        out.setdefault(r["bundle_id"], []).append(dict(r))
+    for k, ds in out.items():
+        order = {b: i for i, b in enumerate(members.order_batches(ds))}
+        out[k] = sorted(ds, key=lambda d: (order[d["batch_id"]], d["page_from"]))
+    return out
+
+
+def _thumb(r):
+    t = r.get("thumb_upright_path") or r.get("thumb_path")
+    return f"/img/{t}" if t else None
+
+
+def bundles_screen(batch=None, upload=None):
+    """Berkas per SOR (the user, 2026-10-05: "why not per SOR?"): one entry per order with ALL its documents, from
+    whichever scan (file) each came in; then documents whose number isn't sure yet and pages not grouped yet. With a
+    scan chosen: the orders with a document in it (still whole), and that scan's held documents and loose pages."""
+    with db.connect() as c:
+        ids = _order_scope(c, batch, upload)
+        scans = _scans_in(c, batch, upload)
+        bs = {r["id"]: r for r in c.execute(
+            """SELECT b.id, b.sor_no, b.hold_reason, b.folder, b.status::text AS status, s.customer_name
+                 FROM staging.bundle b LEFT JOIN satellite.sor s ON s.sor_no = b.sor_no WHERE b.id = ANY(%s)""", (ids,))}
+        docs = _order_docs(c, ids)
+        held = c.execute("""SELECT d.*, d.doc_type::text AS type, s.file_name, p.thumb_upright_path, p.thumb_path,
+                                   p.fields, u.code AS upload_code, u.uploaded_by, u.doc_date
+                              FROM staging.document d JOIN staging.scan_batch s ON s.id = d.batch_id
+                              LEFT JOIN staging.upload u ON u.id = s.upload_id
+                              LEFT JOIN staging.page p ON p.batch_id = d.batch_id AND p.page_no = d.page_from
+                             WHERE NOT EXISTS (SELECT 1 FROM staging.bundle_document bd WHERE bd.document_id = d.id)
+                               AND (%s::text[] IS NULL OR d.batch_id = ANY(%s))
+                             ORDER BY s.received_at DESC, d.page_from LIMIT 200""", (scans, scans)).fetchall()
+        confirmed = {(r["batch_id"], r["page_no"], r["field"]): r for r in c.execute(
+            "SELECT * FROM staging.field_confirmation WHERE batch_id = ANY(%s)", (sorted({h["batch_id"] for h in held}),))}
+        loose = c.execute("""SELECT p.batch_id, p.page_no, p.doc_type::text AS doc_type, p.type_status,
+                                    p.thumb_upright_path, p.thumb_path, s.file_name, u.code AS upload_code
+                               FROM staging.page p JOIN staging.scan_batch s ON s.id = p.batch_id
+                               LEFT JOIN staging.upload u ON u.id = s.upload_id
+                              WHERE (%s::text[] IS NULL OR p.batch_id = ANY(%s))
+                                AND NOT EXISTS (SELECT 1 FROM staging.document d WHERE d.batch_id = p.batch_id
+                                                AND p.page_no BETWEEN d.page_from AND d.page_to)
+                              ORDER BY s.received_at DESC, p.page_no LIMIT 200""", (scans, scans)).fetchall()
+    orders = []
+    for i in ids:
+        b, ds = bs[i], docs.get(i) or []
+        many = len({d["batch_id"] for d in ds}) > 1
+        orders.append({"sor": b["sor_no"], "hold": b["hold_reason"], "why": _why(b["hold_reason"]),
+                       "folder": b["folder"], "status": b["status"], "customer": b["customer_name"], "many_scans": many,
+                       "batch": (ds[0]["batch_id"] if ds else batch),          # the FP's scan: where Review opens
+                       "uploads": _uploads_of(ds),
+                       "documents": [{"type": d["type"], "batch_id": d["batch_id"], "scan": d["file_name"],
+                                      "upload": d["upload_code"],
+                                      "page_from": d["page_from"], "page_to": d["page_to"],
+                                      "pages": list(range(d["page_from"], d["page_to"] + 1)), "thumb": _thumb(d),
+                                      "joined": _joined(d), "linked_by": d["linked_by"], "evidence": d["evidence"]}
+                                     for d in ds]})
+    out_held = []
+    for h in held:
+        field = CONFIRM_FIELD.get(h["type"])
+        f = (h.get("fields") or {}).get(field) or {} if field else {}
+        out_held.append({"type": h["type"], "batch_id": h["batch_id"], "scan": h["file_name"],
+                         "upload": h["upload_code"], "uploaded_by": h["uploaded_by"], "doc_date": h["doc_date"],
+                         "page_from": h["page_from"], "page_to": h["page_to"],
+                         "pages": list(range(h["page_from"], h["page_to"] + 1)), "thumb": _thumb(h), "joined": "",
+                         "evidence": h["evidence"], "why": _why(h["hold_reason"]), "suggested_sor": h["suggested_sor"],
+                         "group": steps.held_group(h["type"], h["hold_reason"]),
+                         "confirm": {"field": field, "read": f.get("value"),
+                                     "value": h["suggested_sor"] if field == "sor" and h["suggested_sor"] else f.get("value"),
+                                     "done": confirmed.get((h["batch_id"], h["page_from"], field))} if field else None})
+    unplaced = [{"page": p["page_no"], "batch_id": p["batch_id"], "scan": p["file_name"], "upload": p["upload_code"],
+                 "type": p["doc_type"],
+                 "thumb": _thumb(p), "why": _why("not_read" if p["type_status"] is None else "type_unknown")}
+                for p in loose]
+    orders.sort(key=lambda o: bool(o["hold"]))                        # whole orders first, newest first within
+    return {"bundles": orders, "held": out_held, "unplaced": unplaced,
+            "complete": sum(1 for o in orders if not o["hold"]), "prefix": PREFIX}
+
+
 JOIN_HOW = {"satellite": "dicocokkan dengan Satellite", "qr": "dari kode QR", "person": "dipastikan orang",
             "ocr_text": "tercetak", "text": "tercetak", "zoom": "tercetak", "second_look": "dibaca ulang AI",
             "ship_to": "lewat nama toko", "rows": "lewat baris barang", "receipt_no": "lewat nomor tanda terima"}
@@ -1797,6 +2059,42 @@ ACCEPT_REASONS = ["rounding", "tolakan confirmed", "the customer's own price", "
 NONE_REASONS = ["not in SAMB's order", "a free (bonus) item", "another product (say in the note)"]
 
 
+def _order_uploads(where):
+    """The upload batches an order's pages came in: [{id, code, uploaded_by, doc_date}], each once."""
+    from common import uploads
+    with db.connect() as c:
+        by_scan = uploads.of_scans(c, sorted({w["batch"] for w in where.values()}))
+    out = {}
+    for w in where.values():
+        u = by_scan.get(w["batch"])
+        if u:
+            out.setdefault(u["code"], u)
+    return list(out.values())
+
+
+def _order_pages(c, bundle_id):
+    """An order's documents and pages from every scan it has documents in (grouper/members.py), for Review: (docs
+    [(first page, type, pages)], pages {page: row + checks}, where {page: {batch, page, scan}}, row decisions
+    {(page, row): line_match}). Pages are numbered within the order: one scan keeps its page numbers."""
+    from grouper import members
+    rows = members.of_bundle(c, bundle_id)
+    to_key, where = members.keys(rows)
+    docs = [(to_key[(r["batch_id"], r["page_from"])], r["t"],
+             [to_key[(r["batch_id"], n)] for n in range(r["page_from"], r["page_to"] + 1)]) for r in rows]
+    pages = {}
+    for r in rows:
+        for p in c.execute("""SELECT page_no, doc_type::text AS doc_type, fields, outcome, second_look,
+                                     thumb_upright_path, upright_path, fields_all, mapping, ocr_words
+                                FROM staging.page WHERE batch_id=%s AND page_no BETWEEN %s AND %s""",
+                           (r["batch_id"], r["page_from"], r["page_to"])):
+            k = to_key[(r["batch_id"], p["page_no"])]
+            pages[k] = {**dict(p), "page_no": k, "checks": verify.load(c, r["batch_id"], p["page_no"])}
+    decisions = {(to_key[(d["batch_id"], d["page_no"])], d["row_index"]): d for d in c.execute(
+        "SELECT * FROM staging.line_match WHERE batch_id = ANY(%s)", (sorted({r["batch_id"] for r in rows}),))
+        if (d["batch_id"], d["page_no"]) in to_key}
+    return docs, pages, where, decisions
+
+
 def _bundle_pages(c, batch, sor):
     """[(first page, type, pages)] of the bundle's documents in this batch."""
     return [(d["page_from"], d["t"], list(range(d["page_from"], d["page_to"] + 1))) for d in c.execute(
@@ -1805,37 +2103,36 @@ def _bundle_pages(c, batch, sor):
             WHERE d.batch_id = %s AND b.sor_no = %s ORDER BY d.page_from""", (batch, sor))]
 
 
-def review_list(batch):
-    """The batch's bundles with their status and what is left, needs_review first."""
+def review_list(batch=None, upload=None):
+    """Periksa order: every order once, with its status and what is left, needs_review first. Its documents come from
+    every scan (an order can arrive as several files); with a scan chosen, the orders with a document in it. With an
+    upload batch, each order also says where it stands in that batch's steps (`step`: need, depends on an earlier
+    step, outside: waits for another batch's document, waiting, ready, published)."""
     with db.connect() as c:
-        rows = c.execute("""SELECT DISTINCT b.sor_no, b.status::text AS status, b.checks, b.hold_reason, b.reviewed_by,
+        ids = _order_scope(c, batch, upload)
+        states = (steps.of_uploads(c, [upload]).get(upload) or {}).get("orders", {}) if upload else {}
+        rows = c.execute("""SELECT b.id, b.sor_no, b.status::text AS status, b.checks, b.hold_reason, b.reviewed_by,
                                    b.reviewed_at, s.customer_name
-                              FROM staging.bundle b JOIN staging.bundle_document bd ON bd.bundle_id = b.id
-                              JOIN staging.document d ON d.id = bd.document_id
-                              LEFT JOIN satellite.sor s ON s.sor_no = b.sor_no
-                             WHERE d.batch_id = %s""", (batch,)).fetchall()
-        docs = {}
-        for d in c.execute("""SELECT b.sor_no, d.doc_type::text AS t, d.page_from, p.thumb_upright_path AS thumb
-                                FROM staging.bundle b JOIN staging.bundle_document bd ON bd.bundle_id = b.id
-                                JOIN staging.document d ON d.id = bd.document_id
-                                LEFT JOIN staging.page p ON p.batch_id = d.batch_id AND p.page_no = d.page_from
-                               WHERE d.batch_id = %s ORDER BY d.page_from""", (batch,)):
-            docs.setdefault(d["sor_no"], []).append(d)
+                              FROM staging.bundle b LEFT JOIN satellite.sor s ON s.sor_no = b.sor_no
+                             WHERE b.id = ANY(%s)""", (ids,)).fetchall()
+        docs = _order_docs(c, ids)
     order = {"needs_review": 0, "grouping": 1, "reviewed": 2, "auto_ok": 3, "published": 4}
     out = []
     for r in rows:
         checks = (r["checks"] or {}).get("checks") or {}
-        ds = docs.get(r["sor_no"]) or []
+        ds = docs.get(r["id"]) or []
         kinds = []
         for d in ds:                                   # Invoice · PO ×4 · Receipt
             name = bahasa.DOC_SHORT.get(d["t"], KIND.get(d["t"], d["t"]))
             kinds.append(name)
         chips = [f"{k} ×{kinds.count(k)}" if kinds.count(k) > 1 else k for k in dict.fromkeys(kinds)]
         fp = next((d for d in ds if d["t"] == "FP"), ds[0] if ds else None)
-        out.append({**r, "reasons": (r["checks"] or {}).get("reasons") or [],
+        out.append({**{k: v for k, v in r.items() if k != "id"}, "reasons": (r["checks"] or {}).get("reasons") or [],
                     "counts": {s: sum(1 for x in checks.values() if x["status"] == s)
                                for s in ("pass", "accepted", "fail", "unknown")},
-                    "docs": chips, "thumb": f"/img/{fp['thumb']}" if fp and fp.get("thumb") else None,
+                    "docs": chips, "thumb": _thumb(fp) if fp else None,
+                    "batch": fp["batch_id"] if fp else batch, "scans": len({d["batch_id"] for d in ds}),
+                    "uploads": _uploads_of(ds), "step": states.get(r["sor_no"]),
                     "issues": _issues(checks, (r["checks"] or {}).get("reasons") or [], r.get("customer_name"))})
     return sorted(out, key=lambda r: (order.get(r["status"], 9), r["sor_no"]))
 
@@ -1876,18 +2173,9 @@ def review_view(batch, sor):
         b = c.execute("SELECT * FROM staging.bundle WHERE sor_no=%s ORDER BY id DESC LIMIT 1", (sor,)).fetchone()
         if not b:
             return None
-        docs = _bundle_pages(c, batch, sor)
-        numbers = [n for _, _, ps in docs for n in ps]
-        pages = {r["page_no"]: dict(r) for r in c.execute(
-            """SELECT page_no, doc_type::text AS doc_type, fields, outcome, second_look, thumb_upright_path,
-                      upright_path, fields_all, mapping, ocr_words
-                 FROM staging.page WHERE batch_id=%s AND page_no = ANY(%s)""", (batch, numbers))}
-        for n in pages:
-            pages[n]["checks"] = verify.load(c, batch, n)
+        docs, pages, where, decisions = _order_pages(c, b["id"])    # from every scan the order has documents in
         so = sat.load(c, [sor]).get(verify.flat(sor))
         lines = sat.items(c, sor)
-        decisions = {(r["page_no"], r["row_index"]): r for r in c.execute(
-            "SELECT * FROM staging.line_match WHERE batch_id=%s", (batch,))}
         pmap = matching.load_map(c, so and so.get("customer_parent"))
     checks = (b["checks"] or {}).get("checks") or {}
     order = sat.paper(so, lines) if so and not sat.free_goods(so) else None
@@ -1973,7 +2261,7 @@ def review_view(batch, sor):
                              if (decisions.get((n, i)) or {}).get("how") == "ai" else None})
         documents.append({"page": n, "type": t, "kind": KIND.get(t, t), "pages": ps, "outcome": p.get("outcome"),
                           "head": head, "kept": kept, "rows": rows})
-    ok, left = crosscheck.can_approve(checks, {n: pages[n] for n in pages})
+    ok, left = crosscheck.can_approve(checks, {n: pages[n] for n in pages}, where)
     items = _open_items(batch, sor, docs, pages, checks, lines, pairs, entry, {"received": got, "order": order})
     flagged = {f["page"] for i in items for f in i.get("fix") or []} | {i["page"] for i in items if i.get("page")}
     strip = [{"page": n, "type": t, "kind": KIND.get(t, t), "first": n == ps[0],
@@ -1996,7 +2284,9 @@ def review_view(batch, sor):
             "labels": {**crosscheck.LABEL, **bahasa.CHECK},
             "reasons": (b["checks"] or {}).get("reasons") or [], "documents": documents, "can_approve": ok,
             "left": left, "accept_reasons": ACCEPT_REASONS, "none_reasons": NONE_REASONS, "open_items": items,
-            "strip": strip, "passed": passed,
+            "strip": strip, "passed": passed, "where": {str(k): w for k, w in where.items()},
+            "uploads": _order_uploads(where),
+            "multi": len({w["batch"] for w in where.values()}) > 1,
             "calibration": _calibration_view(so, checks)}
 
 
@@ -2241,7 +2531,7 @@ def published_view(c, sor):
                       WHERE b.sor_no=%s AND b.status='published' ORDER BY b.published_at DESC NULLS LAST LIMIT 1""",
                   (sor,)).fetchone() or {}
     tables, counts = [], {}
-    for t in ("FP", "PO", "TTG"):
+    for t in ("FP", "PO", "TTG", "FPJ"):
         d = DOCS[t]
         cols = [("id", "ID dokumen", None), ("sor_no", bahasa.field("sor"), None)]
         cols += [(column(f), bahasa.field(f["name"], t), f["kind"]) for f in d["header"]
@@ -2251,12 +2541,15 @@ def published_view(c, sor):
         lcols = [("doc_id", "ID dokumen", None), ("line_no", "Baris", None)]
         lcols += [(f["name"], bahasa.COL.get(f["name"], f["name"]), f["kind"]) for f in d["lines"]]
         lines = c.execute(f"SELECT * FROM satellite.{d['table']}_line WHERE doc_id = ANY(%s) ORDER BY doc_id, line_no",
-                          ([r["id"] for r in rows],)).fetchall() if rows else []
+                          ([r["id"] for r in rows],)).fetchall() if rows and d["lines"] else []
         counts[t] = (len(rows), len(lines))
+        if t == "FPJ" and not rows:
+            continue                                      # a Faktur Pajak is shown only once one is published
         tables.append({"type": t, "name": f"satellite.{d['table']}", "cols": cols, "lines": False,
                        "rows": [[_pub_cell(r.get(k), kind) for k, _, kind in cols] for r in rows]})
-        tables.append({"type": t, "name": f"satellite.{d['table']}_line", "cols": lcols, "lines": True,
-                       "rows": [[_pub_cell(r.get(k), kind) for k, _, kind in lcols] for r in lines]})
+        if d["lines"]:                                    # the Faktur Pajak has no line table
+            tables.append({"type": t, "name": f"satellite.{d['table']}_line", "cols": lcols, "lines": True,
+                           "rows": [[_pub_cell(r.get(k), kind) for k, _, kind in lcols] for r in lines]})
     fp = c.execute("SELECT total FROM satellite.doc_faktur_penjualan WHERE sor_no=%s ORDER BY id LIMIT 1",
                    (sor,)).fetchone()
     return {"sor": sor, "customer": b.get("customer_name"), "tgl_so": b.get("tgl_so"), "docs": published_docs(c, sor),
@@ -2405,7 +2698,7 @@ def published_docs(c, sor):
     return out
 
 
-def published_rows(c, batch=None, new=()):
+def published_rows(c, batch=None, new=(), upload=None):
     """Every SOR published to Satellite (of one scan, or all), newest first, the ones just published on top; and
     the scans that have published SORs, for the picker."""
     new = list(new)
@@ -2415,12 +2708,19 @@ def published_rows(c, batch=None, new=()):
                                (SELECT count(*) FROM satellite.doc_po p WHERE p.sor_no = d.sor_no) AS pos,
                                (SELECT count(*) FROM satellite.doc_ttg g WHERE g.sor_no = d.sor_no) AS ttgs
                           FROM satellite.sor_document d LEFT JOIN satellite.sor s ON s.sor_no = d.sor_no
-                         WHERE (%s::text IS NULL OR d.source_batch = %s)
-                         ORDER BY d.updated_at DESC, d.sor_no LIMIT 300""", (batch, batch)).fetchall()
+                         WHERE (%s::text IS NULL OR %s = ANY(string_to_array(d.source_batch, ',')))
+                           AND (%s::text[] IS NULL OR string_to_array(d.source_batch, ',') && %s::text[])
+                         ORDER BY d.updated_at DESC, d.sor_no LIMIT 300""",
+                     (batch, batch, *([_scans_in(c, None, upload)] * 2))).fetchall()
+    from common import uploads as up_
+    by_scan = up_.of_scans(c, sorted({b for r in rows for b in (r["source_batch"] or "").split(",") if b}))
+    rows = [{**dict(r), "uploads": list({u["code"]: u for u in (by_scan.get(b) for b in (r["source_batch"] or "").split(","))
+                                         if u}.values())} for r in rows]
     rows = sorted(rows, key=lambda r: (r["sor_no"] not in new, new.index(r["sor_no"]) if r["sor_no"] in new else 0))
-    batches = c.execute("""SELECT DISTINCT d.source_batch AS id, coalesce(s.file_name, d.source_batch) AS name
-                             FROM satellite.sor_document d LEFT JOIN staging.scan_batch s ON s.id = d.source_batch
-                            ORDER BY 2""").fetchall()
+    batches = c.execute("""SELECT DISTINCT b.id, coalesce(s.file_name, b.id) AS name      -- an order across scans:
+                             FROM satellite.sor_document d                            -- source_batch lists them
+                             CROSS JOIN unnest(string_to_array(d.source_batch, ',')) AS b(id)
+                             LEFT JOIN staging.scan_batch s ON s.id = b.id ORDER BY 2""").fetchall()
     return rows, batches
 
 
@@ -2472,7 +2772,8 @@ def phase6_checks(batch_id):
         checks.append(("No page in a wrong bundle (answer key)", not wrong,
                        f"{len(placed)} pages placed · {len(whole)} of {len(golden['bundles'])} answer-key bundles "
                        "complete" + (f" · WRONG: {wrong}" if wrong else "")))
-    by_order = [f"p{d['page_from']}" for bd in v["bundles"] for d in bd["documents"] if d["linked_by"] not in ("sor", "po_no")]
+    by_order = [f"p{d['page_from']}" for bd in v["bundles"] for d in bd["documents"]
+                if d["linked_by"] not in ("sor", "po_no", "billing_no")]
     checks.append(("Nothing linked by page order (a continuation belongs to the page before it)", not by_order,
                    "every document linked by its SOR or its PO number" if not by_order else f"by order: {by_order}"))
     many = [bd["sor"] for bd in v["bundles"] if sum(d["type"] == "FP" for d in bd["documents"]) > 1]

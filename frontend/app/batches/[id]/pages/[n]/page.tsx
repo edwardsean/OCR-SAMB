@@ -21,13 +21,13 @@ export default async function PageView({ params, searchParams }: { params: Promi
   const sp = await searchParams;
   const pageNo = Number(n);
   const [d, w] = await Promise.all([need<PageDetail>(`/scans/${id}/pages/${pageNo}`), getWords()]);
-  const { scan: b, page: p, fix } = d;
+  const { scan: b, page: p, fix, upload: up } = d;
   const t = p.doc_type;
 
   return (
     <>
       <section className="head pg-head">
-        <p className="crumbs"><Link href="/batches">Riwayat scan</Link> / <Link href={`/batches/${id}`}>{b.file_name}</Link> / halaman {pageNo}</p>
+        <p className="crumbs"><Link href="/">Batch</Link>{up && <> / <Link href={`/uploads/${up.id}`}>{up.code}</Link></>} / <Link href={`/batches/${id}`}>{b.file_name}</Link> / halaman {pageNo}</p>
         <div className="pg-title">
           <h1>Halaman {pageNo} <span className="muted">dari {b.page_total}</span>{" "}
             {t ? <span className={`tchip t-${t} big`}>{w.DOC[t] ?? t}</span>

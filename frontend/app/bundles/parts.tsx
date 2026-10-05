@@ -25,10 +25,12 @@ export function HeldCard({ h, batch }: { h: BundleDoc; batch: string }) {
   }
   return (
     <article className="bx-hcard">
-      <Link className="bx-tile small" href={`/batches/${batch}/pages/${h.page_from}`} title={`Buka halaman ${h.page_from}`}>
+      <Link className="bx-tile small" href={`/batches/${batch}/pages/${h.page_from}`} title={`${h.scan ?? ""}, halaman ${h.page_from}`}>
         {/* eslint-disable-next-line @next/next/no-img-element */}
         {h.thumb && <img src={h.thumb} alt="" loading="lazy" />}
-        <b>{w.DOC_SHORT[h.type] ?? h.type}</b><span>hal. {h.page_from}{h.page_to !== h.page_from ? `–${h.page_to}` : ""}</span></Link>
+        <b>{w.DOC_SHORT[h.type] ?? h.type}</b><span>hal. {h.page_from}{h.page_to !== h.page_from ? `–${h.page_to}` : ""}</span>
+        {h.scan && <small className="bx-scan" title={`${h.upload ?? ""} ${h.scan}`}>{h.scan}</small>}
+        {h.upload && <small className="bx-scan" title={`diunggah ${h.uploaded_by ?? ""}`}>{h.upload}</small>}</Link>
       <div className="bx-hbody">
         <p className="bx-hwhy"><b>{w.DOC[h.type] ?? h.type}</b>: {h.why}</p>
         {h.suggested_sor && <p className="small muted">Mungkin order <b className="mono">{h.suggested_sor}</b> (hanya petunjuk, tidak otomatis dihubungkan).</p>}

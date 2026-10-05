@@ -4,6 +4,7 @@ import { getWords, need, one, type SearchParams } from "@/lib/api";
 import { pct, tgl } from "@/lib/format";
 import type { ScanDetail } from "@/lib/types";
 import AutoRefresh from "@/components/AutoRefresh";
+import { BatchTag } from "@/components/Batch";
 
 export async function generateMetadata({ params }: { params: Promise<{ id: string }> }) {
   return { title: (await params).id };
@@ -16,7 +17,7 @@ export default async function ScanPage({ params, searchParams }: { params: Promi
   const { id } = await params;
   const flt = one((await searchParams).flag);
   const [d, w] = await Promise.all([need<ScanDetail>(`/scans/${id}`), getWords()]);
-  const { scan: b, pages, orders: o, flags: fc } = d;
+  const { scan: b, pages, orders: o, flags: fc, upload: up } = d;
   const total = b.page_total;
   const split = ["split", "queued", "reading", "read", "grouping", "done"].includes(b.status);
   const read = total > 0 && b.page_done >= total;
@@ -35,9 +36,10 @@ export default async function ScanPage({ params, searchParams }: { params: Promi
     <>
       <AutoRefresh every={4000} active={live} />
       <section className="head">
-        <p className="crumbs"><Link href="/batches">Riwayat scan</Link> / {b.file_name}</p>
+        <p className="crumbs"><Link href="/">Batch</Link>{up && <> / <Link href={`/uploads/${up.id}`}>{up.code}</Link></>} / {b.file_name}</p>
         <h1>{b.file_name}</h1>
         <p className="lede">Diterima {tgl(b.received_at)}, {total} halaman.</p>
+        {up && <p className="batchhead">Batch <BatchTag u={up} full /></p>}
       </section>
 
       <section className="flow five">

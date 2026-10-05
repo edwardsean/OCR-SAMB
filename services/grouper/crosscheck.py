@@ -465,7 +465,7 @@ def _score(name, own, page, df):
     return sum(_weight(w, df) for w in own & page) + (1.0 if _initials(name, page) else 0.0)
 
 
-def _store_named(pages, docs, so, stores, df=None):
+def _store_named(pages, docs, so, stores, df=None, where=None):
     """A second net for a wrong-order link: the customer's paper usually names the store the goods go to. Fail when a
     page names ANOTHER store of this customer and not this order's (Boots ships one order to ten stores: the totals
     would all fit). Pass when it names this order's store. Info when it names none: a head-office PO.
@@ -495,16 +495,16 @@ def _store_named(pages, docs, so, stores, df=None):
         if other:
             wrong.append((n, other))
     if wrong:
-        return result("fail", "; ".join(f"page {n} names {s}, another store of this customer, not {name}"
+        return result("fail", "; ".join(f"page {_pages([n], where)[1:-1] if where else n} names {s}, another store of this customer, not {name}"
                                         for n, s in wrong) + ": linked to the wrong order?")
     if named:
-        return result("pass", f"page{'s' if len(named) > 1 else ''} {', '.join(map(str, named))} name{'' if len(named) > 1 else 's'} "
+        return result("pass", f"page{'s' if len(named) > 1 else ''} {_pages(named, where)[1:-1] if where else ', '.join(map(str, named))} name{'' if len(named) > 1 else 's'} "
                               f"{name}")
     return result("info", f"no page names a store of this customer (a head-office order?); {name} is kept as the SO says")
 
 
 def check_bundle(sor, docs, pages, so, so_lines, matches, expected=("FP", "TTG"), scan_day=None, spans=None,
-                 profile=None, stores=None, df=None):
+                 profile=None, stores=None, df=None, where=None):
     """The checks of one bundle. docs: [(page_no, doc_type)] (first pages); pages: {page_no: {doc_type, fields,
     checks, outcome, fields_all, classical_text, second_look}}; matches: matching.match(); spans: {first page: every
     page of that document} (default: the first page alone); profile: the customer's calibration {chain, name,
@@ -616,7 +616,7 @@ def check_bundle(sor, docs, pages, so, so_lines, matches, expected=("FP", "TTG")
     out["dates"] = _dates(pages, [spans.get(n) or [n] for n in ttgs], so, scan_day) if ttgs else \
         result("n/a", "no TTG in the bundle")
     out["fpj"] = result("n/a", "no Faktur Pajak in this stage")
-    out["store_named"] = _store_named(pages, docs, so, stores or [], df)
+    out["store_named"] = _store_named(pages, docs, so, stores or [], df, where)
     out["calibration"] = _calibration(prof, so, so_lines, ttgs, out) if so and not satellite.free_goods(so) else \
         result("n/a", "nothing to calibrate against: " + ("the SO isn't in Satellite" if not so else "free goods (SOF)"))
     return out
@@ -643,7 +643,15 @@ def accept(checks, decisions):
     return out
 
 
-def can_approve(checks, pages):
+def _pages(ns, where=None):
+    """A list of pages in a reason: as before for an order in one scan; page and file when it spans several."""
+    if not where or len({w["batch"] for w in where.values()}) < 2:
+        return str(ns)
+    from grouper import members
+    return "[" + ", ".join(members.name(n, where) for n in ns) + "]"
+
+
+def can_approve(checks, pages, where=None):
     """(yes?, what is left). A person may approve a bundle only when every check passed or was accepted and every
     page has settled what it decides itself (vf.page_settled): nothing waits for the AI OCR, and no page's type, key
     or FP value still waits for a person. A value kept as read never holds a bundle; the bundle's checks judge the
@@ -653,12 +661,12 @@ def can_approve(checks, pages):
     left = [f"{LABEL[k]}: {c['why']}" for k, c in checks.items() if c["status"] in ("fail", "unknown", "waiting")]
     waiting = sorted(n for n, p in pages.items() if p.get("outcome") == "waiting_ai")
     person = sorted(n for n, p in pages.items() if p.get("outcome") in ("needs_person", "held_unsure"))
-    left += ([f"pages {waiting} wait for the AI OCR"] if waiting else []) + \
-            ([f"pages {person}: their type, key or FP values wait for a person"] if person else [])
+    left += ([f"pages {_pages(waiting, where)} wait for the AI OCR"] if waiting else []) + \
+            ([f"pages {_pages(person, where)}: their type, key or FP values wait for a person"] if person else [])
     return not left, left
 
 
-def decide(checks, pages, old_status=None, old_print=None, new_print=None):
+def decide(checks, pages, old_status=None, old_print=None, new_print=None, where=None):
     """(status, reasons). Reasons: failed checks, then open ones, then pages a person must finish. An accepted check
     counts as passed."""
     waiting = sorted(n for n, p in pages.items() if p.get("outcome") == "waiting_ai")
@@ -666,13 +674,14 @@ def decide(checks, pages, old_status=None, old_print=None, new_print=None):
     failed = [f"{LABEL[k]}: {c['why']}" for k, c in checks.items() if c["status"] == "fail"]
     open_ = [f"{LABEL[k]}: {c['why']}" for k, c in checks.items() if c["status"] == "unknown"]
     later = [f"{LABEL[k]}: {c['why']}" for k, c in checks.items() if c["status"] == "waiting"]   # Satellite's receipt
-    reasons = failed + open_ + ([f"pages {person}: their type, key or FP values wait for a person"] if person else [])
+    reasons = failed + open_ + ([f"pages {_pages(person, where)}: their type, key or FP values wait for a person"]
+                                if person else [])
     if old_status == "reviewed":
         if old_print == new_print:
             return "reviewed", reasons
         reasons.insert(0, "it was reviewed, then its documents or Satellite's record changed")
     if waiting or later:
-        return "grouping", ([f"pages {waiting} wait for the AI OCR"] if waiting else []) + later + reasons
+        return "grouping", ([f"pages {_pages(waiting, where)} wait for the AI OCR"] if waiting else []) + later + reasons
     return ("auto_ok" if not reasons else "needs_review"), reasons
 
 
@@ -687,32 +696,37 @@ def fingerprint(pages, so, so_lines, matches):
 
 def inputs(c, bid):
     """Everything the checks of the batch's complete bundles read from the database, one dict per bundle, with what
-    is stored for it now (`stored`: checks, reasons, pairs; `status`; `fingerprint`)."""
+    is stored for it now (`stored`: checks, reasons, pairs; `status`; `fingerprint`). A bundle's documents and pages
+    come from every scan it has documents in (grouper/members.py), its pages numbered within the order (`where` says
+    which scan and page each is; an order in one scan keeps its page numbers)."""
+    from grouper import members
     bundles = c.execute("""SELECT DISTINCT b.id, b.sor_no, b.status::text AS status, b.fingerprint, b.checks
                              FROM staging.bundle b JOIN staging.bundle_document bd ON bd.bundle_id = b.id
                              JOIN staging.document d ON d.id = bd.document_id
                             WHERE d.batch_id = %s AND b.hold_reason IS NULL AND b.status <> 'published'
                             ORDER BY b.sor_no""", (bid,)).fetchall()     # a published bundle is never checked again
     sos = satellite.load(c, [b["sor_no"] for b in bundles])
-    decisions = {(r["page_no"], r["row_index"]): r for r in c.execute(
-        "SELECT * FROM staging.line_match WHERE batch_id=%s", (bid,))}
-    day = c.execute("SELECT coalesce(scanned_day, received_at::date) AS d FROM staging.scan_batch WHERE id=%s",
-                    (bid,)).fetchone()
     out = []
     for b in bundles:
-        ranges = c.execute(
-            """SELECT d.page_from, d.page_to, d.doc_type::text AS t FROM staging.document d
-                 JOIN staging.bundle_document bd ON bd.document_id = d.id
-                WHERE bd.bundle_id = %s AND d.batch_id = %s ORDER BY d.page_from""", (b["id"], bid)).fetchall()
-        docs = [(d["page_from"], d["t"]) for d in ranges]
-        pages = {r["page_no"]: dict(r) for r in c.execute(
-            """SELECT p.page_no, p.doc_type::text AS doc_type, p.fields, p.outcome, p.fields_all, p.classical_text,
-                      p.second_look FROM staging.page p
-                 JOIN staging.document d ON d.batch_id = p.batch_id AND p.page_no BETWEEN d.page_from AND d.page_to
-                 JOIN staging.bundle_document bd ON bd.document_id = d.id
-                WHERE bd.bundle_id = %s AND p.batch_id = %s""", (b["id"], bid))}
-        for n in pages:
-            pages[n]["checks"] = verify.load(c, bid, n)
+        ranges = members.of_bundle(c, b["id"])
+        to_key, where = members.keys(ranges)
+        batches = sorted({r["batch_id"] for r in ranges})
+        docs = [(to_key[(d["batch_id"], d["page_from"])], d["t"]) for d in ranges]
+        pages = {}
+        for d in ranges:
+            for r in c.execute(
+                    """SELECT p.page_no, p.doc_type::text AS doc_type, p.fields, p.outcome, p.fields_all,
+                              p.classical_text, p.second_look FROM staging.page p
+                        WHERE p.batch_id = %s AND p.page_no BETWEEN %s AND %s""",
+                    (d["batch_id"], d["page_from"], d["page_to"])):
+                k = to_key[(d["batch_id"], r["page_no"])]
+                pages[k] = {**dict(r), "page_no": k}
+                pages[k]["checks"] = verify.load(c, d["batch_id"], r["page_no"])
+        decisions = {(to_key[(r["batch_id"], r["page_no"])], r["row_index"]): r for r in c.execute(
+            "SELECT * FROM staging.line_match WHERE batch_id = ANY(%s)", (batches,))
+            if (r["batch_id"], r["page_no"]) in to_key}
+        day = c.execute("""SELECT max(coalesce(scanned_day, received_at::date)) AS d FROM staging.scan_batch
+                            WHERE id = ANY(%s)""", (batches,)).fetchone()   # the latest scan: no date can be later
         so = sos.get(verify.flat(b["sor_no"]))
         chain = satellite.chain_of(so)
         profile = c.execute("""SELECT expected_docs::text[] AS e, rounding_allowance, receipt_shows
@@ -721,8 +735,10 @@ def inputs(c, bid):
                          if s.get("customer_name") and chain and satellite.chain_of(s) == chain})
         out.append({"id": b["id"], "sor": b["sor_no"], "status": b["status"], "fingerprint": b["fingerprint"],
                     "stores": stores, "df": satellite.store_df(satellite.load(c)),
-                    "stored": b["checks"] or {}, "docs": docs, "pages": pages, "so": so,
-                    "spans": {d["page_from"]: list(range(d["page_from"], d["page_to"] + 1)) for d in ranges},
+                    "stored": b["checks"] or {}, "docs": docs, "pages": pages, "so": so, "where": where,
+                    "spans": {to_key[(d["batch_id"], d["page_from"])]:
+                              [to_key[(d["batch_id"], n)] for n in range(d["page_from"], d["page_to"] + 1)]
+                              for d in ranges},
                     "profile": {"chain": chain, "name": satellite.chain_name(so),
                                 "allowance": _num((profile or {}).get("rounding_allowance")),
                                 "receipt_shows": (profile or {}).get("receipt_shows")} if chain else {},
@@ -740,7 +756,8 @@ def evaluate(x):
     rows = [(n, t, matching.rows_of(t, x["pages"][n]["fields"])) for n, t in x["docs"] if t in ("PO", "TTG")]
     m = matching.match(rows, x["lines"], x["pmap"], x["decisions"])
     checks = accept(check_bundle(x["sor"], x["docs"], x["pages"], x["so"], x["lines"], m, x["expected"],
-                                 x["scan_day"], x.get("spans"), x.get("profile"), x.get("stores"), x.get("df")),
+                                 x["scan_day"], x.get("spans"), x.get("profile"), x.get("stores"), x.get("df"),
+                                 x.get("where")),
                     x["accepted"])
     asks = {}                    # item 11: a value only the AI read, beyond its reference: the page looks again first
     for c in checks.values():
@@ -748,7 +765,7 @@ def evaluate(x):
             asks.setdefault(n, set()).add(field)
     pages = {n: {**p, "outcome": "waiting_ai"} if n in asks else p for n, p in x["pages"].items()}
     fp = fingerprint(x["pages"], x["so"], x["lines"], m)
-    status, reasons = decide(checks, pages, x["status"], x["fingerprint"], fp)
+    status, reasons = decide(checks, pages, x["status"], x["fingerprint"], fp, x.get("where"))
     pairs = [{"page": p, "row": i + 1, "line": x["lines"][y["line"]]["line_no"] if y["line"] is not None else None,
               "how": y["how"], "status": y["status"], "why": y["why"]} for (p, i), y in sorted(m.items())]
     return {"checks": checks, "reasons": reasons, "pairs": pairs, "status": status, "fingerprint": fp,
@@ -801,8 +818,9 @@ def run(bid):
             c.execute("""UPDATE staging.bundle SET checks=%s, status=%s, fingerprint=%s, checked_at=now()
                          WHERE id=%s""", (Json({"checks": r["checks"], "reasons": r["reasons"], "pairs": r["pairs"]}),
                                           r["status"], r["fingerprint"], x["id"]))
-            for page, fields in r["asks"].items():
-                ask_again(c, bid, page, fields)
+            for page, fields in r["asks"].items():          # the page's own scan and number
+                w = (x.get("where") or {}).get(page) or {"batch": bid, "page": page}
+                ask_again(c, w["batch"], w["page"], fields)
             done[x["sor"]] = r["status"]
     return done
 

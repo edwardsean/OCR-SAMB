@@ -100,10 +100,10 @@ This follows one real scan through every step. It needs:
 Each step lists what you do (in the web app, or with the Postman request named in brackets), what happens behind it,
 and how to see it.
 
-**1. Upload the PDF.** In Unggah scan, or with [Upload a scanned PDF].
+**1. Upload the PDF.** In Unggah batch, or with [Upload a scanned PDF].
 - The scan exists at once, with status `received`.
 - The upload puts one message on `q.intake`.
-- See it: the screen opens the scan's page. The intake worker logs the split:
+- See it: the screen opens the batch's page at step 1, Dibaca AI. The intake worker logs the split:
   `docker compose logs -f rtm-intake`.
 
 **2. Split into pages.** Nothing to do.
@@ -116,21 +116,22 @@ and how to see it.
 - Jev decides the page's type. Tesseract checks each value against the print.
 - See it: `docker compose logs -f rtm-worker`, the scan's progress bar, and [One page] for what was read and where.
 
-**4. Say what unsure pages are.** In Jenis halaman, or [Jenis halaman] then [Say what a page is].
+**4. Say what unsure pages are.** In the batch's step 2, Jenis halaman, or [Jenis halaman] then [Say what a page is].
 - A page Jev couldn't decide waits for a person's label, then continues by itself.
-- See it: the count beside Jenis halaman in the top bar (`unsure_left` in [Session]).
+- See it: step 2's count on the batch's page (`steps` in `GET /api/v1/uploads/{id}`; `unsure_left` in [Session]).
 
 **5. Group into orders.** Nothing to do, unless a number isn't sure.
 - `rtm-grouper` joins pages into one order per SOR, by the numbers printed on them.
-- A document whose number isn't sure is held. Confirm it in Berkas per SOR, or with [Confirm a held document's number].
+- A document whose number isn't sure is held. Confirm it in the batch's step 3, Cocokkan ke order, or with
+  [Confirm a held document's number].
 - See it: Berkas per SOR ([Berkas per SOR]: `view.bundles`, `view.held`).
 
 **6. Check against Satellite.** Nothing to do.
 - Each order is compared with SAMB's record: totals, received quantities, dates, the store.
 - If everything matches, the order is `auto_ok` (ready to send). Otherwise it's `needs_review`.
-- See it: Periksa order ([Periksa order]: each row's `status` and `issues`).
+- See it: the batch's step 4, Periksa order ([Periksa order]: each row's `status` and `issues`).
 
-**7. Decide what doesn't add up.** In Periksa order, open an order. Over the API: [One order], then the requests in
+**7. Decide what doesn't add up.** In the batch's step 4, open an order. Over the API: [One order], then the requests in
 folder 2.
 - Each open item asks for one decision:
   - correct a value read wrong;
@@ -142,12 +143,12 @@ folder 2.
 **8. Approve.** The button at the bottom of the order, or [Approve an order].
 - The order becomes `reviewed`.
 
-**9. Send to Satellite.** "Kirim ke Satellite" in Periksa order, or [Publish the scan's finished orders].
+**9. Send to Satellite.** The batch's step 5, Kirim ke Satellite, or [Publish the scan's finished orders].
 - Every finished order (`auto_ok` or `reviewed`) is written to Satellite's tables, with one PDF per SOR.
-- See it: Data terkirim ([One published order, as Satellite stores it]), and the PDF ([A published order's PDF]).
+- See it: the same step's "Sudah terkirim" ([One published order, as Satellite stores it]), and the PDF ([A published order's PDF]).
 
 Two things also happen by themselves, from the scheduler:
-- Orders that newly need a person become a notice (`notify`, every 5 min): the red count beside Periksa order.
+- Orders that newly need a person become a notice (`notify`, every 5 min), marked seen when a person opens step 4.
 - A scan that never got split is put back on the queue (`intake`, every 10 min).
 
 ### When something seems stuck

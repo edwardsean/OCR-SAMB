@@ -5,8 +5,9 @@
 import Link from "next/link";
 import { useMemo, useRef, useState } from "react";
 import { cx, g, qty, angka, rp, tgl } from "@/lib/format";
-import type { OpenItem, Order, Published, QtyFix } from "@/lib/types";
+import type { OpenItem, Order, Published, QtyFix, UploadRef } from "@/lib/types";
 import Cap from "@/components/Cap";
+import { BatchTags } from "@/components/Batch";
 import LessonStatus from "@/components/LessonStatus";
 import PublishedData from "@/components/PublishedData";
 import { SpreadProvider, SpreadView, useFollow, useSpot, type SpreadPage } from "@/components/Spread";
@@ -14,7 +15,7 @@ import { useReviewer } from "@/components/useReviewer";
 import { useWords } from "@/components/Words";
 import {
   AcceptForm, ApproveButton, CalibrateForm, CellConfirm, FieldFix, PairButtons, PairForm, QtyForm, ReviewCtx,
-  SmallConfirm,
+  SmallConfirm, useReview,
 } from "./forms";
 
 const ISSUE: Record<QtyFix["issue"], string> = {
@@ -32,7 +33,8 @@ function Card({ n, page, wait, id, children }: { n: number; page?: number | null
   );
 }
 
-function QtyRow({ x, batch }: { x: QtyFix; batch: string }) {
+function QtyRow({ x }: { x: QtyFix }) {
+  const r = useReview();
   const sp = useSpot({ id: `q${x.page}:${x.i}`, page: x.page, box: x.box, label: `Baris ${x.i + 1} di Tanda Terima` });
   const [crop, setCrop] = useState(true);
   return (
@@ -41,9 +43,9 @@ function QtyRow({ x, batch }: { x: QtyFix; batch: string }) {
         <div className="what">{x.desc || "sebuah baris"}</div>
         <span className={`qissue ${x.issue}`}>{ISSUE[x.issue]}</span>
       </div>
-      <div className="fine">Tanda Terima hal. {x.page}, baris {x.i + 1}{x.line ? ` · barang no. ${x.line} di order SAMB` : ""}</div>
+      <div className="fine">Tanda Terima {r.pageName(x.page)}, baris {x.i + 1}{x.line ? ` · barang no. ${x.line} di order SAMB` : ""}</div>
       {/* eslint-disable-next-line @next/next/no-img-element */}
-      {x.key && crop && <img className="rowcrop" src={`/crop/${batch}/${x.page}/row/${encodeURIComponent(x.key)}`} alt="baris ini seperti tercetak"
+      {x.key && crop && <img className="rowcrop" src={`/crop/${r.at(x.page).batch}/${r.at(x.page).page}/row/${encodeURIComponent(x.key)}`} alt="baris ini seperti tercetak"
                              loading="lazy" onError={() => setCrop(false)} />}
       <table className="banding">
         <thead><tr><th /><th>Dibaca dari Tanda Terima</th><th>{x.line ? "Menurut Satellite" : "Di order SAMB"}</th></tr></thead>
@@ -77,7 +79,8 @@ function OddRow({ x }: { x: NonNullable<OpenItem["odd_rows"]>[number] }) {
   );
 }
 
-function CheckCard({ it, n, batch }: { it: OpenItem; n: number; batch: string }) {
+function CheckCard({ it, n }: { it: OpenItem; n: number }) {
+  const r = useReview();
   const [open, setOpen] = useState(!!it.suspect);
   const pg = it.qty_fix?.[0]?.page ?? it.fix?.[0]?.page ?? it.page;
   const good = (it.qty_lines?.length ?? 0) - (it.qty_bad?.length ?? 0);
@@ -98,7 +101,7 @@ function CheckCard({ it, n, batch }: { it: OpenItem; n: number; batch: string })
       {it.qty_lines && (
         <>
           <div className="qrows">
-            {it.qty_fix?.map((x) => <QtyRow key={`${x.page}:${x.i}`} x={x} batch={batch} />)}
+            {it.qty_fix?.map((x) => <QtyRow key={`${x.page}:${x.i}`} x={x} />)}
             {it.qty_missing?.map((y) => (
               <div className="qrow" key={y.line_no}><div className="what">{y.desc}<span className="fine"> · barang order SAMB no. {y.line_no}</span></div>
                 <div className="nums"><span>diterima menurut Satellite <b className="mono">{qty(y.satellite)} pcs</b></span><span className="flag">tidak ada di Tanda Terima</span></div></div>
@@ -132,7 +135,9 @@ function CheckCard({ it, n, batch }: { it: OpenItem; n: number; batch: string })
         <div className="sebab"><div className="row"><span>Ditolak di toko (menurut Satellite): {it.tolakan.join("; ")}</span></div></div>
       ) : null}
 
-      {it.held_link && <p className="sub">Jika dokumennya ada di scan ini, ia menunggu nomornya dipastikan di <Link href={it.held_link}>Berkas per SOR</Link>.</p>}
+      {it.held_link && <p className="sub">Jika dokumennya ada di batch ini, ia menunggu nomornya dipastikan di{" "}
+        {r.upload ? <Link href={`/uploads/${r.upload}?step=cocokkan`}>langkah 3, Cocokkan ke order</Link>
+          : <Link href={it.held_link}>Berkas per SOR</Link>}.</p>}
 
       {it.accept ? <AcceptForm check={it.key!} print={it.print ?? ""} receipt={!!it.qty_fix?.length} />
         : <p className="sub">Belum ada yang perlu dilakukan: {it.status !== "waiting" ? "AI membaca ulang dulu" : "menunggu data dari Satellite"}.</p>}
@@ -149,7 +154,9 @@ function CheckCard({ it, n, batch }: { it: OpenItem; n: number; batch: string })
   );
 }
 
-export default function OrderReview({ v, pub, fixed }: { v: Order; pub: Published | null; fixed: { page: number; field: string } | null }) {
+export default function OrderReview({ v, pub, fixed, back }: {
+  v: Order; pub: Published | null; fixed: { page: number; field: string } | null; back?: UploadRef | null;
+}) {
   const w = useWords();
   const [name, setName] = useReviewer();
   const [warn, setWarn] = useState(false);
@@ -162,24 +169,32 @@ export default function OrderReview({ v, pub, fixed }: { v: Order; pub: Publishe
 
   const ctx = useMemo(() => ({
     batch: v.batch, sor: v.sor, name, lines: v.lines, acceptReasons: v.accept_reasons, noneReasons: v.none_reasons,
+    at(page: number) { const x = v.where?.[String(page)]; return x ? { batch: x.batch, page: x.page } : { batch: v.batch, page }; },
+    pageName(page: number) {
+      const x = v.where?.[String(page)];
+      return x ? `hal. ${x.page}${v.multi ? ` · ${x.scan}` : ""}` : `hal. ${page}`;
+    },
     needName() { setWarn(true); me.current?.scrollIntoView({ block: "center" }); me.current?.focus(); },
     onFixed(page: number, field: string) { setLastFix({ page, field }); },
-  }), [v, name]);
+    upload: back?.id ?? null,
+  }), [v, name, back]);
 
   const pages: SpreadPage[] = v.strip.filter((s) => s.img).map((s) => ({
-    n: s.page, img: s.img!, alt: `${w.DOC[s.type] ?? s.kind}, halaman ${s.page}`, title: s.flag ? "ada yang perlu dicek di halaman ini" : undefined,
-    tab: <>{w.DOC_SHORT[s.type] ?? s.kind}<small>hal. {s.page}</small>{s.flag && <span className="tab-flag">!</span>}</>,
+    n: s.page, img: s.img!, alt: `${w.DOC[s.type] ?? s.kind}, ${ctx.pageName(s.page)}`, title: s.flag ? "ada yang perlu dicek di halaman ini" : undefined,
+    tab: <>{w.DOC_SHORT[s.type] ?? s.kind}<small>{ctx.pageName(s.page)}</small>{s.flag && <span className="tab-flag">!</span>}</>,
   }));
   let k = 0;
 
   return (
     <ReviewCtx.Provider value={ctx}>
       <div className="rv">
-        <p className="crumbs"><Link href={`/review?batch=${v.batch}`}>Periksa order</Link> / {v.sor}</p>
+        <p className="crumbs">{back ? <><Link href="/">Batch</Link> / <Link href={`/uploads/${back.id}?step=periksa`}>{back.code}</Link></>
+          : <Link href={`/review?batch=${v.batch}`}>Periksa order</Link>} / {v.sor}</p>
         <div className="rv-top">
           <div>
             <h1>{v.so?.customer_name || "Pelanggan belum diketahui"}</h1>
             <p className="rv-sor">{v.sor}</p>
+            {v.uploads?.length > 0 && <p className="batchhead">Dari batch <BatchTags list={v.uploads} full /></p>}
             <p className="rv-status">
               {published ? <><Cap status="published" big>Terkirim</Cap> <span>Terkirim ke Satellite</span></>
                 : v.can_approve ? <><Cap status="auto_ok" big>Sesuai</Cap> <span>Siap disetujui</span></>
@@ -197,8 +212,8 @@ export default function OrderReview({ v, pub, fixed }: { v: Order; pub: Publishe
           )}
         </div>
         {lastFix && (
-          <div className="fx-saved">✓ Jawaban Anda untuk halaman {lastFix.page} tersimpan. Halaman dan order ini sudah dicek ulang.
-            <LessonStatus batch={v.batch} page={lastFix.page} field={lastFix.field} />
+          <div className="fx-saved">✓ Jawaban Anda untuk {ctx.pageName(lastFix.page)} tersimpan. Halaman dan order ini sudah dicek ulang.
+            <LessonStatus batch={ctx.at(lastFix.page).batch} page={ctx.at(lastFix.page).page} field={lastFix.field} />
           </div>
         )}
 
@@ -206,9 +221,9 @@ export default function OrderReview({ v, pub, fixed }: { v: Order; pub: Publishe
           <>
             <div className="rv-strip">
               {v.strip.map((s) => (
-                <Link key={s.page} className={cx("rv-thumb", s.flag && "flag")} href={`/batches/${v.batch}/pages/${s.page}`} title={`Buka halaman ${s.page}`}>
+                <Link key={s.page} className={cx("rv-thumb", s.flag && "flag")} href={`/batches/${ctx.at(s.page).batch}/pages/${ctx.at(s.page).page}`} title={`Buka ${ctx.pageName(s.page)}`}>
                   <div className="img" style={{ backgroundImage: `url('${s.thumb ?? ""}')` }}>{s.flag && <span className="dot">!</span>}</div>
-                  <b>{w.DOC_SHORT[s.type] ?? s.kind}</b>hal. {s.page}
+                  <b>{w.DOC_SHORT[s.type] ?? s.kind}</b>{ctx.pageName(s.page)}
                 </Link>
               ))}
             </div>
@@ -233,10 +248,10 @@ export default function OrderReview({ v, pub, fixed }: { v: Order; pub: Publishe
                   <div className="rv-steps">
                     {v.open_items.map((it) => {
                       k += 1;
-                      if (it.kind === "check") return <CheckCard key={`c${it.key}`} it={it} n={k} batch={v.batch} />;
+                      if (it.kind === "check") return <CheckCard key={`c${it.key}`} it={it} n={k} />;
                       if (it.kind === "page") return (
                         <Card key={`p${it.page}`} n={k} page={it.page}>
-                          <h2>Halaman {it.page}: pastikan {it.fields?.map((f) => f.label).join(", ")}</h2>
+                          <h2>{it.page !== undefined ? ctx.pageName(it.page).replace(/^hal\./, "Halaman") : "Halaman"}: pastikan {it.fields?.map((f) => f.label).join(", ")}</h2>
                           <p className="sub">AI sudah membacanya, tetapi belum ada yang bisa memastikannya. Pilih di halaman, atau ketik seperti tercetak.</p>
                           {it.fields?.map((f) => <FieldFix key={f.name} f={f} page={it.page!} mode="page" />)}
                         </Card>
@@ -244,7 +259,7 @@ export default function OrderReview({ v, pub, fixed }: { v: Order; pub: Publishe
                       if (it.kind === "label") return (
                         <Card key={`l${it.page}`} n={k} page={it.page}>
                           <h2>{it.title}</h2>
-                          <div className="acts"><Link className="btn primary" href={`/label?batch=${v.batch}`}>Buka layar Jenis halaman</Link></div>
+                          <div className="acts"><Link className="btn primary" href={`/label?batch=${it.page !== undefined ? ctx.at(it.page).batch : v.batch}`}>Buka layar Jenis halaman</Link></div>
                         </Card>
                       );
                       return (
@@ -303,7 +318,7 @@ export default function OrderReview({ v, pub, fixed }: { v: Order; pub: Publishe
           </SpreadProvider>
         )}
 
-        <AllValues v={v} />
+        <AllValues v={v} name={ctx.pageName} at={ctx.at} />
       </div>
 
       {!published && (
@@ -321,7 +336,7 @@ export default function OrderReview({ v, pub, fixed }: { v: Order; pub: Publishe
 }
 
 /** Everything else about the order, never needed to finish it: every check, every value read, each row's pairing. */
-function AllValues({ v }: { v: Order }) {
+function AllValues({ v, name, at }: { v: Order; name: (p: number) => string; at: (p: number) => { batch: string; page: number } }) {
   const w = useWords();
   const tone = (s: string) => (["pass", "accepted"].includes(s) ? "ok" : s === "fail" ? "bad" : s === "unknown" ? "warn" : "");
   return (
@@ -335,8 +350,8 @@ function AllValues({ v }: { v: Order }) {
       </section>
       {v.documents.map((d) => (
         <section className="rv-box" id={`p${d.page}`} key={d.page}>
-          <h3>Halaman {d.page}{d.pages.length > 1 ? `–${d.pages[d.pages.length - 1]}` : ""} · {d.kind} <span className="muted">({w.OUTCOME[d.outcome ?? ""] ?? d.outcome})</span>{" "}
-            <Link className="small" href={`/batches/${v.batch}/pages/${d.page}`}>buka halaman</Link></h3>
+          <h3>{name(d.page).replace(/^hal\./, "Halaman")}{d.pages.length > 1 ? `–${at(d.pages[d.pages.length - 1]).page}` : ""} · {d.kind} <span className="muted">({w.OUTCOME[d.outcome ?? ""] ?? d.outcome})</span>{" "}
+            <Link className="small" href={`/batches/${at(d.page).batch}/pages/${at(d.page).page}`}>buka halaman</Link></h3>
           {d.head.map((f) => <SmallConfirm key={f.name} f={f} page={d.page} />)}
           {d.kept.length > 0 && (
             <details><summary className="muted">Disimpan seperti terbaca ({d.kept.length}): tidak menahan order ini</summary>

@@ -31,7 +31,7 @@ from common.fields import DOCS, column, project
 
 PREFIX = config.STORAGE_PREFIX
 READY = ("auto_ok", "reviewed")
-ORDER = {"FP": 0, "PO": 1, "TTG": 2}
+ORDER = {"FP": 0, "PO": 1, "TTG": 2, "FPJ": 3}
 TABLE = {t: d["table"] for t, d in DOCS.items()}
 NOT_PRINTED = "(not printed)"
 NUMBER_OF = {"PO": "purchase_order_no", "TTG": "document_no"}      # copies of one document share this number
@@ -52,10 +52,12 @@ def typed(kind, v):
     return str(v)
 
 
-def plan(sor, docs, pages):
-    """Pure. docs: [{type, pages, linked_by}] (the bundle's documents in this batch); pages: {page_no: {doc_type,
-    fields, fields_all, checks}}. Returns {"pdf": [page_no, …] in PDF order, "documents": [{type, table, header,
-    lines, page_ref, source_pages, linked_by, confidence}]}: FP first, then POs, then receipts; copies merged."""
+def plan(sor, docs, pages, where=None):
+    """Pure. docs: [{type, pages, linked_by}] (the bundle's documents, from every scan); pages: {page key: {doc_type,
+    fields, fields_all, checks}}; where: {page key: {batch, page}} when the order spans scans (grouper/members.py),
+    else page keys are the scan's page numbers. Returns {"pdf": [page key, …] in PDF order, "documents": [{type,
+    table, header, lines, page_ref, source_pages, source_batch, linked_by, confidence}]}: FP first, then POs, then
+    receipts; copies merged. source_pages are the document's pages in its own scan."""
     merged = []
     for d in sorted(docs, key=lambda d: (ORDER.get(d["type"], 9), d["pages"][0])):
         if d["type"] not in TABLE:
@@ -90,8 +92,10 @@ def plan(sor, docs, pages):
                 project(q.get("fields_all") or {}, t).get("lines")
             for r in rows or []:
                 lines.append({f["name"]: typed(f["kind"], r.get(f["name"])) for f in DOCS[t]["lines"]})
+        w = where or {}
         out.append({"type": t, "table": TABLE[t], "header": header, "lines": lines, "page_ref": ref,
-                    "source_pages": own, "linked_by": first.get("linked_by"),
+                    "source_pages": [w[n]["page"] if n in w else n for n in own],
+                    "source_batch": (w.get(own[0]) or {}).get("batch"), "linked_by": first.get("linked_by"),
                     "confidence": round(backed / len(read), 3) if read else None})
     return {"pdf": pdf, "documents": out}
 
@@ -106,19 +110,27 @@ def ready(c, bid, sors=None):
 
 
 def _inputs(c, bid, sor):
-    docs = [{"type": d["t"], "pages": list(range(d["page_from"], d["page_to"] + 1)), "linked_by": d["linked_by"]}
-            for d in c.execute("""SELECT d.page_from, d.page_to, d.doc_type::text AS t, d.linked_by::text AS linked_by
-                                    FROM staging.document d JOIN staging.bundle_document bd ON bd.document_id = d.id
-                                    JOIN staging.bundle b ON b.id = bd.bundle_id
-                                   WHERE d.batch_id = %s AND b.sor_no = %s AND b.status = ANY(%s)""",
-                                (bid, sor, list(READY)))]
-    numbers = [n for d in docs for n in d["pages"]]
-    pages = {r["page_no"]: dict(r) for r in c.execute(
-        """SELECT page_no, doc_type::text AS doc_type, fields, fields_all, upright_path FROM staging.page
-            WHERE batch_id = %s AND page_no = ANY(%s)""", (bid, numbers))}
-    for n in pages:
-        pages[n]["checks"] = verify.load(c, bid, n)
-    return docs, pages
+    """The finished bundle's documents and pages from every scan it has documents in (grouper/members.py): (docs,
+    pages, where). An order in one scan keeps its page numbers as keys."""
+    from grouper import members
+    b = c.execute("SELECT id FROM staging.bundle WHERE sor_no = %s AND status = ANY(%s) ORDER BY id DESC LIMIT 1",
+                  (sor, list(READY))).fetchone()
+    if not b:
+        return [], {}, {}
+    rows = members.of_bundle(c, b["id"])
+    if bid not in {r["batch_id"] for r in rows}:
+        return [], {}, {}
+    to_key, where = members.keys(rows)
+    docs = [{"type": r["t"], "pages": [to_key[(r["batch_id"], n)] for n in range(r["page_from"], r["page_to"] + 1)],
+             "linked_by": r["linked_by"]} for r in rows]
+    pages = {}
+    for r in rows:
+        for p in c.execute("""SELECT page_no, doc_type::text AS doc_type, fields, fields_all, upright_path
+                                FROM staging.page WHERE batch_id = %s AND page_no BETWEEN %s AND %s""",
+                           (r["batch_id"], r["page_from"], r["page_to"])):
+            k = to_key[(r["batch_id"], p["page_no"])]
+            pages[k] = {**dict(p), "checks": verify.load(c, r["batch_id"], p["page_no"])}
+    return docs, pages, where
 
 
 def pdf_bytes(paths):
@@ -134,10 +146,11 @@ def publish_one(bid, sor):
     """One bundle: the PDF first (a stored file with no rows is harmless; rows without their PDF are not), then the
     rows, the PDF record and the status in one transaction. Returns what was written."""
     with db.connect() as c:
-        docs, pages = _inputs(c, bid, sor)
+        docs, pages, where = _inputs(c, bid, sor)
     if not docs:
         return None
-    p = plan(sor, docs, pages)
+    p = plan(sor, docs, pages, where)
+    batches = sorted({w["batch"] for w in where.values()}) or [bid]
     key = f"{PREFIX}documents/{sor}.pdf"
     data = pdf_bytes([pages[n]["upright_path"] for n in p["pdf"]])
     storage.client().put_object(storage.bucket(), key, io.BytesIO(data), len(data), content_type="application/pdf")
@@ -148,7 +161,7 @@ def publish_one(bid, sor):
             return None                                   # it changed since: not finished any more
         for d in p["documents"]:
             row = {**d["header"], "page_ref": d["page_ref"], "linked_by": d["linked_by"], "confidence": d["confidence"],
-                   "source_batch": bid, "source_pages": d["source_pages"]}
+                   "source_batch": d.get("source_batch") or bid, "source_pages": d["source_pages"]}
             cols = list(row)
             doc_id = c.execute(f"INSERT INTO satellite.{d['table']} ({', '.join(cols)}) VALUES "
                                f"({', '.join(['%s'] * len(cols))}) RETURNING id", [row[k] for k in cols]).fetchone()["id"]
@@ -160,11 +173,12 @@ def publish_one(bid, sor):
                      VALUES (%s, %s, %s, %s)
                      ON CONFLICT (sor_no) DO UPDATE SET pdf_path=EXCLUDED.pdf_path, page_count=EXCLUDED.page_count,
                        version=satellite.sor_document.version + 1, source_batch=EXCLUDED.source_batch, updated_at=now()""",
-                  (sor, key, len(p["pdf"]), bid))
+                  (sor, key, len(p["pdf"]), ",".join(batches)))
         c.execute("""UPDATE staging.bundle SET status='published', published_at=now(),
                        json = coalesce(json, '{}'::jsonb) || %s::jsonb WHERE id=%s""",
-                  (Json({"published_from": b["status"], "published_batch": bid, "pdf": key,
+                  (Json({"published_from": b["status"], "published_batch": bid, "batches": batches, "pdf": key,
                          "documents": [{"type": d["type"], "table": d["table"], "source_pages": d["source_pages"],
+                                        "source_batch": d.get("source_batch") or bid,
                                         "page_ref": d["page_ref"], "confidence": d["confidence"],
                                         "lines": len(d["lines"])} for d in p["documents"]]}), b["id"]))
     return {"sor": sor, "pdf": key, "pages": len(p["pdf"]), "bytes": len(data),

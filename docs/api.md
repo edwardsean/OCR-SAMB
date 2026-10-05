@@ -76,15 +76,20 @@ approved it). Only finished orders are published.
 
 | Method | Path | What |
 |---|---|---|
-| GET | `/api/v1/session` | the top bar: counts waiting, the teacher's line, today |
+| GET | `/api/v1/session` | the top bar: batches waiting for a person, the teacher's line, today |
+| GET | `/api/v1/search?q=` | find an order, a batch or a file |
 | GET | `/api/v1/words` | every display word, in Indonesian |
 | GET | `/api/v1/health` | services that don't answer |
 | GET | `/api/v1/home` | Beranda: work waiting over every scan, recent scans |
+| POST | `/api/v1/uploads` | start an upload batch (who, scan date): its number BATCH-YYYYMMDD-NN |
+| GET | `/api/v1/uploads` | every upload batch with its five steps |
+| GET | `/api/v1/uploads/{id}` | one batch: its files, its five steps, its failed and unsure pages, its orders' places |
 | GET | `/api/v1/scans` | recent scans |
-| POST | `/api/v1/scans` | upload a scanned PDF |
+| POST | `/api/v1/scans` | upload a scanned PDF (into a batch) |
 | GET | `/api/v1/scans/{batch_id}` | one scan: its pages, its orders by status, the queues |
 | GET | `/api/v1/scans/{batch_id}/pages/{page_no}` | one page: its fields, where each sits, its table rows |
 | POST | `/api/v1/scans/{batch_id}/pages/{page_no}/fixes` | correct a value on a page |
+| POST | `/api/v1/scans/{batch_id}/pages/{page_no}/retry` | read a page that failed again (calls the AI) |
 | GET | `/api/v1/scans/{batch_id}/pages/{page_no}/region` | what a region marked on the paper holds |
 | GET | `/api/v1/keycheck` | does Satellite know this SOR / PO number? |
 | GET | `/api/v1/lessons` | what a fix is doing now (kept as a lesson, the teacher writing a tip, …) |
@@ -112,10 +117,18 @@ Outside `/api/v1`: page images and PDFs (see [Files](#files)), and the developer
 
 ### `GET /api/v1/session`
 ```json
-{"needs_you": 8, "unsure_left": 0, "teacher": "Guru AI: 2 pelajaran menunggu", "today": "Jumat, 2 Oktober 2026", "vf": true}
+{"batches_need": 3, "needs_you": 8, "unsure_left": 0, "teacher": "Guru AI: 2 pelajaran menunggu",
+ "today": "Jumat, 2 Oktober 2026", "vf": true}
 ```
-`needs_you`: orders in needs-you notices nobody has seen yet. `unsure_left`: pages waiting for their type. `teacher`: null
-when the teacher has nothing to do.
+`batches_need`: upload batches with a step a person can act on now (the Batch tab's count). `needs_you`: orders in
+needs-you notices nobody has seen yet. `unsure_left`: pages waiting for their type. `teacher`: null when the teacher
+has nothing to do.
+
+### `GET /api/v1/search?q=`
+The top bar's search, over every batch: `{"q", "uploads": [batch rows as GET /uploads], "orders": [{"sor_no", "status",
+"customer_name", "cpo_no", "batch", "uploads", "thumb"}], "files": [{"id", "file_name", "page_total", "received_at",
+"upload"}]}`. Orders match by SOR, the customer's PO number (Nomor CPO) or customer name; batches by number or
+uploader; files by name. Up to 20 each; fewer than 2 characters finds nothing.
 
 ### `GET /api/v1/words`
 Maps from stored values to words for people: `DOC`, `DOC_SHORT` (document types), `CHECK`, `CHECK_STATUS`,
@@ -136,6 +149,44 @@ Maps from stored values to words for people: `DOC`, `DOC_SHORT` (document types)
  "busy": []}
 ```
 `todo.*.batch` is the newest scan where that kind of work waits.
+
+## Upload batches and their steps
+
+One upload action is one batch, however many files: `POST /api/v1/uploads {"by", "date"?, "note"?}` → `201 {"id",
+"code": "BATCH-20261005-01", "uploaded_by", "doc_date"}`, then `POST /api/v1/scans` once per file with `upload=<id>`.
+
+A batch's work is five steps, in the order each needs the one before (`services/api/steps.py`):
+
+| key | Step | What a person does there |
+|---|---|---|
+| `baca` | Dibaca AI | the system reads; a person only retries a page that failed |
+| `jenis` | Jenis halaman | says what a page is when the system couldn't decide |
+| `cocokkan` | Cocokkan ke order | confirms a document's SOR / PO number so it joins its order |
+| `periksa` | Periksa order | decides what an order's checks couldn't settle |
+| `kirim` | Kirim ke Satellite | sends the finished orders |
+
+Each step has a `state`: `need` (a person can act now), `sys` (the system is working), `done`, `none` (nothing has
+reached it), `later` (only what never blocks sending: a Faktur Pajak waiting for its number, an order waiting for a
+document from another batch). `next` is the first step whose state is `need`. An order whose only open problem is a
+missing document waits (`depends`) while one of steps 1–3 is still open in its batch (`blockers`), and isn't counted
+as needing a person.
+
+### `GET /api/v1/uploads?limit=100`
+`{"uploads": [{"id", "code", "uploaded_by", "doc_date", "created_at", "note", "files", "pages", "read", "need",
+"waiting", "ready", "published", "orders", "steps": [...], "next": "jenis", "finished": false}]}`, newest first.
+A step carries its own counts:
+```json
+[{"key": "baca", "state": "need", "pages": 33, "read": 32, "failed": 1, "busy": 0, "waiting_ai": 0, "unscheduled": 0},
+ {"key": "jenis", "state": "need", "unsure": 3, "answered": 1},
+ {"key": "cocokkan", "state": "need", "block": 3, "wait": 0, "later": 6, "loose_unread": 1, "loose_unsure": 3, "loose_other": 0},
+ {"key": "periksa", "state": "need", "need": 6, "depends": 1, "outside": 0, "waiting": 0, "ready": 0, "published": 0, "orders": 7},
+ {"key": "kirim", "state": "none", "ready": 0, "published": 0}]
+```
+
+### `GET /api/v1/uploads/{id}`
+The batch row above as `upload`, plus `files` (its scans), `steps`, `next`, `blockers` (the open steps among 1–3),
+`finished`, `orders` (`{sor: need | depends | outside | waiting | ready | published}`), `failed` and `unsure` (the
+pages steps 1 and 2 list: `[{"batch_id", "page_no", "file_name", "thumb", "error"}]`). `404` when there is no such batch.
 
 ## Scans and pages
 
@@ -199,6 +250,11 @@ does (`keys` links the page to its order, `page` is the invoice's own amount, `b
 The page is fixed at once (re-checked, regrouped) and the correction is kept as an example the teacher learns from.
 `400` without `by` or `value`.
 
+### `POST /api/v1/scans/{batch_id}/pages/{page_no}/retry`
+`{"by": "…"}`. A page whose reading failed for a technical reason (dead-lettered, e.g. a dropped connection) goes back
+on `q.pages` under a new run: the AI is called again (its quota). `400` without `by` · `404` no such page · `409` the
+page didn't fail, or another page of the same file is still queued.
+
 ### `GET /api/v1/scans/{batch_id}/pages/{page_no}/region?box=ymin,xmin,ymax,xmax`
 `{"words": "…Tesseract's words there…", "blocks": [{"id", "kind", "text"}], "suggest": "…", "region": [y0, x0, y1, x1]}`.
 `400` when `box` isn't four numbers with ymin < ymax and xmin < xmax.
@@ -215,9 +271,11 @@ After a fix: `{"headline": "Guru AI sedang menulis kiat dari perbaikan Anda…",
 
 ## Page types
 
-### `GET /api/v1/labels?batch=&page=&after=`
+### `GET /api/v1/labels?batch=&page=&after=&upload=`
 All optional: without `batch`, the newest scan with a page still unsure; without `page`, its next unsure page nobody
-labelled (after page `after`).
+labelled (after page `after`). With `upload` (a batch's step 2): the next unsure page over all that batch's files, after
+`batch`/`after` (wrapping round), with `upload` `{id, code, uploaded_by, doc_date}` and `left` (how many are still
+unsure there).
 ```json
 {"batch": "b-1a2b3c4d5e", "page": 7, "total": 16,
  "p": {"page_no": 7, "upright_path": "…", "original_path": "…", "quality_flags": []},
@@ -245,8 +303,10 @@ The page resumes (it is read with its type), and a label the machine missed beco
 
 ## Orders (Periksa order)
 
-### `GET /api/v1/orders?batch=`
-Without `batch`: the newest scan.
+### `GET /api/v1/orders?batch=&upload=`
+Without either: every order, each once with its documents from every scan. With `batch` (a scan) or `upload` (a
+batch): the orders with a document in it, still whole. With `upload`, each row also has `step`: its place in that
+batch's step 4 (`need`, `depends`, `outside`, `waiting`, `ready`, `published`).
 ```json
 {"batch": "b-1a2b3c4d5e",
  "rows": [{"sor_no": "SOR26110200123", "status": "needs_review", "customer_name": "TOKO CONTOH JAYA",
@@ -367,7 +427,9 @@ written to Satellite (`satellite.doc_faktur_penjualan` / `doc_po` / `doc_ttg` an
 
 ## Berkas per SOR
 
-### `GET /api/v1/bundles?batch=`
+### `GET /api/v1/bundles?batch=&upload=`
+Narrowed like `/orders`. Each held document has `group`: `block` (a person confirms its number; an order waits for
+it), `wait` (the AI or SAP will settle it), `later` (never blocks sending, e.g. a Faktur Pajak).
 ```json
 {"batch": "b-1a2b3c4d5e", "scans": [{"id", "file_name", "…": "…"}],
  "view": {"complete": 4,
@@ -387,7 +449,7 @@ printed. The page is re-checked (no model call) and the scan regrouped.
 
 ## Published (Data terkirim)
 
-### `GET /api/v1/published?batch=&just=`
+### `GET /api/v1/published?batch=&just=&upload=`
 `{"rows": [{"sor_no", "customer_name", "total", "pos", "ttgs", "page_count", "version", "source_batch",
 "updated_at"}], "batches": [{"id", "name"}]}`. `just` (comma-separated SORs) puts those first.
 

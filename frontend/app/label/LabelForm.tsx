@@ -59,11 +59,13 @@ export default function LabelForm({ d }: { d: LabelData }) {
     try { localStorage.setItem("labeller", who); } catch { /* not kept */ }
     const a = await api.post("/labels", { batch: d.batch, page, label, customer, note, labelled_by: who });
     if (!a.ok) { setBusy(false); setError(why(a)); return; }
-    router.push(`/label?batch=${encodeURIComponent(d.batch!)}&saved=${page}`);
+    router.push(d.upload ? `/label?upload=${d.upload.id}&batch=${encodeURIComponent(d.batch!)}&after=${page}&saved=${page}`
+      : `/label?batch=${encodeURIComponent(d.batch!)}&saved=${page}`);
     router.refresh();
   }
 
   const cur = vi >= 0 ? near[vi] : null;
+  const inUpload = d.upload ? `upload=${d.upload.id}&` : "";              // opened from a batch's step 2
   return (
     <>
       <div className="labelv">
@@ -109,7 +111,7 @@ export default function LabelForm({ d }: { d: LabelData }) {
             <h2>Nama Anda</h2>
             <input className="txt" placeholder="diingat di komputer ini" value={who} onChange={(e) => setWho(e.target.value)} />
             <div className="actions" style={{ marginTop: 14 }}>
-              <Link className="ghostbtn" href={`/label?batch=${d.batch}&after=${page}`}>Lewati halaman ini</Link>
+              <Link className="ghostbtn" href={`/label?${inUpload}batch=${d.batch}&after=${page}`}>Lewati halaman ini</Link>
               <button type="submit" className="btn primary" disabled={busy || !label}>{busy ? "Menyimpan…" : "Simpan dan lanjut"}</button>
             </div>
             {error && <p className="salah">{error}</p>}
@@ -126,7 +128,7 @@ export default function LabelForm({ d }: { d: LabelData }) {
           <button type="button" title="Halaman berikutnya (→)" onClick={() => step(1)}>→</button>
           <span className="vsp" />
           <button type="button" title="Pas layar / ukuran asli (Z)" onClick={() => setActual((a) => !a)}>{actual ? "Pas layar" : "Ukuran asli"}</button>
-          {cur && cur.page_no !== page && <Link href={`/label?batch=${d.batch}&page=${cur.page_no}`} onClick={() => dialog.current?.close()}>Tentukan jenis halaman ini</Link>}
+          {cur && cur.page_no !== page && <Link href={`/label?${inUpload}batch=${d.batch}&page=${cur.page_no}`} onClick={() => dialog.current?.close()}>Tentukan jenis halaman ini</Link>}
           <button type="button" title="Tutup (Esc)" onClick={() => dialog.current?.close()}>Tutup ✕</button>
         </div>
         <div className={cx("vbody", actual && "actual")}>
