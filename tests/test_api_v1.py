@@ -38,8 +38,13 @@ def test_the_frame_answers():
 
 
 def test_a_scan_and_its_pages_answer():
-    sid = get("/scans", limit=1)["scans"][0]["id"]
-    d = get(f"/scans/{sid}")
+    for s in get("/scans", limit=50)["scans"]:          # the newest scan with a page read (the newest may be reading)
+        d = get(f"/scans/{s['id']}")
+        if any(p["doc_type"] for p in d["pages"]):
+            sid = s["id"]
+            break
+    else:
+        pytest.skip("no scan has a page read yet")
     assert d["scan"]["id"] == sid and d["pages"] and {"need", "ready", "held", "total"} <= set(d["orders"])
     n = next(p["page_no"] for p in d["pages"] if p["doc_type"])
     p = get(f"/scans/{sid}/pages/{n}")

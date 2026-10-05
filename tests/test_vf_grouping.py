@@ -72,7 +72,7 @@ def test_what_is_held_and_why():
         page(6, "FPJ"),
         {"page_no": 7, "doc_type": None, "type_status": None, "keys": {}}], SOS)
     assert held(out) == {1: "two_fps_one_sor", 2: "two_fps_one_sor", 3: "keys_disagree", 4: "so_unknown",
-                         5: "type_unknown", 6: "needs_sap_billing", 7: "not_read"}
+                         5: "type_unknown", 6: "no_resolved_key", 7: "not_read"}
 
 
 def test_a_po_number_that_is_the_cpo_of_two_sos_is_held():

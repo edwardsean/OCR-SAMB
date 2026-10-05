@@ -10,8 +10,9 @@ export function NoticesSeen() {
   return null;
 }
 
-/** Kirim ke Satellite: the scan's finished orders, written with their PDFs; then what was written. */
-export function PublishForm({ batch, n }: { batch: string; n: number }) {
+/** Kirim ke Satellite: the finished orders (of the chosen scan, or every one), written with their PDFs; then what was
+ * written. `back`: a batch's step 5, which shows what was just sent (else Data terkirim). */
+export function PublishForm({ batch, upload, n, back }: { batch: string; upload?: number | null; n: number; back?: string }) {
   const router = useRouter();
   const [by, setBy] = useReviewer();
   const [busy, setBusy] = useState(false);
@@ -19,12 +20,13 @@ export function PublishForm({ batch, n }: { batch: string; n: number }) {
   async function send(e: React.FormEvent) {
     e.preventDefault();
     setBusy(true); setError(null);
-    const a = await api.post<{ result: string[] }>("/publications", { batch, by });
+    const a = await api.post<{ result: string[] }>("/publications", { batch: batch || null, upload: upload ?? null, by });   // none: every scan
     setBusy(false);
     if (!a.ok) { setError(why(a)); return; }
     const done = a.data.result;
-    router.push(done.length ? `/published?batch=${encodeURIComponent(batch)}&just=${encodeURIComponent(done.join(","))}`
-      : `/review?batch=${encodeURIComponent(batch)}&published=0`);
+    const scan = upload ? `upload=${upload}&` : batch ? `batch=${encodeURIComponent(batch)}&` : "";
+    if (back) router.push(`${back}${back.includes("?") ? "&" : "?"}just=${encodeURIComponent(done.join(","))}`);
+    else router.push(done.length ? `/published?${scan}just=${encodeURIComponent(done.join(","))}` : `/review?${scan}published=0`);
     router.refresh();
   }
   return (

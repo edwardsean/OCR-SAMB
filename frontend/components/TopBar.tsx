@@ -1,16 +1,15 @@
 "use client";
-// The top bar (DESIGN.md): the wordmark, the Finance screens in the order of the work with a count where something
-// waits, the teacher's one line, and the developers' screens under "Teknis" (still served by FastAPI).
+// The top bar (DESIGN.md): the wordmark, one Finance tab, Batch, with how many batches wait for a person (the user,
+// 2026-10-05: "cant we just show a "Batches" tab only?"), Unggah batch, a search for any order, batch or file, the
+// teacher's one line, and under "Teknis" the screens over every batch at once and the developers' screens.
 import Link from "next/link";
-import { usePathname } from "next/navigation";
-import { useEffect, useRef, useState } from "react";
+import { usePathname, useSearchParams } from "next/navigation";
+import { Suspense, useEffect, useRef, useState } from "react";
 import { api } from "@/lib/client";
 import type { Session } from "@/lib/types";
 
-const NAV: [string, string, keyof Session | null][] = [
-  ["/", "Beranda", null], ["/upload", "Unggah scan", null], ["/review", "Periksa order", "needs_you"],
-  ["/label", "Jenis halaman", "unsure_left"], ["/bundles", "Berkas per SOR", null],
-  ["/published", "Data terkirim", null], ["/batches", "Riwayat scan", null],
+const ALL: [string, string][] = [                   // this app's screens over every batch (a batch's steps are the way in)
+  ["/review", "Periksa order"], ["/label", "Jenis halaman"], ["/bundles", "Berkas per SOR"], ["/published", "Data terkirim"],
 ];
 const TECH: [string, string][] = [
   ["/status", "Status sistem"], ["/context", "Konteks Jev"], ["/knowledge", "Pengetahuan AI"],
@@ -37,23 +36,17 @@ export default function TopBar({ initial }: { initial: Session | null }) {
     return () => document.removeEventListener("click", close);
   }, []);
 
-  const on = (href: string) => (href === "/" ? path === "/" : path === href || path.startsWith(href + "/"));
+  const upload = path === "/upload" || path.startsWith("/upload/");
+  const batch = !upload && path !== "/cari" && !ALL.some(([h]) => path === h);
+  const n = s?.batches_need ?? 0;
   return (
     <header className="top">
-      <Link className="brand" href="/" title="Ke Beranda"><b>SAMB</b><small>Rekonsiliasi AR</small></Link>
+      <Link className="brand" href="/" title="Ke daftar batch"><b>SAMB</b><small>Rekonsiliasi AR</small></Link>
       <nav className="main" aria-label="Menu utama">
-        {NAV.map(([href, label, count]) => {
-          const n = count && s ? (s[count] as number) : 0;
-          return (
-            <Link key={href} href={href} className={on(href) ? "on" : undefined} aria-current={on(href) ? "page" : undefined}>
-              {label}
-              {n ? (
-                <span className={"nbadge" + (count === "unsure_left" ? " amber" : "")}
-                      title={count === "needs_you" ? "order baru yang perlu Anda cek" : "halaman yang jenisnya belum pasti"}>{n}</span>
-              ) : null}
-            </Link>
-          );
-        })}
+        <Link href="/" className={batch ? "on" : undefined} aria-current={batch ? "page" : undefined}>
+          Batch{n ? <span className="nbadge" title="batch yang menunggu Anda">{n}</span> : null}</Link>
+        <Link href="/upload" className={upload ? "on" : undefined} aria-current={upload ? "page" : undefined}>Unggah batch</Link>
+        <Suspense fallback={null}><Find /></Suspense>
       </nav>
       <div className="top-right">
         {s?.teacher ? (
@@ -64,6 +57,9 @@ export default function TopBar({ initial }: { initial: Session | null }) {
         <details className="techmenu" ref={menu}>
           <summary>Teknis</summary>
           <div className="menu">
+            <p>Semua batch sekaligus</p>
+            {ALL.map(([href, label]) => <Link key={href} href={href} className={path === href ? "on" : undefined}
+                                              onClick={() => menu.current?.removeAttribute("open")}>{label}</Link>)}
             <p>Untuk tim pengembang</p>
             {/* plain links: these pages are FastAPI's, not this app's */}
             {TECH.map(([href, label]) => <a key={href} href={href}>{label}</a>)}
@@ -71,5 +67,17 @@ export default function TopBar({ initial }: { initial: Session | null }) {
         </details>
       </div>
     </header>
+  );
+}
+
+/** "Cari SOR, PO, atau file": a plain GET form to /cari, so it works before the page's script has loaded. */
+function Find() {
+  const q = useSearchParams().get("q") ?? "";
+  const path = usePathname();
+  return (
+    <form className="find" action="/cari" role="search">
+      <input type="search" name="q" key={path + q} defaultValue={path === "/cari" ? q : ""} placeholder="Cari SOR, PO, atau file"
+             aria-label="Cari order, batch, atau file" />
+    </form>
   );
 }

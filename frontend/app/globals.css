@@ -714,3 +714,71 @@ h2.sect { margin: 32px 0 12px; }
 .salah { color: var(--cap-merah); font-size: 13px; font-weight: 600; margin: 6px 0 0; }
 .note-in.shown { display: inline-block; }
 .tech-link { margin-top: 36px; font-size: 13.5px; }
+/* an order whose documents came in several files: each tile names its file (Berkas per SOR, 2026-10-05) */
+.bx-tile small.bx-scan { font-family: var(--mono, ui-monospace, monospace); font-size: 11px; color: var(--pensil);
+                         max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; display: block; }
+/* upload batches (2026-10-05): the batch number as a small ink tag; who and when on hover or after it */
+.batchtags { display: inline-flex; flex-wrap: wrap; gap: 4px 10px; }
+.batchtag { font-size: 12px; white-space: nowrap; }
+.batchtag a { font-family: var(--mono, ui-monospace, monospace); font-size: 11.5px; color: var(--biru-pulpen);
+              border: 1px solid var(--garis); border-radius: 4px; padding: 0 5px; text-decoration: none; }
+.batchtag a:hover { border-color: var(--biru-pulpen); }
+.batchhead { display: flex; flex-wrap: wrap; gap: 6px 16px; align-items: baseline; color: var(--pensil); font-size: 13.5px; margin: 4px 0 0; }
+.batchhead b { color: var(--tinta); }
+/* the upload's who and when, above the drop zone */
+.up-who { display: flex; flex-wrap: wrap; gap: 10px 18px; align-items: flex-end; margin-bottom: 12px; }
+.up-who label { display: flex; flex-direction: column; gap: 4px; font-size: 13px; color: var(--pensil); }
+.up-who input { padding: 7px 10px; border: 1px solid var(--garis-tebal); border-radius: var(--radius-sm, 6px); font: inherit; color: var(--tinta); background: var(--kertas); }
+/* the Batch tab (2026-10-05): a batch's five steps. Ink on paper (DESIGN.md): red needs you, amber the system works,
+   green done, pencil nothing yet. The register's small marks, the workspace's stepper, and the top bar's search. */
+.ws-marks { display: inline-flex; gap: 4px; }
+.ws-mk { display: inline-flex; align-items: center; justify-content: center; width: 26px; height: 24px; border: 1.5px solid var(--garis);
+         border-radius: 3px; font-size: 12px; font-weight: 800; font-variant-numeric: tabular-nums; color: var(--garis-tebal);
+         text-decoration: none; }
+.ws-mk.need { color: var(--cap-merah); border-color: var(--cap-merah); }
+.ws-mk.done { color: var(--cap-hijau); border-color: var(--cap-hijau); }
+.ws-mk.sys { color: var(--cap-kuning); border-color: var(--cap-kuning); }
+.ws-mk:hover { outline: 2px solid var(--tinta); outline-offset: 1px; }
+.ws-list td { vertical-align: middle; }
+.ws-next { display: flex; flex-direction: column; text-decoration: none; color: var(--tinta); }
+.ws-next b { color: var(--biru-pulpen); } .ws-next span { color: var(--cap-merah); font-size: 13px; font-weight: 600; }
+.ws-steps { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); border-top: 1.5px solid var(--tinta);
+            border-bottom: 1px solid var(--garis); margin: 0 0 26px; }
+.ws-st { display: flex; flex-direction: column; gap: 1px; padding: 12px 14px 11px 0; text-decoration: none; color: var(--tinta);
+         border-bottom: 3px solid transparent; margin-bottom: -1px; min-width: 0; }
+.ws-st + .ws-st { padding-left: 14px; border-left: 1px solid var(--garis); }
+.ws-st:hover .ws-name { text-decoration: underline; }
+.ws-st.on { border-bottom-color: var(--tinta); background: var(--meja-muda); }
+.ws-n { font-size: 12px; font-weight: 700; color: var(--pensil); }
+.ws-name { font-size: 15px; }
+.ws-head { font-size: 13.5px; font-weight: 700; color: var(--pensil); }
+.ws-st.need .ws-head { color: var(--cap-merah); }
+.ws-st.sys .ws-head { color: var(--cap-kuning); } .ws-st.sys .ws-head::before { content: "◔ "; }
+.ws-st.done .ws-head { color: var(--cap-hijau); } .ws-st.done .ws-head::before { content: "✓ "; }
+.ws-sub { font-size: 12.5px; color: var(--pensil); }
+.ws-panel { border-top: 0; padding-top: 0; }
+.ws-panel > h2 { font-size: 22px; font-weight: 800; letter-spacing: -.015em; margin-bottom: 4px; }
+.ws-panel > .lede { margin-bottom: 16px; }
+.ws-grp { font-size: 15px; font-weight: 700; margin: 26px 0 8px; }
+.ws-grp span { font-weight: 500; color: var(--pensil); font-size: 13px; }
+.ws-dep { margin: 6px 0 0; font-size: 13px; color: var(--cap-kuning); font-weight: 600; }
+.ws-dep::before { content: "↳ "; }
+.ws-panel > .ws-dep { margin: 0 0 16px; }
+.ws-retry { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
+.ws-retry input { width: 130px; padding: 3px 8px; border: 1px solid var(--garis-tebal); border-radius: var(--radius-sm); font: inherit; font-size: 13px; }
+.cap.besar.hijau { transform: rotate(-2deg); }
+.find { display: flex; align-items: center; align-self: center; gap: 8px; margin-left: 6px; }
+.find input { width: min(280px, 40vw); padding: 6px 10px; border: 1px solid var(--garis-tebal); border-radius: var(--radius-sm);
+              font: inherit; font-size: 13.5px; background: var(--kertas); color: var(--tinta); }
+.find.big { margin: 10px 0 0; } .find.big input { width: min(560px, 100%); font-size: 15px; padding: 8px 12px; }
+@media (max-width: 900px) {
+  .ws-steps { grid-template-columns: 1fr; }
+  .ws-st, .ws-st + .ws-st { padding: 9px 0 9px 12px; border-left: 3px solid transparent; border-bottom: 1px solid var(--garis); margin: 0; }
+  .ws-st.on { border-left-color: var(--tinta); border-bottom-color: var(--garis); }
+  .find input { width: 150px; }
+}
+.ws-files { margin-top: 26px; } .ws-files > summary.ws-grp { margin: 0 0 8px; color: var(--tinta); }
+@media (max-width: 700px) {            /* a phone: the batch register keeps its number, its steps and what is next */
+  .ws-list th:nth-child(2), .ws-list td:nth-child(2), .ws-list th:nth-child(3), .ws-list td:nth-child(3) { display: none; }
+  .ws-list td .muted.small { min-width: 140px; }
+}

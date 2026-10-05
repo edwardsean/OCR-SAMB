@@ -103,16 +103,18 @@ FLAG = {"rotated": "diputar", "skewed": "miring", "dark_band": "ada pita hitam",
 HOLD = {"not_read": "belum dibaca AI",
         "type_unknown": "jenis halamannya belum pasti: menunggu ditentukan di layar Jenis halaman",
         "continuation_without_start": "halaman lanjutan, tetapi halaman sebelumnya bukan bagian dari dokumen",
-        "needs_sap_billing": "Faktur Pajak dihubungkan lewat nomor billing, setelah SO diposting di SAP",
+        "needs_sap_billing": "Satellite belum punya nomor billing untuk SO ini (belum diposting di SAP)",
+        "fpj_needs_both": "Faktur Pajak dihubungkan bila nomor SOR dan nomor billing yang tercetak sama-sama pasti",
+        "billing_disagrees": "nomor billing yang tercetak bukan nomor billing SO tersebut di Satellite",
         "later_stage": "baris Pelunasan dihubungkan satu per satu (tahap berikutnya)",
         "not_grouped": "jenis ini belum dikelompokkan",
         "fp_sor_unresolved": "nomor SOR-nya belum pasti",
         "two_fps_one_sor": "dua faktur memiliki SOR yang sama",
         "no_resolved_key": "belum ada nomor penghubung (SOR atau PO) yang pasti",
-        "so_unknown": "nomornya tidak ada di Satellite maupun di faktur mana pun di scan ini",
+        "so_unknown": "nomornya tidak ada di Satellite maupun di faktur mana pun",
         "keys_disagree": "nomor-nomornya menunjuk ke SO yang berbeda",
         "po_matches_several_sos": "nomor PO-nya cocok dengan beberapa SO",
-        "fp_missing": "Faktur Penjualan untuk SO ini belum ada di scan"}
+        "fp_missing": "Faktur Penjualan untuk SO ini belum ada di scan mana pun"}
 LINK = {"sor": "lewat nomor SOR", "po_no": "lewat nomor PO", "billing_no": "lewat nomor billing",
         "amount": "lewat jumlahnya", "adjacency": "lanjutan halaman sebelumnya"}
 # what backed a published value (app.published_docs): the label beside it on Data terkirim

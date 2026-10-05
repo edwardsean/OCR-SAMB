@@ -38,14 +38,33 @@ def _confirmation(c, batch, page, field, value, by, row_key=None, shown=None):
 
 # ---------------------------------------------------------------------------------------------- a scan arrives
 
-def upload(data, filename):
+def new_upload(by, doc_date=None, note=None):
+    """A new upload batch (common/uploads.py): its generated number, who uploads, the scan date. Refused without a
+    name, or with a date in the future (400)."""
+    from common import uploads
+    try:
+        return uploads.create(by, doc_date, note)
+    except ValueError as e:
+        raise ActionError(400, {"say who uploads": "Tulis nama Anda dulu.",
+                                "the scan date can't be in the future": "Tanggal scan tidak boleh di masa depan."}
+                          .get(str(e), str(e)))
+
+
+def upload(data, filename, upload_id=None):
     """A scanned PDF: stored, recorded as 'received', and put on q.intake, where the intake worker splits it into
     pages and queues them (common/intake.py). Returns {"batch_id"}. Refused: not a PDF, or its pages can't be read
     (400); the same file again (409, with the earlier scan)."""
     if not data.startswith(b"%PDF"):
         raise ActionError(400, "File itu bukan PDF. Pilih file PDF hasil scan.")
+    up = None
+    if upload_id is not None:
+        from common import uploads
+        with db.connect() as c:
+            up = uploads.get(c, upload_id)
+        if not up:
+            raise ActionError(400, "Batch unggahan itu tidak ada. Mulai unggah lagi dari awal.")
     try:
-        out = intake.receive(data, filename)
+        out = intake.receive(data, filename, up)
     except intake.NotReadable as e:
         raise ActionError(400, "Halaman PDF ini tidak bisa dibaca. Coba scan atau ekspor ulang filenya.", detail=str(e))
     if out["duplicate"]:
@@ -54,6 +73,26 @@ def upload(data, filename):
 
 
 # ---------------------------------------------------------------------------------------------- a page
+
+def retry_page(batch, page, by):
+    """A page that failed to read for a technical reason (a dropped connection: dead-lettered) goes back on q.pages
+    under a new run (intake.rerun). Refused (409) when the page didn't fail, or while another page of the same file is
+    queued: the new run would make that page's ticket stale."""
+    _need(by)
+    with db.connect() as c:
+        p = c.execute("SELECT status::text AS status FROM staging.page WHERE batch_id=%s AND page_no=%s",
+                      (batch, page)).fetchone()
+        if not p:
+            raise ActionError(404, "Halaman itu tidak ada.")
+        if p["status"] not in ("dead_letter", "failed"):
+            raise ActionError(409, "Halaman ini tidak gagal dibaca, jadi tidak perlu dicoba lagi.")
+        busy = c.execute("""SELECT count(*) AS n FROM staging.page WHERE batch_id=%s AND page_no <> %s
+                              AND status = 'queued'""", (batch, page)).fetchone()["n"]
+        if busy:
+            raise ActionError(409, "Halaman lain di file ini masih dibaca. Coba lagi setelah selesai.")
+    print(f"retry {batch} p{page} by {by.strip()}", flush=True)
+    return intake.rerun(batch, [page])
+
 
 def save_label(batch, page, label, customer="", note="", labelled_by=""):
     """A person says what a page is. The pile (practice/exam) is drawn once, on first save; relabelling never moves a
@@ -226,9 +265,20 @@ def approve(batch, sor, by):
                      WHERE sor_no=%s AND status <> 'published'""", (by.strip(), sor))
 
 
-def publish(batch, by):
+def publish(batch, by, upload=None):
     """Phase 8: publish the batch's finished bundles (auto_ok or reviewed): Satellite's document rows and one PDF per
     SOR, checked once more first. Returns the SORs written."""
     from publisher import publish as pub
     _need(by)
-    return [d["sor"] for d in pub.publish(batch)]
+    if batch:
+        return [d["sor"] for d in pub.publish(batch)]
+    with db.connect() as c:                            # an upload batch's scans, or every scan with a finished order
+        scans = [r["batch_id"] for r in c.execute(
+            """SELECT DISTINCT d.batch_id FROM staging.bundle b JOIN staging.bundle_document bd ON bd.bundle_id = b.id
+                 JOIN staging.document d ON d.id = bd.document_id JOIN staging.scan_batch s ON s.id = d.batch_id
+                WHERE b.status = ANY(%s) AND b.hold_reason IS NULL AND (%s::int IS NULL OR s.upload_id = %s)
+                ORDER BY 1""", (list(pub.READY), upload, upload))]
+    done = []
+    for bid in scans:
+        done += [d["sor"] for d in pub.publish(bid) if d["sor"] not in done]
+    return done

@@ -13,6 +13,12 @@ import { useWords } from "@/components/Words";
 type Review = {
   batch: string; sor: string; name: string; lines: SoLine[]; acceptReasons: string[]; noneReasons: string[];
   needName(): void; onFixed(page: number, field: string): void;
+  /** An order page (numbered within the order) as its own scan and page: an order can span several scans. */
+  at(page: number): { batch: string; page: number };
+  /** How a page is named for people: "hal. 3", with its file when the order spans several scans. */
+  pageName(page: number): string;
+  /** the batch the order was opened from: its step 3 is where a held document's number is confirmed */
+  upload: number | null;
 };
 export const ReviewCtx = createContext<Review | null>(null);
 export function useReview(): Review {
@@ -30,7 +36,11 @@ export function useAct() {
   async function run(path: string, body: Record<string, unknown>, then?: () => void) {
     if (!r.name.trim()) { r.needName(); return false; }
     setBusy(true); setError(null);
-    const a = await api.post(`/orders/${r.sor}${path}`, { batch: r.batch, by: r.name.trim(), ...body });
+    // a decision about a page goes to that page's own scan (an order can span several)
+    const where = typeof body.page === "number" ? r.at(body.page) : { batch: r.batch, page: undefined };
+    const a = await api.post(`/orders/${r.sor}${path}`, {
+      batch: where.batch, by: r.name.trim(), ...body, ...(where.page !== undefined ? { page: where.page } : {}),
+    });
     setBusy(false);
     if (!a.ok) { setError(why(a)); return false; }
     then?.();
@@ -44,8 +54,10 @@ export function Err({ text }: { text: string | null }) {
   return text ? <p className="salah">{text}</p> : null;
 }
 
-function pickHref(batch: string, sor: string, page: number, field: string) {
-  return `/batches/${batch}/pages/${page}?fix=${encodeURIComponent(field)}&back=${encodeURIComponent(`/review/${sor}?batch=${batch}`)}`;
+function pickHref(r: Review, page: number, field: string) {
+  const a = r.at(page);
+  // back to the order from the page's own scan: the page it names after the fix is that scan's page
+  return `/batches/${a.batch}/pages/${a.page}?fix=${encodeURIComponent(field)}&back=${encodeURIComponent(`/review/${r.sor}?batch=${a.batch}`)}`;
 }
 
 function Crop({ src }: { src: string }) {
@@ -66,8 +78,8 @@ export function FieldFix({ f, page, mode }: { f: FieldEntry; page: number; mode:
   };
   return (
     <form {...sp} className={cx("pd-spot", sp.className)} onSubmit={submit}>
-      {mode === "fix" && <div className="fine">Hal. {page} · {f.label} · terbaca <b className="mono">{f.value ?? "kosong"}</b></div>}
-      <Crop src={`/crop/${r.batch}/${page}/${f.name}`} />
+      {mode === "fix" && <div className="fine">{r.pageName(page)} · {f.label} · terbaca <b className="mono">{f.value ?? "kosong"}</b></div>}
+      <Crop src={`/crop/${r.at(page).batch}/${r.at(page).page}/${f.name}`} />
       <div className="fixrow">
         <span className="lab">{f.label}, seperti tercetak</span>
         <input placeholder="ketik, atau pilih di halaman" required value={value} onChange={(e) => setValue(e.target.value)} />
@@ -75,7 +87,7 @@ export function FieldFix({ f, page, mode }: { f: FieldEntry; page: number; mode:
         {f.suggest.map(([val, w]) => <button key={val} type="button" className="btn" title={w} onClick={() => setValue(val)}>{val}</button>)}
         <button type="button" className="btn" onClick={() => setValue("(not printed)")}>{mode === "page" ? "Tidak tercetak" : "Tidak tercetak di halaman ini"}</button>
         <button className="btn primary" disabled={busy}>Simpan</button>
-        <Link className="btn pick" href={pickHref(r.batch, r.sor, page, f.name)}>Pilih di halaman</Link>
+        <Link className="btn pick" href={pickHref(r, page, f.name)}>Pilih di halaman</Link>
       </div>
       <Err text={error} />
     </form>
@@ -120,7 +132,7 @@ export function QtyForm({ page, rowKey, shown, carton, want }: { page: number; r
       {carton !== null && <button type="button" className="btn" title="yang dicatat Satellite" onClick={() => setValue(`${carton} CTN`)}>{carton} CTN (sesuai Satellite)</button>}
       <button type="button" className="btn" onClick={() => setValue("0")}>0, tidak ada yang diterima{want === 0 ? " (sesuai Satellite)" : ""}</button>
       <button className="btn primary" disabled={busy}>Simpan</button>
-      <Link className="btn pick" href={pickHref(r.batch, r.sor, page, field)}>Pilih di halaman</Link>
+      <Link className="btn pick" href={pickHref(r, page, field)}>Pilih di halaman</Link>
       <Err text={error} />
     </form>
   );

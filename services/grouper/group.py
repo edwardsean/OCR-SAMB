@@ -10,13 +10,16 @@ How a document finds its SOR (the FP is the hub: it carries the SOR and the Nomo
   FP    its own SOR
   TTG   the SOR it prints (No Ref; DO# or S/Fak without the letters SOR), or its PO number = an SO's Nomor CPO
   PO    its PO number = an SO's Nomor CPO
-  FPJ   its billing number, once the SO is posted in SAP (not available yet: held)
+  FPJ   the SOR it prints (as billing/SOR), when Satellite's billing number for that SO is the one it prints too
   PEL   row by row, by each row's reference (later stage: held)
 An SO's Nomor CPO comes from Satellite's record, or from an FP here whose SOR and CPO are both resolved.
 
 Held, never guessed: an unread or unsure page · no resolved key · keys naming different SOs · a PO number matching
 several SOs · two FPs with one SOR · an FP whose SOR isn't resolved · a bundle without its FP (fp_missing).
 Re-runnable: each run replaces this batch's documents; pages join their bundle as their keys are resolved.
+An order's documents may sit in several scans (each file its own scan; a receipt scanned days after its invoice):
+documents link scan by scan, then the order-level holds (no FP, two FPs) are decided over every scan
+(grouper/members.py), and the order's other scans are regrouped when that changes.
 
   python -m grouper.group <batch>              group now (vlm-first also regroups after every page)
   python -m grouper.group <batch> --recheck    first re-check every read page against today's Satellite records and
@@ -38,7 +41,9 @@ WHY = {
     "not_read": "the AI OCR hasn't read it yet",
     "type_unknown": "its type isn't decided: it waits for a label",
     "continuation_without_start": "a continuation, but the page before it isn't part of a document",
-    "needs_sap_billing": "a Faktur Pajak links by its billing number, once the SO is posted in SAP",
+    "needs_sap_billing": "Satellite has no billing number for this SO yet (it isn't posted in SAP)",
+    "fpj_needs_both": "a Faktur Pajak links when both the SOR and the billing number it prints are confirmed",
+    "billing_disagrees": "the billing number it prints isn't Satellite's billing number for the SOR it prints",
     "later_stage": "Pelunasan rows link one by one, by their references (a later stage)",
     "not_grouped": "this type isn't grouped",
     "fp_sor_unresolved": "its SOR isn't resolved yet",
@@ -87,15 +92,15 @@ def plan(pages, sos):
                 prev["pages"].append(n)
                 at[n] = prev
                 prev["evidence"].append(f"page {n} continues it (the page before it)")
-        elif t in LINKABLE:
+        elif t in LINKABLE or t == "FPJ":
             d = doc(p)
-            for name in ("sor", "po_no"):
+            for name in (("sor", "billing_no") if t == "FPJ" else ("sor", "po_no")):
                 value, by = _key(p, name)
                 d["read"][name] = value
                 if value and by:
                     d["keys"][name] = {"value": value, "by": by}
         else:
-            doc(p, {"FPJ": "needs_sap_billing", "PEL": "later_stage"}.get(t, "not_grouped"))
+            doc(p, {"PEL": "later_stage"}.get(t, "not_grouped"))
 
     cpo = {}                                              # Nomor CPO → SORs: Satellite's record ...
     for rec in sos.values():
@@ -149,6 +154,11 @@ def plan(pages, sos):
             d["sor"], d["linked_by"] = s, ws[0][0]
             d["evidence"] = [why for _, why in ws] + d["evidence"]
 
+    for d in docs:                                        # FPJ: by the SOR it prints, checked by its billing number
+        if d["type"] != "FPJ" or d["hold"]:
+            continue
+        _link_fpj(d, sos)
+
     bundles = {}
     for d in docs:
         if d["sor"] and not d["hold"]:
@@ -158,6 +168,43 @@ def plan(pages, sos):
             b["hold"] = "fp_missing"
     _suggest_for_fps(docs, bundles, sos)
     return {"documents": docs, "bundles": bundles}
+
+
+def _fpj_parts(v):
+    """(SOR, billing number) from what a Faktur Pajak prints as its reference: '7000300001/SOR26110200001', either
+    part alone, or read into the wrong field."""
+    f = satellite.flat(v)
+    m = re.search(r"SO[RF]\d{11}", f)                  # an SOR, or an SOF (free goods) order
+    bill = re.search(r"(?<!\d)\d{10}(?!\d)", f.replace(m.group(0), "|") if m else f)
+    return (m.group(0) if m else None), (bill.group(0) if bill else None)
+
+
+def _link_fpj(d, sos):
+    """A Faktur Pajak prints SAMB's billing number and the SOR ('7000300001/SOR26110200001'). It links to that SOR
+    only when both are confirmed (print, a person) and Satellite's billing number for that SO is the one it prints:
+    two independent witnesses that must agree. Satellite has the billing number once the SO is posted in SAP."""
+    parts = [_fpj_parts(k["value"]) for k in d["keys"].values()]
+    sors, bills = {s for s, _ in parts if s}, {b for _, b in parts if b}
+    sor, bill = (next(iter(sors)) if len(sors) == 1 else None), (next(iter(bills)) if len(bills) == 1 else None)
+    if not d["keys"]:
+        d["hold"] = "no_resolved_key"
+    elif len(sors) > 1 or len(bills) > 1:
+        d["hold"] = "keys_disagree"
+    elif not sor or not bill:
+        d["hold"] = "fpj_needs_both"
+    elif sor not in sos:
+        d["hold"] = "so_unknown"
+    elif not sos[sor].get("billing_no"):
+        d["hold"] = "needs_sap_billing"
+    elif satellite.flat(sos[sor]["billing_no"]) != bill:
+        d["hold"] = "billing_disagrees"
+    else:
+        d["sor"], d["linked_by"] = sor, "billing_no"
+        by = ", ".join(sorted({k["by"] for k in d["keys"].values()}))
+        d["evidence"].insert(0, f"it prints {bill}/{sor} ({by}); {bill} is Satellite's billing number for {sor}")
+    if d["hold"]:
+        raw = " ".join(str(v) for v in d["read"].values() if v)
+        d["suggest"] = _fpj_parts(raw)[0]
 
 
 def _suggest_for_fps(docs, bundles, sos):
@@ -250,6 +297,12 @@ def _run(bid, folders):
         sos = satellite.load(c)
     out = plan(pages, sos)
     with db.connect() as c:                               # this batch's last grouping goes; other batches' stay
+        before = {r["sor_no"] for r in c.execute(
+            """SELECT DISTINCT b.sor_no FROM staging.bundle b JOIN staging.bundle_document bd ON bd.bundle_id = b.id
+                 JOIN staging.document d ON d.id = bd.document_id WHERE d.batch_id = %s""", (bid,))}
+        was = {r["sor_no"]: r["hold_reason"] for r in c.execute(   # each order's hold before this scan's grouping
+            "SELECT sor_no, hold_reason FROM staging.bundle WHERE status <> 'published' AND sor_no = ANY(%s)",
+            (sorted(before | set(out["bundles"])),))}
         c.execute("""DELETE FROM staging.bundle_document bd USING staging.document d
                      WHERE bd.document_id = d.id AND d.batch_id = %s""", (bid,))
         c.execute("DELETE FROM staging.document WHERE batch_id=%s", (bid,))
@@ -285,8 +338,49 @@ def _run(bid, folders):
             for d in b["documents"]:
                 c.execute("INSERT INTO staging.bundle_document (bundle_id, document_id) VALUES (%s, %s)",
                           (bundle, ids[id(d)]))
+        others = _order_holds(c, bid, sorted(before | set(out["bundles"])), out, was)
     files = sync_folders(bid, pages, out) if folders else 0
+    _wake(others)
     return out, files
+
+
+def _order_holds(c, bid, sors, out, was=None):
+    """The order-level holds over every scan, for the orders this batch's documents are (or were) in: an order is
+    complete when its FP sits in any scan. out's bundles get the final hold (for their folders). Returns the other
+    scans to regroup, those of orders whose hold changed since before this grouping (`was`; their folders and
+    checks follow)."""
+    was = was or {}
+    from grouper import members
+    wake = set()
+    for s in sors:                                        # in SOR order: two batches never wait on each other
+        c.execute("SELECT pg_advisory_xact_lock(hashtext(%s))", (f"bundle:{s}",))
+        b = c.execute("""SELECT id, hold_reason, status::text AS status FROM staging.bundle WHERE sor_no=%s
+                           AND status <> 'published' ORDER BY id DESC LIMIT 1""", (s,)).fetchone()
+        if not b:
+            continue
+        rows = members.of_bundle(c, b["id"])
+        hold = members.hold_of([r["t"] for r in rows])
+        if hold != b["hold_reason"]:                      # this scan's own grouping wrote its scan-only hold
+            status = "needs_review" if hold else ("grouping" if b["status"] == "needs_review" else b["status"])
+            c.execute("UPDATE staging.bundle SET hold_reason=%s, status=%s, folder=%s WHERE id=%s",
+                      (hold, status, folder(s, hold), b["id"]))
+        if hold != was.get(s, hold):
+            wake |= {r["batch_id"] for r in rows} - {bid}
+        if s in out["bundles"]:
+            out["bundles"][s]["hold"] = hold
+    return wake
+
+
+def _wake(batches):
+    """Regroup the order's other scans (vf-grouper): their folders and checks follow the order's new state."""
+    if not batches:
+        return
+    try:
+        from common import queue
+        for b in sorted(batches):
+            queue.wake_grouper(b, "an order across scans changed")
+    except Exception as e:                                # the next wake-up or the sweep regroups them anyway
+        print(f"could not wake the grouper for {sorted(batches)}: {e}", flush=True)
 
 
 def summary(out):

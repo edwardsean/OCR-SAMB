@@ -72,10 +72,11 @@ class NotReadable(ValueError):
     """The file says it is a PDF but its pages can't be read."""
 
 
-def receive(data, file_name):
+def receive(data, file_name, upload=None):
     """The upload: the PDF stored under scans/<day>/<batch>/, the scan recorded as 'received', a ticket on q.intake.
-    Returns {"batch_id", "duplicate": False}, or the earlier scan with "duplicate": True when the same file (by its
-    SHA-256) came before. A ticket that can't be sent now is sent by the scheduler later (waiting): the scan is
+    upload: the upload batch it belongs to ({id, doc_date}, common/uploads.py): the scan joins it and takes its scan
+    date. Returns {"batch_id", "duplicate": False}, or the earlier scan with "duplicate": True when the same file (by
+    its SHA-256) came before. A ticket that can't be sent now is sent by the scheduler later (waiting): the scan is
     recorded either way."""
     sha = hashlib.sha256(data).hexdigest()
     with db.connect() as conn:
@@ -91,10 +92,12 @@ def receive(data, file_name):
     batch_id, day = batch_id_for(sha), datetime.now(WIB).date().isoformat()
     key = f"{PREFIX}scans/{day}/{batch_id}/{file_name}"
     storage.ensure_bucket().put_object(storage.bucket(), key, io.BytesIO(data), len(data), content_type="application/pdf")
+    scanned = str((upload or {}).get("doc_date") or day)     # the day the papers were scanned, as the uploader said
     with db.connect() as conn:
-        row = conn.execute("""INSERT INTO staging.scan_batch (id, file_name, file_path, sha256, scanned_day, page_total, status)
-                              VALUES (%s, %s, %s, %s, %s, %s, 'received') ON CONFLICT DO NOTHING RETURNING id""",
-                           (batch_id, file_name, key, sha, day, page_total)).fetchone()
+        row = conn.execute("""INSERT INTO staging.scan_batch (id, file_name, file_path, sha256, scanned_day, page_total,
+                                                              status, upload_id)
+                              VALUES (%s, %s, %s, %s, %s, %s, 'received', %s) ON CONFLICT DO NOTHING RETURNING id""",
+                           (batch_id, file_name, key, sha, scanned, page_total, (upload or {}).get("id"))).fetchone()
     if not row:                                         # the same file, uploaded twice at the same moment
         with db.connect() as conn:
             dup = conn.execute("SELECT id, file_name, received_at FROM staging.scan_batch WHERE sha256=%s",

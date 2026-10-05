@@ -1,7 +1,10 @@
 # frontend: the web app
 
-The screens Finance Invoicing works in (Beranda, Unggah scan, Periksa order, Jenis halaman, Berkas per SOR, Data
-terkirim, Riwayat scan, and a page's viewer), as a Next.js 16 app (React 19, TypeScript). It holds no data and no
+The screens Finance Invoicing works in, as a Next.js 16 app (React 19, TypeScript): **Batch** (every upload batch and
+what each needs next), a batch's own page with its five steps in order (Dibaca AI, Jenis halaman, Cocokkan ke order,
+Periksa order, Kirim ke Satellite; `services/api/steps.py` counts them), Unggah batch, Cari, an order's review and a
+page's viewer. The screens over every batch at once (Periksa order, Jenis halaman, Berkas per SOR, Data terkirim) are
+under Teknis. It holds no data and no
 rules: everything is read from and written to the API's REST endpoints, `/api/v1` (`services/api/v1.py`, documented
 in [docs/api.md](../docs/api.md)).
 
