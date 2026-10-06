@@ -85,7 +85,8 @@ thousands of records and several workers.
 | `services/common/` | shared by every service: `config.py` (every setting), the database, queues, storage, the field lists, the checks |
 | `services/intake/`, `worker/`, `grouper/`, `publisher/`, `scheduler/` | the background services above |
 | `schema/` | the database, as SQL files applied in order |
-| `scripts/` | `setup.sh` (first-time setup), `load_satellite.py` (Satellite's export) |
+| `scripts/` | `setup.sh` (first-time setup), `seed.sh` (Jev's context into the database), `load_satellite.py` (Satellite's export) |
+| `services/seed/` | the data a new database starts from: Jev's context (`jev-context.json`); refresh it from a working database with `python -m common.seed export` |
 | `tests/` | pytest, run inside the API container; `tests/browser/` drives the web app in Chrome |
 | `docs/` | [API](docs/api.md), [testing](docs/testing.md), [Postman collection](docs/postman/) |
 
@@ -101,6 +102,7 @@ cp .env.example .env                                   # then fill in the AI key
 docker compose -f docker-compose.servers.yml up -d     # Postgres, RabbitMQ, MinIO
 ./scripts/setup.sh                                     # the database (every migration) and the RabbitMQ vhost
 docker compose up -d --build                           # the API, the web app, the workers
+./scripts/seed.sh                                      # Jev's context into the database (once)
 ```
 
 Then open:

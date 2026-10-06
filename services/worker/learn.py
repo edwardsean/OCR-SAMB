@@ -78,7 +78,7 @@ def labels(sos):
 
 
 def _ctx(c):
-    return context.ensure(c, classify.JEV_QUESTION["doc_type"]["criteria"], classify.KEYWORDS, classify.JEV_TYPES)[1]
+    return context.ensure(c)[1]
 
 
 def chain_of(c, bid, n, fields_all, qr, sos, known):

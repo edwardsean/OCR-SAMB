@@ -16,7 +16,7 @@ EMPTY = {"verdict": "empty"}
 
 
 def ctx():
-    return context.seed(classify.JEV_QUESTION["doc_type"]["criteria"], classify.KEYWORDS, classify.JEV_TYPES)
+    return context.seed_content()
 
 
 def test_decision_values_are_fields_of_their_type():

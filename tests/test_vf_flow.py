@@ -9,7 +9,7 @@ from worker import classify, vf
 
 
 def ctx():
-    return context.seed(classify.JEV_QUESTION["doc_type"]["criteria"], classify.KEYWORDS, classify.JEV_TYPES)
+    return context.seed_content()
 
 
 def test_decide_jev_leads_and_the_image_vetoes_a_wrong_fp():

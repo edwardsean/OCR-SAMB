@@ -507,8 +507,7 @@ def recompute(bid, n):
         if (not p or p["type_status"] not in ("decided", "labelled") or p["fields_all"] is None
                 or p["classical_text"] is None):
             return None
-        _, ctx = context.ensure(c, classify.JEV_QUESTION["doc_type"]["criteria"], classify.KEYWORDS,
-                                classify.JEV_TYPES)
+        _, ctx = context.ensure(c)
         sos, confirmed, day = satellite.load(c), satellite.confirmations(c, bid, n), scan_day_of(c, bid)
     dt = p["doc_type"]
     rd = {"classical_text": p["classical_text"], "ocr_words": p["ocr_words"] or []}
@@ -664,8 +663,7 @@ def handle(ticket, v1_reading=None, second_look=True):
 def _handle(ticket, bid, n, run, v1_reading, second_look):
     with db.connect() as c:
         prev = c.execute("SELECT * FROM staging.page WHERE batch_id=%s AND page_no=%s", (bid, n)).fetchone()
-        ctx_v, ctx = context.ensure(c, classify.JEV_QUESTION["doc_type"]["criteria"], classify.KEYWORDS,
-                                    classify.JEV_TYPES)
+        ctx_v, ctx = context.ensure(c)
     fv = context.fields_version(ctx) + "@" + AI_OCR           # a reading belongs to the list AND the model that made it
     if READER == "two_step":                                   # … and, read then mapped, to the transcript and mapper
         fv = two_step_versions(ctx)[2]
@@ -953,7 +951,7 @@ def trial(bid, pages, variant=None, twice=True):
     models costs one image read. twice: map a second time to measure the text model's flip rate."""
     variant = variant or f"map@{AI_MAP}"
     with db.connect() as c:
-        _, ctx = context.ensure(c, classify.JEV_QUESTION["doc_type"]["criteria"], classify.KEYWORDS, classify.JEV_TYPES)
+        _, ctx = context.ensure(c)
     schema = context.vlm_schema(ctx)
     tv = transcript.transcript_version(AI_OCR, PREP_VERSION)
     mv = transcript.map_version(context.fields_version(ctx), tv, AI_MAP)
@@ -1017,7 +1015,7 @@ def reground(bid, variant=None):
     """The trial's stored text-model answers (mapping.raw) grounded again with today's code: a grounding fix measured
     with no model call. Pages whose raw answer wasn't kept are left as they are."""
     with db.connect() as c:
-        _, ctx = context.ensure(c, classify.JEV_QUESTION["doc_type"]["criteria"], classify.KEYWORDS, classify.JEV_TYPES)
+        _, ctx = context.ensure(c)
         rows = c.execute("""SELECT t.page_no, t.variant, t.transcript, t.mapping, p.upright_path, p.ocr_words
                               FROM staging.reading_trial t JOIN staging.page p USING (batch_id, page_no)
                              WHERE t.batch_id=%s AND (%s::text IS NULL OR t.variant=%s)
@@ -1125,8 +1123,7 @@ def evaluate_reading(bid, n, fields_all):
         if (not p or p["type_status"] not in ("decided", "labelled") or p["classical_text"] is None
                 or fields_all is None):
             return None
-        _, ctx = context.ensure(c, classify.JEV_QUESTION["doc_type"]["criteria"], classify.KEYWORDS,
-                                classify.JEV_TYPES)
+        _, ctx = context.ensure(c)
         sos, confirmed, day = satellite.load(c), satellite.confirmations(c, bid, n), scan_day_of(c, bid)
     dt = p["doc_type"]
     rd = {"classical_text": p["classical_text"], "ocr_words": p["ocr_words"] or []}

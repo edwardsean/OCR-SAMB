@@ -252,8 +252,7 @@ def run_one(lesson):
         page = c.execute("""SELECT p.*, l.pile, l.note, l.label::text AS label FROM staging.page p
                             JOIN staging.type_label l USING (batch_id, page_no)
                             WHERE p.batch_id=%s AND p.page_no=%s""", (bid, n)).fetchone()
-        ctx_v, ctx = context.ensure(c, classify.JEV_QUESTION["doc_type"]["criteria"], classify.KEYWORDS,
-                                    classify.JEV_TYPES)
+        ctx_v, ctx = context.ensure(c)
         newer = approved_after(c, ctx_v, lesson["created_at"])
 
     def done(status, **kw):
