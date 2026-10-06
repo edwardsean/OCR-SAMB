@@ -3,9 +3,7 @@
 {% block main %}
   <section class="head">
     <h1>Status sistem</h1>
-    <p class="lede">Setiap layanan dicek langsung setiap 5 detik. Titik hijau = berjalan normal; titik merah = bermasalah
-      (hubungi tim IT). <span class="muted">Every service in <code>docker-compose.yml</code>; phase 0 passes when both
-      checks below are green. Built through phase {{ built }}.</span></p>
+    <p class="lede">Dicek setiap 5 detik. Hijau = berjalan, merah = bermasalah.</p>
   </section>
   <div hx-get="/partials/status" hx-trigger="every 5s" hx-swap="innerHTML">
     {% include "_status_body.html" %}

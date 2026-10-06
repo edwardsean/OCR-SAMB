@@ -12,8 +12,8 @@ const ALL: [string, string][] = [                   // this app's screens over e
   ["/review", "Periksa order"], ["/label", "Jenis halaman"], ["/bundles", "Berkas per SOR"], ["/published", "Data terkirim"],
 ];
 const TECH: [string, string][] = [
-  ["/status", "Status sistem"], ["/context", "Konteks Jev"], ["/knowledge", "Pengetahuan AI"],
-  ["/compare", "Bandingkan dengan v1"], ["/fields", "Daftar field"], ["/labels", "Semua label"],
+  ["/status", "Status sistem"], ["/settings", "Model & kunci API"], ["/context", "Konteks Jev"],
+  ["/knowledge", "Pengetahuan AI"], ["/fields", "Daftar field"], ["/labels", "Semua label"],
 ];
 
 export default function TopBar({ initial }: { initial: Session | null }) {

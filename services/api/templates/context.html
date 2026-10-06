@@ -1,15 +1,9 @@
 {% extends "base.html" %}
-{% block title %}Jev context{% endblock %}
+{% block title %}Konteks Jev{% endblock %}
 {% block main %}
   <section class="head">
-    <h1>Jev's context <span class="muted">vlm-first</span></h1>
-    <p class="lede">One registry holds <strong>the combined field list</strong> (what the AI OCR reads on every page) and
-      <strong>each document type's description</strong> (what Jev classifies with). The combined list always equals the
-      union of every type's fields. A label on a practice page Jev missed becomes a lesson, and the teacher
-      (GLM-4.6V-Flash, service <span class="mono">vf-teacher</span>) takes the lessons by itself, one at a time. It
-      proposes one change; the change is replayed on the practice labels, and only one that helps reaches this screen,
-      where <strong>a person approves or rejects it</strong>. Exam labels are never shown to the teacher. Versions are
-      numbered "context #N" (not to be confused with pipeline v1).</p>
+    <h1>Konteks Jev</h1>
+    <p class="lede">How Jev tells page types apart. The teacher proposes changes from labels; a person approves them.</p>
   </section>
 
   {% if active %}{% set c = active.content %}
@@ -38,7 +32,7 @@
   <section>
     <h2>Proposals and history</h2>
     {% set props = versions|selectattr('status', 'equalto', 'proposed')|list %}
-    {% if not props %}<p class="muted">No proposal waiting. Proposals come from lessons (a practice-pile label on a page the machine was unsure or wrong about); the teacher takes them by itself, one at a time.</p>{% endif %}
+    {% if not props %}<p class="muted">No proposal waiting.</p>{% endif %}
     {% for v in versions if v.parent %}
     <div class="alert {{ 'warn' if v.status == 'proposed' else '' }}" style="padding:10px 14px;margin:10px 0">
       <p><strong>context #{{ v.version }}</strong>, built on #{{ v.parent }} · <strong>{{ v.status }}</strong>{% if v.approved_by %} ({{ v.approved_by }}){% endif %} · {{ v.created_by }} · {{ v.note or '' }}</p>

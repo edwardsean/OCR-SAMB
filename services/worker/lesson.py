@@ -29,7 +29,7 @@ from concurrent.futures import ThreadPoolExecutor
 
 from psycopg.types.json import Json
 
-from common import config, context, db, verify
+from common import config, context, db, settings, verify
 from common.models import teacher
 from worker import classify, vf
 from worker import main as v1
@@ -294,9 +294,9 @@ def run_one(lesson):
     for _ in range(2):                                # a second try is told why the first wasn't kept
         try:
             answer, meta = teacher.ask(png, prompt(ctx, page["label"], page["note"], state, jev, earlier))
-            vf.ledger("zai", "teach", bid, n, True, meta)
+            vf.ledger(teacher.provider_of(teacher.MODEL), "teach", bid, n, True, meta)
         except Exception as e:
-            vf.ledger("zai", "teach", bid, n, False, error=f"{type(e).__name__}: {e}"[:300])
+            vf.ledger(teacher.provider_of(teacher.MODEL), "teach", bid, n, False, error=f"{type(e).__name__}: {e}"[:300])
             return later(f"teacher: {type(e).__name__}: {e}"[:300])
         change = answer.get("change") or {"kind": "none"}
         if change.get("kind") == "none":
@@ -349,6 +349,7 @@ def ask_in_turn(lessons, ask):
 
 
 def run(limit=50, quiet=False):
+    settings.refresh()                          # the models and keys saved on the Teknis screen
     with db.connect() as c:
         pending = c.execute("SELECT version FROM staging.context_version WHERE status='proposed'").fetchall()
         # only pages vlm-first prepared: the teacher needs the upright image (the tests' throwaway pages have none)
@@ -400,6 +401,7 @@ def teach_wiki():
     failure never stops the teacher: the lesson waits."""
     try:
         from worker import learn
+        settings.refresh()
         learn.teach(show=lambda *a: print(*a, flush=True))
     except Exception as e:
         print("the wiki's lessons failed:", type(e).__name__, e, flush=True)

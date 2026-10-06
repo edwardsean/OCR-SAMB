@@ -20,7 +20,7 @@ from fastapi.templating import Jinja2Templates
 
 import re
 
-from common import config, db, health, intake, keys as keymod, queue as q, storage, verify
+from common import config, db, health, intake, keys as keymod, queue as q, settings, storage, verify
 from common.fields import DOCS, decides
 from api import actions, bahasa, steps
 
@@ -33,6 +33,14 @@ app = FastAPI(
                                         "Berkas per SOR", "Published (Data terkirim)", "Files (page images, crops, PDFs)",
                                         "Teknis (status, acceptance checks)")])
 app.mount("/static", StaticFiles(directory=os.path.join(HERE, "static")), name="static")
+
+
+@app.middleware("http")
+async def _settings(request, call_next):
+    """The models and API keys saved on the Teknis screen (common/settings.py), read again at most every few
+    seconds: an action that calls a model (a replay, publishing) uses what is saved now."""
+    settings.refresh()
+    return await call_next(request)
 templates = Jinja2Templates(directory=os.path.join(HERE, "templates"))
 templates.env.filters.update(bahasa.FILTERS)       # Indonesian numbers and dates on every screen
 templates.env.globals.update(bahasa.GLOBALS)
@@ -65,12 +73,13 @@ TESTDATA = config.env("TESTDATA_DIR") or next(
      if os.path.isfile(os.path.join(d, "golden_p1-32.json"))), os.path.join(HERE, "..", "testdata"))
 # The Teknis screens' top bar: the web app's screens (served by the web app on the same address, which passes the
 # Teknis screens on to this service), and the screens for building the system under "Teknis". (path, label, count)
-NAV = [("/", "Beranda", None), ("/upload", "Unggah scan", None), ("/review", "Periksa order", "needs_you"),
-       ("/label", "Jenis halaman", "unsure_left"), ("/bundles", "Berkas per SOR", None),
-       ("/published", "Data terkirim", None), ("/batches", "Riwayat scan", None)]
-TECH = [("/status", "Status sistem"), ("/fields", "Daftar field"), ("/labels", "Semua label")]
+NAV = [("/", "Batch", "batches_need"), ("/upload", "Unggah batch", None)]      # as the web app's top bar
+ALL_BATCHES = [("/review", "Periksa order"), ("/label", "Jenis halaman"), ("/bundles", "Berkas per SOR"),
+               ("/published", "Data terkirim")]                                  # the web app's screens over every batch
+TECH = [("/status", "Status sistem"), ("/settings", "Model & kunci API"), ("/fields", "Daftar field"),
+        ("/labels", "Semua label")]
 if VF:
-    TECH[1:1] = [("/context", "Konteks Jev"), ("/knowledge", "Pengetahuan AI"), ("/compare", "Bandingkan dengan v1")]
+    TECH[2:2] = [("/context", "Konteks Jev"), ("/knowledge", "Pengetahuan AI")]
 
 EXPECTED_TABLES = 20      # 19 from the base schema + staging.type_label (006)
 if VF:
@@ -79,6 +88,7 @@ if VF:
                           # knowledge_page, knowledge_map (021)
     EXPECTED_TABLES += 1   # + job_run (025): the scheduler's jobs
     EXPECTED_TABLES += 1   # + upload (026): upload batches
+    EXPECTED_TABLES += 1   # + setting (027): models and API keys saved from the Teknis screen
 
 SVC = config.SERVICE_PREFIX                  # this stack's service names: vf-* on main, rtm-* in the worktree
 HEALTH_PORT = config.HEALTH_PORT             # where each worker answers /health
@@ -190,9 +200,10 @@ def _model_usage():
 
 def ctx(request, **kw):
     path = request.url.path
-    return {"request": request, "nav": NAV, "tech": TECH, "built": PHASE_BUILT, "path": path,
+    return {"request": request, "nav": NAV, "tech": TECH, "all_batches": ALL_BATCHES, "built": PHASE_BUILT,
+            "path": path,
             "tech_on": any(path == p or path.startswith(p + "/") for p, _ in TECH) or path.startswith(("/trial", "/teknis")),
-            "needs_you": _needs_you(), "unsure_left": _unsure_left(), "vf": VF, **kw}
+            "batches_need": _batches_need(), "vf": VF, **kw}
 
 
 def _unsure_left():
@@ -346,6 +357,45 @@ def home_view():
     todo = {k: {"n": sum(s[k] for s in scans), "batch": first(k)} for k in ("need", "unsure", "ready", "held")}
     return {"scans": scans, "uploads": uploads_view(8), "todo": todo,
             "busy": [s for s in scans if s["status"] in ("splitting", "queued", "reading") or s["waiting_ai"] or s["waiting"]]}
+
+
+# ---------------------------------------------------------------------------------------------- Model & kunci API
+
+def _s_back(msg, name="", bad=False):
+    from urllib.parse import quote
+    return RedirectResponse(f"/settings?msg={quote(msg[:300])}&bad={int(bad)}#{quote(name)}", status_code=303)
+
+
+@app.get("/settings", response_class=HTMLResponse, include_in_schema=False)
+def page_settings(request: Request, msg: str | None = None, bad: int = 0):
+    """The models (image OCR, text model, teachers, matcher) and the providers' API keys, saved here over .env
+    (common/settings.py). Keys are only ever shown masked."""
+    from common.models.openai_vlm import PROVIDERS
+    try:
+        with db.connect() as c:
+            v = settings.view(c)
+    except Exception as e:                       # before migration 027
+        v, msg, bad = None, f"Settings can't be read: {type(e).__name__} (apply schema/027-setting.sql)", 1
+    return templates.TemplateResponse("settings.html", ctx(request, v=v, msg=msg, bad=bad, providers=sorted(PROVIDERS)))
+
+
+@app.post("/settings", include_in_schema=False)
+def save_setting(name: str = Form(...), value: str = Form(""), by: str = Form("")):
+    try:
+        with db.connect() as c:
+            settings.save(c, name, value, by)
+    except ValueError as e:
+        return _s_back(f"{name} not saved: {e}", name, bad=True)
+    settings.refresh(force=True)
+    return _s_back(f"{name} saved: every service uses it within seconds" if value.strip()
+                   else f"{name} removed: the value in .env is used again", name)
+
+
+@app.post("/settings/check", include_in_schema=False)
+def check_setting(name: str = Form(...)):
+    """Ask the provider whether it accepts the key in effect (its model list: no tokens)."""
+    ok, said = settings.check_key(name)
+    return _s_back(f"{name}: {said}", name, bad=not ok)
 
 
 @app.get("/status", response_class=HTMLResponse, include_in_schema=False)
@@ -1624,7 +1674,12 @@ def partial_teacher():
                         f'buat">{html.escape(bahasa.teacher(line))}</a>')
 
 
-KNOWLEDGE_TYPES = ("TTG", "PO", "FP")
+def knowledge_types(rows=()):
+    """The document types the knowledge screen shows: every type with a field list (common/fields.py), in its order,
+    then any other type a page was written for. Faktur Pajak was missing while this was a fixed list (2026-10-06)."""
+    from common.fields import DOCS
+    order = [t for t, d in DOCS.items() if d.get("header")]
+    return order + sorted({r["doc_type"] for r in rows} - set(order))
 
 
 def _knowledge_view():
@@ -1641,7 +1696,7 @@ def _knowledge_view():
         known = customer.learned(c, sos)
     labels = learn.labels(sos)
     types, used, chains = [], set(), set()
-    for t in KNOWLEDGE_TYPES:
+    for t in knowledge_types(rows):
         vs = [r for r in rows if r["doc_type"] == t]
         act = next((r for r in vs if r["status"] == "active"), None)
         by_v = {r["version"]: r for r in vs}
@@ -1769,75 +1824,6 @@ def knowledge_lint():
 def knowledge_teach():
     _wake_teacher("asked on /knowledge")
     return _k_back("TTG", "the teacher was woken: it takes the waiting lessons one at a time (vf-teacher's log)")
-
-
-@app.get("/compare", response_class=HTMLResponse, include_in_schema=False)
-def page_compare(request: Request, batch: str | None = None):
-    batch = batch or _latest_batch()
-    data = vf_compare(batch) if batch else None
-    return templates.TemplateResponse("compare.html", ctx(request, batch=batch, d=data))
-
-
-def vf_compare(batch):
-    """v1 (its own database, read-only) vs vlm-first, on pages 1–31 that both read. Graded by the answer key."""
-    q_ = """SELECT page_no, status::text AS status, doc_type::text AS doc_type, type_status, type_votes, extract_status,
-                   fields, vlm_meta{} FROM staging.page WHERE batch_id=%s AND page_no = ANY(%s)"""
-    with db.connect() as c:
-        vf = {r["page_no"]: r for r in c.execute(q_.format(", second_look"), (batch, list(SCOPE)))}
-        for n in vf:
-            vf[n]["checks"] = verify.load(c, batch, n)
-        vf_calls = c.execute("""SELECT provider, count(*) AS n FROM staging.model_call WHERE batch_id=%s
-                                GROUP BY 1""", (batch,)).fetchall()
-    with _main_db() as m:                            # v1 has no look-again, so no second_look column
-        v1 = {r["page_no"]: r for r in m.execute(q_.format(""), (batch, list(SCOPE)))}
-        for n in v1:
-            v1[n]["checks"] = verify.load(m, batch, n)
-    b, _ = _batch(batch)
-    golden = _golden() if b and b["file_name"] == GOLDEN_FILE else None
-    alts = (golden or {}).get("type_alternatives", {})
-
-    def machine(r, vf_side):
-        if vf_side:
-            m = (r["type_votes"] or {}).get("machine") or {}
-            return m.get("doc_type") if m.get("status") == "decided" else None
-        return r["doc_type"] if r["type_status"] == "decided" else None
-
-    def values(r):                               # an unbacked value waiting for the look-again isn't a person's yet
-        out = {"ok": 0, "check": 0, "empty": 0, "waiting": 0}
-        waits = bool((r.get("second_look") or {}).get("waiting"))
-        for v in ((r.get("checks") or {}).get("header") or {}).values():
-            out["waiting" if waits and v["verdict"] == "check" else v["verdict"]] += 1
-        return out
-
-    rows, sums = [], {s: {"right": 0, "unsure": 0, "wrong": 0, "not read": 0, "ok": 0, "check": 0, "waiting": 0}
-                      for s in ("v1", "vf")}
-    for n in sorted(set(vf) & set(v1)):
-        if vf[n]["status"] != "read":        # not processed by vlm-first yet: nothing to compare
-            continue
-        key = (golden or {}).get("page_types", {}).get(str(n))
-        ok_types = set(alts.get(str(n), [key]))
-        row = {"page": n, "key": "/".join(sorted(ok_types)) if key else "?"}
-        for side, r in (("v1", v1[n]), ("vf", vf[n])):
-            t = machine(r, side == "vf")
-            verdict = "unsure" if t is None else ("right" if t in ok_types else "wrong") if key else "?"
-            if side == "vf" and r["extract_status"] == "failed":
-                verdict = "not read"                 # the AI OCR never read it (limit reached): nothing to classify
-            vals = values(r)
-            row[side] = {"type": t, "verdict": verdict, "read": r["extract_status"] == "done", **vals}
-            if verdict in ("right", "unsure", "wrong", "not read"):
-                sums[side][verdict] += 1
-            sums[side]["ok"] += vals["ok"]
-            sums[side]["check"] += vals["check"]
-            sums[side]["waiting"] += vals["waiting"]
-        rows.append(row)
-    v1_calls = {"gemini (stored readings)": sum(len(r["vlm_meta"] or {}) for r in v1.values())}
-    read_by = {}
-    for r in vf.values():
-        if r["status"] == "read":
-            model = ((r["vlm_meta"] or {}).get("read") or {}).get("model") or "not read by the AI OCR"
-            read_by[model] = read_by.get(model, 0) + 1
-    return {"rows": rows, "sums": sums, "vf_calls": vf_calls, "v1_calls": v1_calls, "pages": len(rows),
-            "read_by": read_by}
 
 
 # ---------------------------------------------------------------------------------------------- phase 6: bundles

@@ -14,7 +14,7 @@ import pika
 from PIL import Image
 from psycopg.types.json import Json
 
-from common import config, db, health, queue, storage, verify
+from common import config, db, health, queue, settings, storage, verify
 from common import keys as keymod
 from common.models import schemas, vlm
 from worker import classify, enhance
@@ -203,6 +203,7 @@ PIPELINE = config.PIPELINE
 
 
 def on_message(ch, method, props, body):
+    settings.refresh()                          # the models and keys saved on the Teknis screen
     ticket = json.loads(body)
     try:
         if PIPELINE == "vlm-first":            # the experiment on branch vlm-first (worker/vf.py)

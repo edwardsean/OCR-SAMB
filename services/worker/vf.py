@@ -55,7 +55,7 @@ import psycopg
 from psycopg.rows import dict_row
 from psycopg.types.json import Json
 
-from common import config, context, db, gates, satellite, transcript, verify, wiki
+from common import config, context, db, gates, satellite, settings, transcript, verify, wiki
 from common import keys as keymod
 from common.fields import DECIDES, DOCS, TYPE_MAP, decides, lift, project
 from common.models import openai_vlm, vlm
@@ -71,6 +71,16 @@ DAILY_CAP = config.VF_AI_OCR_DAILY_CAP
 MAP_CAP = config.VF_AI_MAP_DAILY_CAP
 CAPS = {AI_OCR: DAILY_CAP, **({AI_MAP: MAP_CAP} if AI_MAP != AI_OCR else {})}   # per model: each has its own quota
 READER = config.VF_READER                    # two_step: the mentor's transcribe, then map (read_then_map)
+
+
+@settings.on_change
+def _models_changed():
+    """The models saved on the Teknis screen (common/settings.py) replace .env's: a page read after this uses them,
+    and its versions name them, so a page another model read is read again."""
+    global AI_OCR, AI_MAP, CAPS
+    AI_OCR, AI_MAP = config.VF_AI_OCR, config.VF_AI_MAP
+    CAPS = {AI_OCR: DAILY_CAP, **({AI_MAP: MAP_CAP} if AI_MAP != AI_OCR else {})}
+
 MAP_TWICE = config.VF_MAP_TWICE              # map each transcript twice and merge (transcript.merge)
 STARTING = {"read_all", "transcribe"}      # a page's first call; everything else finishes a page already started
 TEXT_PURPOSES = {"map", "map_b"}           # calls that go to the text model (map_b: pass B, with knowledge)

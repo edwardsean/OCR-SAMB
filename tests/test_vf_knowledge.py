@@ -478,3 +478,77 @@ def test_the_status_queries_run_on_the_database():
         assert lp["final"] and "wasn't found" in lp["headline"]          # no fix there: no example
         line = app.teacher_now(c)
         assert line is None or line.startswith(("Teacher:", "1 tip", "2 tips")) or "tips waiting" in line
+
+
+# ---------------------------------------------------------------------------------------------- the knowledge screen
+
+def test_the_knowledge_screen_shows_every_type_with_a_field_list():
+    """A Faktur Pajak page the teacher wrote (FPJ #2, 2026-10-05) was missing from /knowledge: the screen had a fixed
+    list of three types. It now follows the field list, and shows any other type a page was written for."""
+    from api.app import knowledge_types
+    from common.fields import DOCS
+    assert knowledge_types() == [t for t, d in DOCS.items() if d.get("header")]
+    assert "FPJ" in knowledge_types()
+    assert knowledge_types([{"doc_type": "PEL"}, {"doc_type": "TTG"}])[-1] == "PEL"
+
+
+def test_the_teacher_is_told_the_place_in_words_and_how_positions_run():
+    """FPJ #2 (2026-10-06): the teacher read x 35-220 (the left fifth) as "bottom right". The prompt had two position
+    formats and never said which way the axes run. Now: one format (x/y), the axes explained, the place in words."""
+    assert wiki.place([719, 34, 727, 118]) == "lower left, about 72% down the page"
+    assert wiki.place([40, 700, 90, 960]) == "top right, about 6% down the page"
+    assert wiki.place([480, 400, 520, 600]) == "centre, about 50% down the page"
+    assert wiki.place([920, 20, 960, 990]).startswith("bottom part, across the page")
+    p = wiki.teach_prompt("FPJ", "a tax invoice", "the billing number", {**EX, "field": "billing_number",
+                          "region": [719, 34, 727, 118]}, None, "", "", "", "[b28] …", None)
+    assert "WHERE IT IS PRINTED: lower left, about 72% down the page (x 34-118, y 719-727)" in p
+    assert "x runs from the left edge (0) to the right\nedge (1000)" in p and "[top, left, bottom, right]" not in p
+    assert "never your own\n  reading of the numbers" in p
+    assert "not marked on the page" in wiki.teach_prompt("FPJ", "", "", {**EX, "region": None}, None, "", "", "", "", None)
+
+
+# ---------------------------------------------------------------------------------------------- what is tested, what is redone
+# 2026-10-06 (the user: "we dont need to remap all the related docs … we just leave some for exam"): the test reads
+# again only pages with a known answer (Satellite now gives a Faktur Pajak's), and a switched-on tip is used only on
+# pages that still need it.
+
+SO_A = {"sor_no": "SOR26110200001", "billing_no": "7000300001", "customer_code": "1"}
+
+
+def test_a_faktur_pajaks_billing_number_is_known_from_satellite_where_the_page_prints_it():
+    printed = "FAKTURPAJAK|7000300001SOR26110200001|JAKARTA"
+    assert wiki.truth_of("FPJ", {}, SO_A, printed) == {"billing_number": "7000300001"}
+    assert wiki.truth_of("FPJ", {}, SO_A, "FAKTURPAJAK|SOR26110200001") == {}          # not printed: can't score it
+    assert wiki.truth_of("FPJ", {}, None, printed) == {}
+    assert wiki.truth_of("FPJ", {"billing_number": "7000300009"}, SO_A, printed)["billing_number"] == "7000300009"
+
+
+def test_the_order_a_faktur_pajak_prints_is_the_one_sor_it_names():
+    sos = {"SOR26110200001": SO_A, "SOR26110200002": {"sor_no": "SOR26110200002"}}
+    assert wiki.printed_order("7000300001SOR26110200001", sos) is SO_A
+    assert wiki.printed_order("7000300001|26110200001", sos) is SO_A                  # printed without its letters
+    assert wiki.printed_order("SOR26110200001|SOR26110200002", sos) is None           # two orders: neither
+    assert wiki.printed_order("SOR26110299999", sos) is None                          # misread: no order
+    assert wiki.printed_order("", sos) is None
+
+
+def test_a_billing_number_is_scored_on_its_own_digits():
+    assert wiki.score("billing_number", "7000359122/S OR 26110260590", "7000359122") == "right"
+    assert wiki.score("billing_number", "7000358320/26110260343", "7000358320") == "right"
+    assert wiki.score("billing_number", "7000359123", "7000359122") == "wrong"
+    assert wiki.score("billing_number", None, "7000359122") == "empty"
+
+
+def test_the_test_reads_people_s_answers_first_then_the_newest_up_to_its_limit():
+    from datetime import datetime
+    plan = [{"id": i, "person": i in (7, 3), "at": datetime(2026, 10, 1 + i)} for i in range(10)]
+    assert [x["id"] for x in wiki.test_pages(plan, cap=4)] == [7, 3, 9, 8]
+    assert len(wiki.test_pages(plan * 5)) == wiki.TEST_PAGES
+
+
+def test_a_switched_on_tip_is_used_only_where_its_field_isnt_settled():
+    assert not wiki.needs_tip({"billing_number"}, {"billing_number", "sor"})
+    assert wiki.needs_tip({"billing_number"}, {"sor"})
+    assert wiki.needs_tip({"lines.qty"}, {"lines.qty"})                     # a column is never settled as a whole
+    assert wiki.needs_tip({"billing_number", "sor"}, {"billing_number"})
+    assert "text" not in wiki.INDEPENDENT                                    # print shows characters, not the field

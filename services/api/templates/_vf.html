@@ -12,7 +12,7 @@
     Main-field checks: {% for k, n in vf['values']|dictsort %}{{ k }} {{ n }} · {% endfor %}<br>
     Model calls: {% for c in vf.calls %}{{ c.provider }} {{ c.purpose }} {{ c.ok }}/{{ c.n }}{% if c.avg_ms %} (avg {{ (c.avg_ms / 1000)|round(1) }} s){% endif %} · {% endfor %}
     {% if not vf.calls %}none yet{% endif %}
-    · <a href="/compare?batch={{ batch_id }}">compare with v1</a> · <a href="/context">Jev context</a>
+    · <a href="/context">Jev context</a>
   </p>
   {% if vf.table %}
   <details><summary>Type per page: the machine's answer vs the answer key (the key is only used here, for grading)</summary>

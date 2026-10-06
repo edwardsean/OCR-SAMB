@@ -30,9 +30,15 @@ import re
 import sys
 import time
 
-from common import config, db, satellite, verify
+from common import config, db, satellite, settings, verify
 
-AI_MODEL = config.MATCH_MODEL        # text only, free on Z.ai; not Groq's AI OCR budget
+AI_MODEL = config.MATCH_MODEL        # text only: a Z.ai model name, or provider:model (the Teknis screen)
+
+
+@settings.on_change
+def _model_changed():
+    global AI_MODEL
+    AI_MODEL = config.MATCH_MODEL
 PAUSE = config.MATCH_PAUSE                   # seconds between calls
 COLS = {"TTG": ("item_code", "material_description"), "PO": ("product_code", "product_description")}
 CARTON = {"KTN", "CT", "CTN", "CTNS", "CAR", "CRT", "KRT", "KARTON", "CARTON", "CARTONS", "CASE", "CS", "DUS", "BOX"}

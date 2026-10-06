@@ -1,0 +1,87 @@
+{% extends "base.html" %}
+{% block title %}Model & kunci API{% endblock %}
+{% block main %}
+  <section class="head">
+    <h1>Model & kunci API</h1>
+    <p class="lede">Saved here, used by every service within seconds. Empty = the value in <code>.env</code>.</p>
+  </section>
+
+  {% if msg %}<div class="alert {{ 'bad' if bad else 'warn' }}" style="padding:10px 14px;margin:10px 0">{{ msg }}</div>{% endif %}
+
+  {% if v %}
+  <p class="small">Your name <input class="js-name" placeholder="saved with each change" size="18"></p>
+
+  <section>
+    <h2>Models</h2>
+    <table class="grid set">
+      <thead><tr><th>Used for</th><th>Model</th><th>From</th><th></th></tr></thead>
+      <tbody>{% for m in v.models %}
+        <tr id="{{ m.name }}">
+          <td><strong>{{ m.what }}</strong><br><span class="mono small muted">{{ m.name }}</span></td>
+          <td>
+            <form method="post" action="/settings" class="setf">
+              <input type="hidden" name="name" value="{{ m.name }}"><input type="hidden" name="by" class="js-by">
+              <input name="value" class="mono" value="{{ m.value if m.from == 'UI' else '' }}" size="34"
+                     placeholder="{{ m.env or 'provider:model' }}">
+              <button type="submit">Save</button>
+            </form>
+            {% if m.key %}<span class="small {{ '' if m.key_set else 'bad' }}">{{ '✓' if m.key_set else '⚠ no' }} <span class="mono">{{ m.key }}</span></span>{% endif %}
+          </td>
+          <td class="small">{% if m.from == 'UI' %}UI · {{ m.by }}, {{ m.at|tgl }}{% elif m.from %}.env{% else %}<span class="muted">not set</span>{% endif %}</td>
+          <td>{% if m.from == 'UI' %}<form method="post" action="/settings"><input type="hidden" name="name" value="{{ m.name }}">
+              <input type="hidden" name="value" value=""><input type="hidden" name="by" class="js-by">
+              <button class="ghost" type="submit" title="use the value in .env again">Use .env</button></form>{% endif %}</td>
+        </tr>
+      {% endfor %}</tbody>
+    </table>
+    <p class="small muted">Write <span class="mono">provider:model</span>, e.g. <span class="mono">dashscope:qwen-plus</span>. Providers:
+      {{ providers|join(', ') }}. A teacher's plain model name is a Z.ai model. A new image OCR or text model re-reads pages
+      when they are next processed.</p>
+  </section>
+
+  <section>
+    <h2>API keys</h2>
+    <table class="grid set">
+      <thead><tr><th>Provider</th><th>Key in use</th><th>From</th><th>New key</th><th></th></tr></thead>
+      <tbody>{% for k in v.api_keys %}
+        <tr id="{{ k.name }}">
+          <td><strong>{{ k.what }}</strong><br><span class="mono small muted">{{ k.name }}</span></td>
+          <td class="mono">{{ k.value or '—' }}</td>
+          <td class="small">{% if k.from == 'UI' %}UI · {{ k.by }}, {{ k.at|tgl }}{% elif k.from %}.env{% else %}<span class="muted">not set</span>{% endif %}</td>
+          <td><form method="post" action="/settings" class="setf">
+              <input type="hidden" name="name" value="{{ k.name }}"><input type="hidden" name="by" class="js-by">
+              <input type="password" name="value" autocomplete="off" size="26" placeholder="paste a new key">
+              <button type="submit">Save</button></form></td>
+          <td class="nowrap">
+            {% if k.set %}<form method="post" action="/settings/check" style="display:inline"><input type="hidden" name="name" value="{{ k.name }}">
+              <button class="ghost" type="submit" title="ask the provider for its model list (no tokens)">Check</button></form>{% endif %}
+            {% if k.from == 'UI' %}<form method="post" action="/settings" style="display:inline"><input type="hidden" name="name" value="{{ k.name }}">
+              <input type="hidden" name="value" value=""><input type="hidden" name="by" class="js-by">
+              <button class="ghost" type="submit" title="use the key in .env again">Use .env</button></form>{% endif %}
+          </td>
+        </tr>
+      {% endfor %}</tbody>
+    </table>
+    <p class="small muted">Keys are stored in the database and only ever shown masked.</p>
+  </section>
+  {% endif %}
+
+  <script>
+    (function () {                           // the name, typed once (as on Review), signs every change
+      var input = document.querySelector('.js-name'), n = '';
+      try { n = localStorage.getItem('rv-name') || ''; } catch (e) {}
+      if (input) {
+        input.value = n;
+        input.addEventListener('input', function () { try { localStorage.setItem('rv-name', input.value); } catch (e) {} });
+      }
+      document.querySelectorAll('form').forEach(function (f) {
+        if (f.getAttribute('action') === '/settings/check') return;      // checking a key changes nothing
+        f.addEventListener('submit', function (e) {
+          var who = (input && input.value.trim()) || '';
+          if (!who) { e.preventDefault(); if (input) { input.focus(); input.placeholder = 'type your name first'; } return; }
+          f.querySelectorAll('.js-by').forEach(function (b) { b.value = who; });
+        });
+      });
+    })();
+  </script>
+{% endblock %}
