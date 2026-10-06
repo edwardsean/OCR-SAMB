@@ -345,3 +345,7 @@ td s { color: var(--bad); }
 .setf input { padding: 5px 8px; border: 1px solid var(--garis-tebal); border-radius: 4px; font-size: 13px; background: #fff; }
 .nowrap { white-space: nowrap; }
 span.bad { color: var(--cap-merah); }
+.set td { padding-top: 14px; padding-bottom: 14px; }
+.set .small.muted { margin-top: 4px; }
+form.inl { display: inline; margin: 0; }
+.set .linkbtn { font-size: 12.5px; }

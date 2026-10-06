@@ -400,7 +400,7 @@ def propose(bid, sor=None):
                 time.sleep(PAUSE)                            # Z.ai's free tier refuses bursts (1302 after 3 calls)
             asked += 1
             try:
-                answer, meta = teacher.ask_text(_prompt(dt, todo, lines), AI_MODEL)
+                answer, meta = teacher.ask_text(_prompt(dt, todo, lines), AI_MODEL, role="MATCH_MODEL")
             except Exception as e:
                 print(f"{s} p{page}: the model couldn't be reached: {type(e).__name__}: {e}"[:300], flush=True)
                 if "429" in str(e):                          # the rate limit: every next call would wait out too

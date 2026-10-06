@@ -368,8 +368,8 @@ def _s_back(msg, name="", bad=False):
 
 @app.get("/settings", response_class=HTMLResponse, include_in_schema=False)
 def page_settings(request: Request, msg: str | None = None, bad: int = 0):
-    """The models (image OCR, text model, teachers, matcher) and the providers' API keys, saved here over .env
-    (common/settings.py). Keys are only ever shown masked."""
+    """Each model the system uses (image OCR, text model, Jev, the teachers, the matcher) and the API key it calls
+    with, saved here over .env (common/settings.py). Keys are only ever shown masked."""
     from common.models.openai_vlm import PROVIDERS
     try:
         with db.connect() as c:

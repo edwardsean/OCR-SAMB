@@ -14,7 +14,7 @@ from zoneinfo import ZoneInfo
 
 import httpx
 
-from common import config
+from common import config, settings
 from common.models import schemas
 
 URL = config.GEMINI_BASE_URL + "/models/{model}:generateContent"
@@ -35,7 +35,7 @@ def _models():
 
 
 def _call(parts, schema, retries=4, timeout=180):
-    key = config.GEMINI_API_KEY
+    key = settings.key("VF_AI_OCR", "gemini")       # the image OCR's own key, else GEMINI_API_KEY
     if not key:
         raise RuntimeError("no GEMINI_API_KEY")
     body = {"contents": [{"role": "user", "parts": parts}],

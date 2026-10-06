@@ -1,39 +1,45 @@
-"""Settings saved from the UI (2026-10-06; the mentor: the models for the image OCR, the text model and the teachers,
-and their API keys, set on a Teknis screen, so the system's environment comes from there).
+"""Models and their API keys, set from the UI (2026-10-06; the mentor: each model the system uses, and the API key it
+calls with, set on a Teknis screen, so the system's environment comes from there).
 
-A row in staging.setting (schema/027) overrides the same name in .env; without one, the .env value stays. common/
-config.py still reads .env (the only module that reads the environment); refresh() lays the saved values over it, and
-every service calls refresh() as it works (a page ticket, a teacher round, an API request): the table is read again
-at most every REFRESH_SECONDS, and modules that keep a copy of a setting (vf.AI_OCR …) are told through on_change.
+Each model has its own row: the model (provider:model) and its own API key. A model without a key of its own calls
+with its provider's key from .env (DASHSCOPE_API_KEY …), as before. A row in staging.setting (schema/027) overrides
+the same name in .env; without one, the .env value stays. common/config.py still reads .env (the only module that
+reads the environment); refresh() lays the saved values over it, and every service calls refresh() as it works (a
+page ticket, a teacher round, an API request): the table is read again at most every REFRESH_SECONDS, and modules
+that keep a copy of a model (vf.AI_OCR …) are told through on_change.
 
-API keys are kept as typed, like .env keeps them; a screen only ever shows their last 4 characters (masked)."""
+Keys are kept as typed, like .env keeps them; a screen only ever shows their last 4 characters (masked)."""
 import time
 
 from common import config
 
 REFRESH_SECONDS = 10
 
-# what the screen can set: (name, what it is for, kind). kind: "model" = provider:model; "key" = an API key
+# one row per model: (model setting, its own key setting, what it is, what it does)
 MODELS = [
-    ("VF_AI_OCR", "Image OCR: copies every line of the page image", "vision"),
-    ("VF_AI_MAP", "Text model: picks each field's value from that copy", "text"),
-    ("WIKI_TEACHER_MODEL", "Teacher: turns corrections into knowledge tips", "text"),
-    ("TEACHER_MODEL", "Page-type teacher: improves Jev's descriptions from labels", "vision"),
-    ("MATCH_MODEL", "Product matcher: pairs a customer's rows with SAMB's lines", "text"),
+    ("VF_AI_OCR", "VF_AI_OCR_API_KEY", "Image OCR", "copies every line of the page image"),
+    ("VF_AI_MAP", "VF_AI_MAP_API_KEY", "Text model", "picks each field's value from that copy"),
+    ("JEV_MODEL", "TYPESAFE_API_KEY", "Page-type classifier (Jev)", "decides what kind of document a page is"),
+    ("WIKI_TEACHER_MODEL", "WIKI_TEACHER_API_KEY", "Knowledge teacher", "turns corrections into tips (Pengetahuan AI)"),
+    ("TEACHER_MODEL", "TEACHER_API_KEY", "Page-type teacher", "improves how Jev tells page types apart (Konteks Jev)"),
+    ("MATCH_MODEL", "MATCH_API_KEY", "Product matcher",
+     "proposes which SAMB line a customer's row is (run by hand: python -m grouper.matching propose)"),
 ]
-KEYS = [
-    ("DASHSCOPE_API_KEY", "Model Studio (Alibaba)", "dashscope"),
-    ("ZAI_API_KEY", "Z.ai (GLM)", "zai"),
-    ("GROQ_API_KEY", "Groq", "groq"),
-    ("OPENROUTER_API_KEY", "OpenRouter", "openrouter"),
-    ("MISTRAL_API_KEY", "Mistral", "mistral"),
-    ("GEMINI_API_KEY", "Google Gemini", None),
-    ("TYPESAFE_API_KEY", "TypeSafe (Jev, page types)", None),
-]
-NAMES = {n for n, _, _ in MODELS} | {n for n, _, _ in KEYS}
+KEY_OF = {m: k for m, k, _, _ in MODELS}
+NAMES = set(KEY_OF) | set(KEY_OF.values())
 DEFAULT_PROVIDER = {"WIKI_TEACHER_MODEL": "zai", "TEACHER_MODEL": "zai", "MATCH_MODEL": "zai"}   # a bare model name
+FIXED = {"JEV_MODEL": "TypeSafe"}                     # a model only one provider serves (no provider:model)
 
-BASE = {n: getattr(config, n) for n, _, _ in MODELS} | {n: config.API_KEYS.get(n, "") for n, _, _ in KEYS}
+
+def _base(name):
+    if name in config.MODEL_KEYS:
+        return config.MODEL_KEYS[name]
+    if name in config.API_KEYS:
+        return config.API_KEYS[name]
+    return getattr(config, name)
+
+
+BASE = {n: _base(n) for n in NAMES}
 _state = {"checked": 0.0, "applied": {}}
 _hooks = []
 
@@ -67,7 +73,9 @@ def refresh(force=False):
         return False
     for name in NAMES:
         value = got.get(name) or BASE[name]
-        if name in config.API_KEYS:
+        if name in config.MODEL_KEYS:
+            config.MODEL_KEYS[name] = value
+        elif name in config.API_KEYS:
             config.API_KEYS[name] = value
         if hasattr(config, name):
             setattr(config, name, value)
@@ -78,7 +86,7 @@ def refresh(force=False):
 
 
 def spec_of(name, value):
-    """A model setting as provider:model (a teacher's bare model name is Z.ai's)."""
+    """A model setting as provider:model (a teacher's or the matcher's bare model name is Z.ai's)."""
     v = (value or "").strip()
     if ":" not in v and name in DEFAULT_PROVIDER and v:
         return f"{DEFAULT_PROVIDER[name]}:{v}"
@@ -87,12 +95,10 @@ def spec_of(name, value):
 
 def check_model(name, value):
     """Why a model setting can't be saved, or None. provider:model with a known provider; the image OCR may also be
-    "gemini"; a teacher's or the matcher's may be a bare Z.ai model name."""
+    "gemini"; a teacher's or the matcher's may be a bare Z.ai model name; Jev's is TypeSafe's model name."""
     from common.models.openai_vlm import PROVIDERS
     v = (value or "").strip()
-    if not v:
-        return None                                   # empty: back to .env
-    if name == "VF_AI_OCR" and v == "gemini":
+    if not v or name in FIXED or (name == "VF_AI_OCR" and v == "gemini"):
         return None
     provider, _, model = spec_of(name, v).partition(":")
     if provider not in PROVIDERS or not model.strip():
@@ -100,13 +106,29 @@ def check_model(name, value):
     return None
 
 
-def key_for(name, value):
-    """The API-key setting a model setting needs (None: none, e.g. a local Ollama model)."""
+def provider_key(name, value):
+    """The provider's key setting in .env a model falls back to (None: none, e.g. Jev or a local Ollama model)."""
     from common.models.openai_vlm import PROVIDERS
+    if name in FIXED:
+        return None
     v = spec_of(name, value)
     if v == "gemini":
         return "GEMINI_API_KEY"
     return (PROVIDERS.get(v.partition(":")[0]) or (None, None))[1]
+
+
+def _own(name):
+    k = KEY_OF[name]
+    return config.MODEL_KEYS.get(k) if k in config.MODEL_KEYS else config.API_KEYS.get(k, "")
+
+
+def key(name, spec=None):
+    """The API key the model `name` calls with: its own, else its provider's (.env). "" when there is none."""
+    own = _own(name)
+    if own:
+        return own
+    var = provider_key(name, spec if spec is not None else getattr(config, name))
+    return config.API_KEYS.get(var, "") if var else ""
 
 
 def masked(value):
@@ -115,25 +137,28 @@ def masked(value):
 
 
 def view(c):
-    """What the screen shows: each model and key with the value in effect, where it comes from (UI or .env), who
-    saved it; keys only masked."""
+    """One row per model, for the screen: the model in effect and where it comes from (UI or .env); its own key
+    (masked) and where it comes from, else the provider key it falls back to."""
     rows = saved(c)
-
-    def one(name, secret):
-        r = rows.get(name)
-        value = r["value"] if r else BASE[name]
-        return {"name": name, "value": masked(value) if secret else value, "set": bool(value),
-                "from": "UI" if r else (".env" if BASE[name] else None),
-                "by": r["updated_by"] if r else None, "at": r["updated_at"] if r else None,
-                "env": (masked(BASE[name]) if secret else BASE[name]) or None}
-    keys = [{**one(n, True), "what": what, "provider": p} for n, what, p in KEYS]
-    have = {k["name"]: k["set"] for k in keys}
-    models = []
-    for n, what, kind in MODELS:
-        m = one(n, False)
-        need = key_for(n, m["value"]) if m["value"] else None
-        models.append({**m, "what": what, "kind": kind, "key": need, "key_set": have.get(need, True) if need else True})
-    return {"models": models, "api_keys": keys}
+    out = []
+    for name, key_name, what, does in MODELS:
+        m, k = rows.get(name), rows.get(key_name)
+        value = m["value"] if m else BASE[name]
+        own = k["value"] if k else BASE[key_name]
+        shared = provider_key(name, value) if value else None
+        shared_val = config.API_KEYS.get(shared, "") if shared else ""
+        out.append({
+            "name": name, "what": what, "does": does, "value": value, "fixed": FIXED.get(name),
+            "from": "UI" if m else (".env" if BASE[name] else None), "by": m and m["updated_by"],
+            "at": m and m["updated_at"], "env": BASE[name] or None,
+            "key_name": key_name, "key": masked(own),
+            "key_from": "UI" if k else (".env" if BASE[key_name] else None),
+            "key_by": k and k["updated_by"], "key_at": k and k["updated_at"],
+            "shared": shared, "shared_key": masked(shared_val),
+            "needs_key": name in FIXED or bool(shared),
+            "has_key": bool(own or shared_val),
+        })
+    return out
 
 
 def save(c, name, value, by):
@@ -143,7 +168,7 @@ def save(c, name, value, by):
     if not (by or "").strip():
         raise ValueError("say who you are")
     value = (value or "").strip()
-    if name in {n for n, _, _ in MODELS}:
+    if name in KEY_OF:
         why = check_model(name, value)
         if why:
             raise ValueError(why)
@@ -157,20 +182,24 @@ def save(c, name, value, by):
 
 
 def check_key(name):
-    """Does the provider accept the key in effect? Asks its model list (GET /models: no tokens). (ok, what it says)."""
+    """Does the model's provider accept the key it calls with, and does that account have the model? Asks the
+    provider's model list (GET /models: no tokens). (True / False / None when it can't tell, what it says)."""
     import httpx
     from common.models.openai_vlm import PROVIDERS
     refresh(force=True)
-    key = config.API_KEYS.get(name, "")
-    if not key:
-        return False, "no key set"
-    provider = next((p for n, _, p in KEYS if n == name), None)
-    if name == "GEMINI_API_KEY":
-        url, headers = f"{config.GEMINI_BASE_URL}/models?key={key}", {}
-    elif provider in PROVIDERS:
-        url, headers = f"{PROVIDERS[provider][0]}/models", {"Authorization": f"Bearer {key}"}
+    if name in FIXED:
+        return None, f"{FIXED[name]} can't be checked from here"
+    spec = spec_of(name, getattr(config, name))
+    k = key(name, spec)
+    if not k:
+        return False, "no API key for this model"
+    if spec == "gemini":
+        url, headers, model = f"{config.GEMINI_BASE_URL}/models?key={k}", {}, config.GEMINI_MODEL
+    elif spec.partition(":")[0] in PROVIDERS:
+        provider, _, model = spec.partition(":")
+        url, headers = f"{PROVIDERS[provider][0]}/models", {"Authorization": f"Bearer {k}"}
     else:
-        return None, "this provider can't be checked from here"
+        return None, "this model's provider can't be checked from here"
     try:
         r = httpx.get(url, headers=headers, timeout=20)
     except Exception as e:
@@ -179,5 +208,9 @@ def check_key(name):
         return False, "the provider refused this key"
     if r.status_code >= 400:
         return None, f"the provider answered {r.status_code}: can't tell from here"
-    n = len((r.json() or {}).get("data") or (r.json() or {}).get("models") or [])
-    return True, f"accepted ({n} models available)" if n else "accepted"
+    body = r.json() or {}
+    ids = {str(m.get("id") or m.get("name") or "").split("/")[-1]
+           for m in (body.get("data") or body.get("models") or []) if isinstance(m, dict)}
+    if ids and model.split("/")[-1] not in ids:
+        return False, f"the key works, but {model} isn't in this account's model list"
+    return True, f"the key works and {model} is available" if ids else "the key works"

@@ -46,12 +46,13 @@ def _where(spec):
     return base + "/chat/completions", key_var, name
 
 
-def _post(messages, model=None):
-    """model: another model for a text-only task (the knowledge teacher, the product matching)."""
+def _post(messages, model=None, role="TEACHER_MODEL"):
+    """model: another model for a text-only task (the knowledge teacher, the product matching); role: the model
+    setting it is for, whose own API key it calls with (else its provider's)."""
     url, key_var, name = _where(model or MODEL)
-    key = config.API_KEYS.get(key_var) if key_var else ""
+    key = settings.key(role, model or MODEL) if key_var else ""
     if key_var and not key:
-        raise RuntimeError(f"no {key_var}: set it on Teknis → Model & kunci API, or in .env")
+        raise RuntimeError(f"no API key for {role}: set it on Teknis → Model & kunci API, or {key_var} in .env")
     headers = {"Authorization": f"Bearer {key}"} if key else {}
     t0 = time.time()
     for attempt in range(5):
@@ -66,16 +67,16 @@ def _post(messages, model=None):
     raise RuntimeError(f"{provider_of(model or MODEL)} unavailable (HTTP {r.status_code}) after retries")
 
 
-def ask_text(prompt, model):
+def ask_text(prompt, model, role="WIKI_TEACHER_MODEL"):
     """(parsed JSON answer, meta) from a text model."""
     messages = [{"role": "user", "content": prompt}]
-    text, meta = _post(messages, model)
+    text, meta = _post(messages, model, role)
     try:
         return parse(text), meta
     except ValueError:
         messages += [{"role": "assistant", "content": text},
                      {"role": "user", "content": "Answer again with ONLY the JSON object, nothing else."}]
-        text, meta = _post(messages, model)
+        text, meta = _post(messages, model, role)
         return parse(text), meta
 
 

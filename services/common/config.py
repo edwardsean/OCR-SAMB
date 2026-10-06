@@ -93,6 +93,10 @@ VF_QUOTA_TZ = _str("VF_QUOTA_TZ", "America/Los_Angeles")   # the day the provide
 # API keys of the model providers (empty: that provider isn't used)
 API_KEYS = {name: _str(name) for name in ("GROQ_API_KEY", "OPENROUTER_API_KEY", "ZAI_API_KEY", "MISTRAL_API_KEY",
                                           "DASHSCOPE_API_KEY", "GEMINI_API_KEY", "TYPESAFE_API_KEY")}
+# A model's own key (2026-10-06): used instead of its provider's key above when set (the Teknis screen "Model &
+# kunci API" can set them too). Empty: the provider's key.
+MODEL_KEYS = {name: _str(name) for name in ("VF_AI_OCR_API_KEY", "VF_AI_MAP_API_KEY", "WIKI_TEACHER_API_KEY",
+                                            "TEACHER_API_KEY", "MATCH_API_KEY")}
 GEMINI_API_KEY = API_KEYS["GEMINI_API_KEY"]
 ZAI_API_KEY = API_KEYS["ZAI_API_KEY"]
 
