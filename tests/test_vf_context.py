@@ -22,6 +22,8 @@ def test_a_proposal_built_on_an_older_context_is_refused():
     transaction that is rolled back, so the real contexts are untouched."""
     with psycopg.connect(config.required("DATABASE_URL"), row_factory=dict_row) as c:
         try:
+            # a brand-new database has no context yet: the seed first (rolled back with the rest)
+            context.ensure(c, classify.JEV_QUESTION["doc_type"]["criteria"], classify.KEYWORDS, classify.JEV_TYPES)
             now = c.execute("SELECT version, content FROM staging.context_version WHERE status='active'").fetchone()
             a = context.propose(c, now["content"], now["version"], "test", "A")
             b = context.propose(c, now["content"], now["version"], "test", "B")
