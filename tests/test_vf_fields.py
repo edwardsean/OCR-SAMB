@@ -45,9 +45,12 @@ def test_every_line_column_maps_once_with_the_same_kind():
 @pytest.mark.skipif(not os.environ.get("MAIN_DATABASE_URL"), reason="needs v1's database (vlm-first runtime)")
 def test_project_lift_round_trip_on_v1_readings():
     with psycopg.connect(config.required("MAIN_DATABASE_URL"), row_factory=dict_row) as m:
+        if not m.execute("SELECT to_regclass('staging.page') AS t").fetchone()["t"]:
+            pytest.skip("needs v1's readings: v1's database is empty here (a fresh clone)")
         rows = m.execute("""SELECT page_no, doc_type::text AS t, fields FROM staging.page
                             WHERE extract_status='done' AND fields <> '{}'::jsonb""").fetchall()
-    assert rows
+    if not rows:
+        pytest.skip("needs v1's readings: none in v1's database")
     for r in rows:
         f = {k: v for k, v in r["fields"].items()}
         back = project(lift(f, r["t"]), r["t"])

@@ -60,6 +60,8 @@ def test_a_scan_and_its_pages_answer():
 def test_orders_answer_with_what_the_review_screen_shows():
     from api import app
     sid = _scan_with_orders()
+    if not sid:
+        pytest.skip("needs a scan with orders: none in this database yet")
     d = get("/orders", batch=sid)
     assert d["batch"] == sid and {r["sor_no"] for r in d["rows"]} == {r["sor_no"] for r in app.review_list(sid)}
     sor = d["rows"][0]["sor_no"]

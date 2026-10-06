@@ -1,6 +1,5 @@
 """vlm-first: the cloned pages point at the same original images as v1, labels keep v1's pile,
 and v1's database can only be read from here."""
-import hashlib
 import os
 
 import psycopg
@@ -9,8 +8,9 @@ from psycopg.rows import dict_row
 
 from common import config, db
 
-pytestmark = pytest.mark.skipif(os.environ.get("PIPELINE") != "vlm-first", reason="vlm-first only")
-BID = "b-" + hashlib.sha256(open("/data/sample.pdf", "rb").read()).hexdigest()[:10]
+pytestmark = [pytest.mark.skipif(os.environ.get("PIPELINE") != "vlm-first", reason="vlm-first only")]
+from _sample import BID, needs_sample  # noqa: E402  (skips without the sample scan)
+pytestmark.append(needs_sample)
 
 
 def main_db():

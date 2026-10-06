@@ -35,7 +35,7 @@ A good result looks like `361 passed, 16 skipped`. The skipped ones belong to v1
 
 What they need:
 - **The stack running.** A test that needs something missing is skipped or fails with a clear message.
-- **The 288-page sample scan** at `testdata/sample.pdf` (or `SAMPLE_PDF`). It is real customer data and not in git.
+- **The 288-page sample scan** at `testdata/sample.pdf` (or `sample.pdf` in the folder `SAMPLE_DIR` names). It is real customer data and not in git; without it, the tests that read it skip.
 - **The sample's pages already read** into the database (scan `b-4bab9b736d`). On a fresh database those tests fail.
   The rest still runs.
 - Nothing calls an AI model, and every test removes the rows it adds.

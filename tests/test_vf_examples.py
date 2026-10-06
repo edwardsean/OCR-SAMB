@@ -79,6 +79,8 @@ def test_a_correction_marked_on_the_paper_fixes_the_page_and_keeps_an_example(pa
 
 
 def test_the_viewer_shows_the_fields_and_the_region_api_answers():
+    import _data
+    _data.scan("b-c80bbbde4d")
     fix = httpx.get(f"{UI}/api/v1/scans/b-c80bbbde4d/pages/12", timeout=60).json()["fix"]
     assert "purchase_order_no" in [f["name"] for f in fix["fields"]]
     region = f"{UI}/api/v1/scans/b-c80bbbde4d/pages/12/region"

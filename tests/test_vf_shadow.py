@@ -28,6 +28,8 @@ def snapshot():
 
 
 def test_shadow_writes_nothing():
+    import _data
+    _data.scan(BID)
     from grouper import crosscheck
     before = snapshot()
     out = crosscheck.shadow(BID, show=lambda *_: None)
@@ -62,6 +64,8 @@ def test_fp_graded_as_ordered():
 def test_bundle_bends(monkeypatch):
     """Every value a passing bundle check used, bent at each digit: beyond the allowance it must stop passing. And the
     test itself catches a check that passes whatever it's given."""
+    import _data
+    _data.scan(BID)
     from grouper import crosscheck
     from api import app
     changed, missed = app._vf_bend_bundles(BID)

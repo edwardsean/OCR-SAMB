@@ -108,7 +108,12 @@ Then open:
 - the API's docs: <http://localhost:8002/docs>
 - the Status page: Teknis → Status sistem (every service should be green)
 
-**Keys** (in `.env`; `.env.example` lists them):
+Check it with the tests: `docker compose exec -e PYTHONPATH=/app rtm-api pytest -q tests/`. On a fresh clone about
+80 of them skip: they read the sample scan (`testdata/sample.pdf`) or stored orders, real customer documents that are
+not in git. None should fail.
+
+**Models and keys**: in `.env` (`.env.example` lists them), or later on Teknis → Model & kunci API, which overrides
+`.env` for each model:
 - the AI OCR's provider key for `VF_AI_OCR` (e.g. `DASHSCOPE_API_KEY` for `dashscope:qwen3-vl-plus`);
 - `TYPESAFE_API_KEY` for Jev;
 - `ZAI_API_KEY` for the teacher.
