@@ -183,6 +183,13 @@ export type ReviewDoc = {
   page: number; type: string; kind: string; pages: number[]; outcome: string | null; head: FieldEntry[];
   kept: FieldEntry[]; rows: DocRow[];
 };
+/** A customer's row (PO or receipt) not paired with a line of SAMB's order yet; ai = the AI's suggested SO line. */
+export type PairRow = {
+  page: number; i: number; type: string; desc: string | null; code: string | null; qty: string | null; uom: string | null;
+  ai: number | null; why: string | null;
+};
+/** The product matcher's run on one order (POST/GET /orders/{sor}/pair-proposals). */
+export type PairRun = { state: "idle" | "running" | "done" | "failed"; rows?: number; proposed?: number; calls?: number; error?: string };
 export type Order = {
   batch: string; sor: string;
   bundle: {
@@ -208,6 +215,8 @@ export type Order = {
   multi: boolean;
   /** the upload batches its pages came in */
   uploads: UploadRef[];
+  /** the customer's rows not paired with SAMB's lines yet, with the AI's suggestions */
+  pairing: PairRow[];
 };
 
 export type PubRow = {

@@ -76,8 +76,8 @@ TESTDATA = config.env("TESTDATA_DIR") or next(
 NAV = [("/", "Batch", "batches_need"), ("/upload", "Unggah batch", None)]      # as the web app's top bar
 ALL_BATCHES = [("/review", "Periksa order"), ("/label", "Jenis halaman"), ("/bundles", "Berkas per SOR"),
                ("/published", "Data terkirim")]                                  # the web app's screens over every batch
-TECH = [("/status", "Status sistem"), ("/settings", "Model & kunci API"), ("/fields", "Daftar field"),
-        ("/labels", "Semua label")]
+TECH = [("/status", "Status sistem"), ("/settings", "Model & kunci API"), ("/product-codes", "Kode produk pelanggan"),
+        ("/fields", "Daftar field"), ("/labels", "Semua label")]
 if VF:
     TECH[2:2] = [("/context", "Konteks Jev"), ("/knowledge", "Pengetahuan AI")]
 
@@ -357,6 +357,66 @@ def home_view():
     todo = {k: {"n": sum(s[k] for s in scans), "batch": first(k)} for k in ("need", "unsure", "ready", "held")}
     return {"scans": scans, "uploads": uploads_view(8), "todo": todo,
             "busy": [s for s in scans if s["status"] in ("splitting", "queued", "reading") or s["waiting_ai"] or s["waiting"]]}
+
+
+# ---------------------------------------------------------------------------------------------- Kode produk pelanggan
+
+def _product_codes(c, chain=None):
+    return c.execute("""SELECT m.*, p.customer_name AS chain_name FROM satellite.product_code_map m
+                          LEFT JOIN satellite.customer_profile p ON p.customer_code = m.customer_code
+                         WHERE (%s::text IS NULL OR m.customer_code = %s)
+                         ORDER BY p.customer_name, m.customer_code, m.customer_item_code""", (chain, chain)).fetchall()
+
+
+@app.get("/product-codes", response_class=HTMLResponse, include_in_schema=False)
+def page_product_codes(request: Request, chain: str | None = None, msg: str | None = None):
+    """The master data the product matching builds (2026-10-06): each customer's product code paired with SAMB's
+    material code, one row per pair a person confirmed on an order; and the AI's suggestions still waiting there."""
+    with db.connect() as c:
+        rows = _product_codes(c, chain or None)
+        chains = c.execute("""SELECT m.customer_code, p.customer_name, count(*) AS n, max(m.confirmed_at) AS last
+                                FROM satellite.product_code_map m
+                                LEFT JOIN satellite.customer_profile p ON p.customer_code = m.customer_code
+                               GROUP BY 1, 2 ORDER BY 2, 1""").fetchall()
+        waiting = c.execute("""SELECT l.sor_no, min(l.batch_id) AS batch, count(*) AS n, max(l.proposed_at) AS at,
+                                      s.customer_name
+                                 FROM staging.line_match l LEFT JOIN satellite.sor s ON s.sor_no = l.sor_no
+                                WHERE l.how = 'ai' AND l.status = 'proposed'
+                                GROUP BY l.sor_no, s.customer_name ORDER BY 4 DESC""").fetchall()
+    return templates.TemplateResponse("product_codes.html", ctx(request, rows=rows, chains=chains, chain=chain,
+                                                                waiting=waiting, msg=msg))
+
+
+@app.get("/product-codes.csv", include_in_schema=False)
+def product_codes_csv(chain: str | None = None):
+    import csv
+    import io
+    out = io.StringIO()
+    w = csv.writer(out)
+    w.writerow(["customer_chain", "customer_name", "customer_item_code", "customer_barcode", "samb_material_code",
+                "description", "confirmed_by", "confirmed_at"])
+    with db.connect() as c:
+        for r in _product_codes(c, chain or None):
+            w.writerow([r["customer_code"], r["chain_name"] or "", r["customer_item_code"], r["customer_barcode"] or "",
+                        r["samb_material_code"], r["description"] or "", r["confirmed_by"] or "",
+                        r["confirmed_at"].isoformat() if r["confirmed_at"] else ""])
+    return Response(out.getvalue(), media_type="text/csv",
+                    headers={"Content-Disposition": f'attachment; filename="kode-produk-{chain or "semua"}.csv"'})
+
+
+@app.post("/product-codes/delete", include_in_schema=False)
+def product_codes_delete(customer_code: str = Form(...), customer_item_code: str = Form(...), by: str = Form("")):
+    """A wrong pair taken out of the master data (the next order pairs that product again: by its numbers, the AI's
+    suggestion and a person)."""
+    from urllib.parse import quote
+    if not by.strip():
+        return RedirectResponse(f"/product-codes?msg={quote('Tulis nama Anda dulu.')}", status_code=303)
+    with db.connect() as c:
+        c.execute("DELETE FROM satellite.product_code_map WHERE customer_code=%s AND customer_item_code=%s",
+                  (customer_code, customer_item_code))
+    print(f"product code {customer_code}/{customer_item_code} removed by {by.strip()}", flush=True)
+    return RedirectResponse(f"/product-codes?chain={quote(customer_code)}&msg={quote(f'{customer_item_code} dihapus.')}",
+                            status_code=303)
 
 
 # ---------------------------------------------------------------------------------------------- Model & kunci API
@@ -2249,6 +2309,16 @@ def review_view(batch, sor):
                           "head": head, "kept": kept, "rows": rows})
     ok, left = crosscheck.can_approve(checks, {n: pages[n] for n in pages}, where)
     items = _open_items(batch, sor, docs, pages, checks, lines, pairs, entry, {"received": got, "order": order})
+    pairing = []                     # the customer's rows not paired with a SAMB line yet, and the AI's suggestions
+    for n, t, rws in rows_in:
+        for r in rws:
+            m = pairs.get((n, r["i"])) or {}
+            if r["bonus"] or m.get("status") not in ("none", "proposed"):
+                continue
+            ai = lines[m["line"]] if m.get("status") == "proposed" and m.get("line") is not None else None
+            pairing.append({"page": n, "i": r["i"], "type": t, "desc": r["desc"], "code": r["code"], "qty": r["qty"],
+                            "uom": r["uom"], "ai": ai and ai["line_no"],
+                            "why": (m.get("why") or "").split(": ", 1)[-1] if ai else None})
     flagged = {f["page"] for i in items for f in i.get("fix") or []} | {i["page"] for i in items if i.get("page")}
     strip = [{"page": n, "type": t, "kind": KIND.get(t, t), "first": n == ps[0],
               "thumb": f"/img/{pages[n]['thumb_upright_path']}" if (pages.get(n) or {}).get("thumb_upright_path") else None,
@@ -2270,7 +2340,7 @@ def review_view(batch, sor):
             "labels": {**crosscheck.LABEL, **bahasa.CHECK},
             "reasons": (b["checks"] or {}).get("reasons") or [], "documents": documents, "can_approve": ok,
             "left": left, "accept_reasons": ACCEPT_REASONS, "none_reasons": NONE_REASONS, "open_items": items,
-            "strip": strip, "passed": passed, "where": {str(k): w for k, w in where.items()},
+            "strip": strip, "passed": passed, "where": {str(k): w for k, w in where.items()}, "pairing": pairing,
             "uploads": _order_uploads(where),
             "multi": len({w["batch"] for w in where.values()}) > 1,
             "calibration": _calibration_view(so, checks)}

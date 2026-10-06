@@ -423,6 +423,72 @@ def propose(bid, sor=None):
                   f"{len(kept)} kept after the number checks · {meta.get('ms')} ms", flush=True)
 
 
+def order_docs(c, sor):
+    """One order's PO and receipt documents from every scan they came in (grouper/members.py): ([(order page, doc
+    type, rows)], {order page: (scan, page)}, {(order page, row): staging.line_match row}). Pages are numbered within
+    the order, so two scans' page 1 never collide."""
+    from grouper import members
+    b = c.execute("""SELECT id FROM staging.bundle WHERE sor_no=%s ORDER BY (status = 'published'), id DESC LIMIT 1""",
+                  (sor,)).fetchone()
+    if not b:
+        return [], {}, {}
+    rows = members.of_bundle(c, b["id"])
+    to_key, where = members.keys(rows)
+    docs = []
+    for r in rows:
+        if r["t"] not in ("PO", "TTG"):
+            continue
+        f = c.execute("SELECT fields FROM staging.page WHERE batch_id=%s AND page_no=%s",
+                      (r["batch_id"], r["page_from"])).fetchone()
+        docs.append((to_key[(r["batch_id"], r["page_from"])], r["t"], rows_of(r["t"], f and f["fields"])))
+    decisions = {(to_key[(d["batch_id"], d["page_no"])], d["row_index"]): d for d in c.execute(
+        "SELECT * FROM staging.line_match WHERE batch_id = ANY(%s)", (sorted({r["batch_id"] for r in rows}),))
+        if (d["batch_id"], d["page_no"]) in to_key}
+    return docs, {k: (w["batch"], w["page"]) for k, w in where.items()}, decisions
+
+
+def propose_order(sor, show=print):
+    """The "Minta saran AI" button (2026-10-06): AI proposals for one order's rows that nothing else paired (a
+    person, the product map, the numbers, the amount, the words), across every scan the order came in. Stored as
+    'proposed': the checks never use them; a person's confirmation on the order's page is what pairs a row and fills
+    the product map, so the same product pairs by itself next time. Returns {rows, proposed, calls}; a model that
+    can't be reached raises (the button says so)."""
+    from common.models import teacher
+    with db.connect() as c:
+        docs, where, decisions = order_docs(c, sor)
+        so = satellite.load(c, [sor]).get(verify.flat(sor))
+        lines = satellite.items(c, sor)
+        pmap = load_map(c, so and so.get("customer_parent"))
+    m = match(docs, lines, pmap, decisions)
+    out = {"rows": 0, "proposed": 0, "calls": 0}
+    for page, dt, rows in docs:
+        todo = [r for r in rows if m[(page, r["i"])]["status"] == "none"]
+        if not todo or not lines:
+            continue
+        if out["calls"] and teacher.provider_of(AI_MODEL) == "zai":
+            time.sleep(PAUSE)                                # Z.ai's free tier refuses bursts
+        out["calls"] += 1
+        out["rows"] += len(todo)
+        answer, meta = teacher.ask_text(_prompt(dt, todo, lines), AI_MODEL, role="MATCH_MODEL")
+        kept = checked(dt, todo, lines, answer.get("pairs"))
+        bid, n = where[page]
+        with db.connect() as c:
+            for i, line_no, why in kept:
+                r = next(x for x in todo if x["i"] == i)
+                c.execute("""INSERT INTO staging.line_match (batch_id, page_no, row_index, sor_no, so_line_no, how,
+                               status, reason, customer_code, ean)
+                             VALUES (%s, %s, %s, %s, %s, 'ai', 'proposed', %s, %s, %s)
+                             ON CONFLICT (batch_id, page_no, row_index) DO UPDATE SET so_line_no = EXCLUDED.so_line_no,
+                               reason = EXCLUDED.reason, status = 'proposed', proposed_at = now()
+                             WHERE staging.line_match.how = 'ai'""",
+                          (bid, n, i, sor, line_no, f"{meta.get('model')}: {why}", r["code"] or None,
+                           min(r["barcodes"]) if r["barcodes"] else None))
+        out["proposed"] += len(kept)
+        show(f"{sor} {dt} {bid} p{n}: {len(todo)} rows to pair, the model paired {len(answer.get('pairs') or [])}, "
+             f"{len(kept)} kept after the number checks · {meta.get('ms')} ms")
+    return out
+
+
 if __name__ == "__main__":
     if sys.argv[1] == "propose":
         propose(sys.argv[2], sys.argv[3] if len(sys.argv) > 3 else None)

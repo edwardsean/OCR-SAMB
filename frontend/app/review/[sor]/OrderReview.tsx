@@ -14,7 +14,7 @@ import { SpreadProvider, SpreadView, useFollow, useSpot, type SpreadPage } from 
 import { useReviewer } from "@/components/useReviewer";
 import { useWords } from "@/components/Words";
 import {
-  AcceptForm, ApproveButton, CalibrateForm, CellConfirm, FieldFix, PairButtons, PairForm, QtyForm, ReviewCtx,
+  AcceptForm, ApproveButton, CalibrateForm, CellConfirm, FieldFix, PairButtons, PairForm, PairingBox, QtyForm, ReviewCtx,
   SmallConfirm, useReview,
 } from "./forms";
 
@@ -311,6 +311,7 @@ export default function OrderReview({ v, pub, fixed, back }: {
                     )}
                   </div>
                   {v.passed.length > 0 && <p className="passed"><b>Sudah sesuai:</b> {v.passed.join(", ")}.</p>}
+                  <PairingBox rows={v.pairing ?? []} />
                 </div>
                 <SpreadView pages={pages} label="Halaman asli order ini" hint="Arahkan kursor ke sebuah baris untuk melihat letaknya di halaman" />
               </div>

@@ -5,6 +5,9 @@ actions.py. Documented for people in docs/api.md, and live at /docs (generated f
 Reads are GET, a person's decisions are POST with a JSON body (an upload is multipart). A refused action answers
 with its status and {"error", ...}. Values are as stored (amounts are numbers, dates ISO strings); the wording for
 people (bahasa.py) comes from /words, and sentences other modules produce are translated here."""
+import threading
+from datetime import datetime, timezone
+
 from fastapi import APIRouter, File, Form, Query, UploadFile
 from fastapi.encoders import jsonable_encoder
 from fastapi.responses import JSONResponse, Response
@@ -399,6 +402,51 @@ def confirm(sor: str, body: Confirm):
 @router.post("/orders/{sor}/pairings", tags=[ORDERS], summary="Pair a customer row with an SO line")
 def pair(sor: str, body: Pair):
     return _run(actions.pair, body.batch, sor, body.page, body.row, body.line_no, body.by, body.note)
+
+
+class AskPairs(BaseModel):
+    by: str = _by()
+
+
+_PAIRING = {}                          # sor -> the product matcher's run for that order (this API is one process)
+_PAIRING_LOCK = threading.Lock()
+
+
+def _pairing(sor):
+    from grouper import matching
+    from common import settings
+    try:
+        settings.refresh()
+        got = matching.propose_order(sor, show=lambda *a: print(*a, flush=True))
+        state = {"state": "done", **got}
+    except Exception as e:
+        state = {"state": "failed", "error": f"{type(e).__name__}: {e}"[:300]}
+    with _PAIRING_LOCK:
+        _PAIRING[sor] = {**_PAIRING.get(sor, {}), **state, "finished": datetime.now(timezone.utc).isoformat()}
+
+
+@router.post("/orders/{sor}/pair-proposals", tags=[ORDERS], summary="Ask the AI which SAMB line each unpaired row is")
+def ask_pairs(sor: str, body: AskPairs):
+    """The product matcher on this order's rows that nothing else paired (it calls the AI: a few thousand tokens per
+    document), in the background: 202 at once, then GET this path for its progress. Its answers become suggestions
+    on the order's page; a person's confirmation (POST …/pairings) is what pairs a row and fills the product-code map.
+    409 while a run for this order is going."""
+    if not body.by.strip():
+        return JSONResponse({"error": "say who you are"}, status_code=400)
+    with _PAIRING_LOCK:
+        if (_PAIRING.get(sor) or {}).get("state") == "running":
+            return JSONResponse(_PAIRING[sor], status_code=409)
+        _PAIRING[sor] = {"state": "running", "by": body.by.strip(), "started": datetime.now(timezone.utc).isoformat()}
+    print(f"pair proposals for {sor}, asked by {body.by.strip()}", flush=True)
+    threading.Thread(target=_pairing, args=(sor,), daemon=True).start()
+    return JSONResponse(_PAIRING[sor], status_code=202)
+
+
+@router.get("/orders/{sor}/pair-proposals", tags=[ORDERS], summary="The product matcher's progress on this order")
+def pair_progress(sor: str):
+    """{state: idle | running | done | failed, rows, proposed, calls, error}."""
+    with _PAIRING_LOCK:
+        return _ok(_PAIRING.get(sor) or {"state": "idle"})
 
 
 @router.post("/orders/{sor}/acceptances", tags=[ORDERS], summary="Accept a difference, with a reason")

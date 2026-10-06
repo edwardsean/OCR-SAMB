@@ -1,0 +1,75 @@
+{% extends "base.html" %}
+{% block title %}Kode produk pelanggan{% endblock %}
+{% block main %}
+  <section class="head">
+    <h1>Kode produk pelanggan</h1>
+    <p class="lede">Each customer's product code and the SAMB material it is, from pairs people confirmed on orders. A product
+      listed here pairs by itself on the customer's next orders.</p>
+  </section>
+
+  {% if msg %}<div class="alert warn" style="padding:10px 14px;margin:10px 0">{{ msg }}</div>{% endif %}
+
+  {% if waiting %}
+  <section>
+    <h2>AI suggestions waiting <span class="count">{{ waiting|length }} order{{ '' if waiting|length == 1 else 's' }}</span></h2>
+    <table class="grid">
+      <thead><tr><th>Order</th><th>Customer</th><th class="num">Suggestions</th><th>Asked</th></tr></thead>
+      <tbody>{% for w in waiting %}
+        <tr><td><a href="/review/{{ w.sor_no }}?batch={{ w.batch }}#pairing">{{ w.sor_no }}</a></td><td>{{ w.customer_name or '—' }}</td>
+          <td class="num">{{ w.n }}</td><td class="muted">{{ w.at|tgl }}</td></tr>
+      {% endfor %}</tbody>
+    </table>
+  </section>
+  {% endif %}
+
+  <section>
+    <div class="sec-head" style="display:flex;gap:16px;align-items:baseline;flex-wrap:wrap">
+      <h2>Pairs <span class="count">{{ rows|length }}</span></h2>
+      <form method="get" action="/product-codes" class="small">
+        <select name="chain" onchange="this.form.submit()">
+          <option value="">every customer</option>
+          {% for c in chains %}<option value="{{ c.customer_code }}" {{ 'selected' if chain == c.customer_code }}>{{ c.customer_name or c.customer_code }} ({{ c.n }})</option>{% endfor %}
+        </select>
+      </form>
+      <a class="small" href="/product-codes.csv{{ '?chain=' ~ chain if chain else '' }}">download CSV</a>
+    </div>
+    {% if rows %}
+    <p class="small">Your name <input class="js-name" placeholder="to remove a pair" size="16"></p>
+    <table class="grid">
+      <thead><tr><th>Customer</th><th>Their code</th><th>Barcode</th><th>SAMB material</th><th>Confirmed</th><th></th></tr></thead>
+      <tbody>{% for r in rows %}
+        <tr><td class="small">{{ r.chain_name or r.customer_code }}</td><td class="mono">{{ r.customer_item_code }}</td>
+          <td class="mono small">{{ r.customer_barcode or '—' }}</td>
+          <td><span class="mono">{{ r.samb_material_code }}</span> <span class="small muted">{{ r.description or '' }}</span></td>
+          <td class="small muted">{{ r.confirmed_by or '' }}{% if r.confirmed_at %}, {{ r.confirmed_at|tgl }}{% endif %}</td>
+          <td><form method="post" action="/product-codes/delete" class="js-del">
+              <input type="hidden" name="customer_code" value="{{ r.customer_code }}">
+              <input type="hidden" name="customer_item_code" value="{{ r.customer_item_code }}">
+              <input type="hidden" name="by" class="js-by"><button class="linkbtn" type="submit">remove</button></form></td></tr>
+      {% endfor %}</tbody>
+    </table>
+    {% else %}
+    <p class="muted">None yet. Pairs appear here when someone confirms which SAMB line a customer's row is, on an order's
+      page (box "Barang yang belum dikenali").</p>
+    {% endif %}
+  </section>
+
+  <script>
+    (function () {
+      var input = document.querySelector('.js-name'), n = '';
+      try { n = localStorage.getItem('rv-name') || ''; } catch (e) {}
+      if (input) {
+        input.value = n;
+        input.addEventListener('input', function () { try { localStorage.setItem('rv-name', input.value); } catch (e) {} });
+      }
+      document.querySelectorAll('form.js-del').forEach(function (f) {
+        f.addEventListener('submit', function (e) {
+          var who = (input && input.value.trim()) || '';
+          if (!who) { e.preventDefault(); input.focus(); input.placeholder = 'type your name first'; return; }
+          if (!confirm('Remove this pair? The next order pairs the product again.')) { e.preventDefault(); return; }
+          f.querySelector('.js-by').value = who;
+        });
+      });
+    })();
+  </script>
+{% endblock %}
