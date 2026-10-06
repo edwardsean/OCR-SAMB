@@ -13,7 +13,7 @@ from worker import classify
 
 
 def seed():
-    return context.seed(classify.JEV_QUESTION["doc_type"]["criteria"], classify.KEYWORDS, classify.JEV_TYPES)
+    return context.seed_content()
 
 
 @pytest.mark.skipif(os.environ.get("PIPELINE") != "vlm-first", reason="vlm-first only")
@@ -22,6 +22,9 @@ def test_a_proposal_built_on_an_older_context_is_refused():
     transaction that is rolled back, so the real contexts are untouched."""
     with psycopg.connect(config.required("DATABASE_URL"), row_factory=dict_row) as c:
         try:
+            # a brand-new database has no context yet: the seed first (rolled back with the rest)
+            from common import seed as seeding
+            seeding.load(c)
             now = c.execute("SELECT version, content FROM staging.context_version WHERE status='active'").fetchone()
             a = context.propose(c, now["content"], now["version"], "test", "A")
             b = context.propose(c, now["content"], now["version"], "test", "B")

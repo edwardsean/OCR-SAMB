@@ -2,7 +2,6 @@
 state the pipeline can leave it in: extracted, extraction failed, unsure, faint, rotated. Catches errors in the view
 functions and the Teknis templates that the logic tests can't see."""
 import os
-import hashlib
 
 import httpx
 import pytest
@@ -10,7 +9,8 @@ import pytest
 from common import db
 
 API = os.environ.get("API_URL", "http://localhost:8000")
-BID = "b-" + hashlib.sha256(open("/data/sample.pdf", "rb").read()).hexdigest()[:10]
+from _sample import BID, needs_sample  # noqa: E402  (skips without the sample scan)
+pytestmark = needs_sample
 
 
 def sample_pages():

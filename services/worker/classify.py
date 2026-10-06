@@ -16,12 +16,18 @@ import time
 
 import httpx
 
-from common import config
+from common import config, settings
 from worker import layout
 
 CLASSIFY_VERSION = 2      # 2: Jev leads; FP needs a second witness; title words fixed (2026-09-24)
 JEV_URL = config.TYPESAFE_URL
 JEV_MODEL = config.JEV_MODEL
+
+
+@settings.on_change
+def _model_changed():
+    global JEV_MODEL
+    JEV_MODEL = config.JEV_MODEL
 LAYOUT_FP = 0.70          # calibrated on sample pages 1-32 (FP 0.74-0.85, others <= 0.63); a vote, never decisive alone
 JEV_ALONE = 0.85          # Jev decides alone at this confidence if no printed title contradicts it (simulated on all 288 pages)
 JEV_MIN = 0.50            # below this the docs say route to a human
@@ -123,7 +129,7 @@ def jev_vote(words, height, text, footer):
 
 
 def jev_ask(state, questions=None):
-    key = config.TYPESAFE_API_KEY
+    key = settings.key("JEV_MODEL")
     if not key:
         return {"skipped": "no TYPESAFE_API_KEY"}
     body = {"model": JEV_MODEL, "state": state, "questions": questions or JEV_QUESTION}   # vlm-first passes its own

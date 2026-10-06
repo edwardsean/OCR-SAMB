@@ -3,15 +3,15 @@ every WRONG value is flagged unconfirmed. Accuracy is measured and shown, not ga
 import os
 
 import pytest
-import hashlib
 import time
 
 import httpx
 
-pytestmark = pytest.mark.skipif(os.environ.get("PIPELINE") == "vlm-first", reason="v1 acceptance; vlm-first has its own")
+pytestmark = [pytest.mark.skipif(os.environ.get("PIPELINE") == "vlm-first", reason="v1 acceptance; vlm-first has its own")]
 
 UI = os.environ.get("API_URL", "http://localhost:8000")
-BID = "b-" + hashlib.sha256(open("/data/sample.pdf", "rb").read()).hexdigest()[:10]
+from _sample import BID, needs_sample  # noqa: E402  (skips without the sample scan)
+pytestmark.append(needs_sample)
 
 
 def test_phase4_acceptance():

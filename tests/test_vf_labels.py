@@ -164,14 +164,20 @@ def test_the_teacher_gets_a_second_try_told_why(batch, monkeypatch):
 
 
 def test_the_teacher_is_told_which_fields_pull_toward_another_type():
-    """Page 11 (DFI purchase order): DPP was found, FP lists it as always, PO doesn't list it at all."""
+    """Page 11 (DFI purchase order): DPP was found, FP lists it as always, PO didn't list it at all (the context before
+    that lesson; the seed has learned it since: "a PO usually prints DPP")."""
+    import copy
     from common import context
     from worker import classify, lesson
-    ctx = context.seed(classify.JEV_QUESTION["doc_type"]["criteria"], classify.KEYWORDS, classify.JEV_TYPES)
+    learned = context.seed_content()
+    ctx = copy.deepcopy(learned)
+    ctx["types"]["PO"]["fields"] = [f for f in ctx["types"]["PO"]["fields"] if f["name"] != "dpp"]
     state = {"found": {"dpp": "890,512.33", "ppn": "106,861.00", "total": "1,078,329.00", "po_number": "58423526"}}
-    facts = lesson.pulls(ctx, "PO", state, {"probabilities": {"PO": 0.86, "FP": 0.11, "TTG": 0.02}})
+    probs = {"probabilities": {"PO": 0.86, "FP": 0.11, "TTG": 0.02}}
+    facts = lesson.pulls(ctx, "PO", state, probs)
     assert facts == {"FP": {"weight": 0.11, "fields": {"dpp": "always"}}}      # ppn and total: PO lists them
     assert "dpp (always)" in lesson.prompt(ctx, "PO", None, state, {"probabilities": {"PO": 0.86, "FP": 0.11}})
+    assert lesson.pulls(learned, "PO", state, probs) == {}                    # learned: DPP pulls nowhere now
 
 
 def test_template_text_and_unprinted_titles_are_refused():

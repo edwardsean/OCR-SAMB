@@ -70,7 +70,7 @@ services:
     command: uvicorn api.app:app --host 0.0.0.0 --port 8000
     ports: ["${API_PORT:-8002}:8000"]
     volumes: [./services:/app, ./tests:/app/tests:ro, ./testdata:/app/testdata:ro, ./.env.example:/app/.env.example:ro,
-              "${SAMPLE_PDF:-./testdata/sample.pdf}:/data/sample.pdf:ro"]
+              "${SAMPLE_DIR:-./testdata}:/data:ro"]           # the sample scan, if you have it: <dir>/sample.pdf
     environment:
       <<: *pyenv
       WEB_URL: ${WEB_URL:-http://localhost:3002}        # where a browser opening the API's own address is sent

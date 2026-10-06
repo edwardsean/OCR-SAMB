@@ -16,7 +16,7 @@ def test_all_services_healthy():
 
 def test_schema_loaded():
     s = httpx.get(f"{UI}/api/status", timeout=30).json()
-    assert len(s["tables"]) == (34 if VF else 20), s["tables"]   # vf: + notice (018), reading_trial (019), extract_example (020), knowledge (021), job_run (025), upload (026)
+    assert len(s["tables"]) == (35 if VF else 20), s["tables"]   # vf: + notice (018), reading_trial (019), extract_example (020), knowledge (021), job_run (025), upload (026), setting (027)
     for t in ("satellite.sor", "satellite.sor_document", "satellite.doc_ttg",
               "staging.scan_batch", "staging.page", "staging.bundle"):
         assert t in s["tables"]

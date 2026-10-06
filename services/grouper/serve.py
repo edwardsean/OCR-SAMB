@@ -18,7 +18,7 @@ import json
 import time
 import traceback
 
-from common import health, queue
+from common import health, queue, settings
 
 POLL_S = 1.0
 
@@ -34,6 +34,7 @@ def round_(batches):
     """One round: group each batch once, then send what its bundles asked. A failure in one batch never stops the
     others (the next wake-up tries again)."""
     from grouper import group
+    settings.refresh()                          # the models and keys saved on the Teknis screen
     done = {}
     for bid in batches:
         try:

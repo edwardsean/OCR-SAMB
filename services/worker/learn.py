@@ -10,11 +10,13 @@
   teach    Stage 3: one correction at a time, the teacher (Z.ai GLM, text) writes one claim for it → a proposal →
            the gate. A second try when the first isn't kept; "needs pages" when no other stored page can prove it.
   propose  a person's edit → a proposal.
-  gate     replay a proposal on the stored pages its change touches, against what can be trusted (wiki.truth_of),
-           leave-one-out. A proposal from corrections marked on the paper becomes active by itself when it passes;
-           any other waits for a person on /knowledge.
+  gate     replay a proposal on the stored pages its change touches that have a known answer (wiki.truth_of: a
+           person's practice correction, or Satellite), at most wiki.TEST_PAGES of them, leave-one-out; pages with a
+           hidden-pile (exam) correction are replayed too and scored apart, never deciding. A proposal from
+           corrections marked on the paper becomes active by itself when it passes; any other waits for a person.
   activate a person approves (or the gate, for a marked one); the pages of that type are mapped again (apply).
-  apply    the active page again on the type's stored pages: what changed is re-checked and regrouped.
+  apply    the active page again on the type's stored pages that still need it (wiki.needs_tip: a field it names
+           isn't settled), reusing the test's answers: what changed is re-checked and regrouped.
   lint     a claim a person's later correction contradicts is taken out by itself (a 'lint' version), and what has no
            evidence is listed.
   regroup  after grouping: a page whose knowledge was chosen for another customer than its order's is done again.
@@ -27,13 +29,19 @@ import sys
 
 from psycopg.types.json import Json
 
-from common import config, context, customer, db, knowledge, satellite, transcript, wiki
+from common import config, context, customer, db, knowledge, satellite, settings, transcript, wiki
 from common.fields import DOCS, TYPE_MAP
 from common.verify import flat
 from worker import classify, vf
 from worker import main as v1
 
-TEACH_MODEL = config.WIKI_TEACHER_MODEL   # text, free on Z.ai (vf-teacher has the key)
+TEACH_MODEL = config.WIKI_TEACHER_MODEL   # text: a Z.ai model name, or provider:model (the Teknis screen)
+
+
+@settings.on_change
+def _teacher_changed():
+    global TEACH_MODEL
+    TEACH_MODEL = config.WIKI_TEACHER_MODEL
 TEACH_TRIES = 2          # the teacher gets a second try, told why its first claim wasn't kept
 
 
@@ -70,7 +78,7 @@ def labels(sos):
 
 
 def _ctx(c):
-    return context.ensure(c, classify.JEV_QUESTION["doc_type"]["criteria"], classify.KEYWORDS, classify.JEV_TYPES)[1]
+    return context.ensure(c)[1]
 
 
 def chain_of(c, bid, n, fields_all, qr, sos, known):
@@ -242,8 +250,9 @@ def _printed(blocks):
 
 def _scope(c, doc_type, bid=None):
     return c.execute("""SELECT p.batch_id, p.page_no, p.status, p.fields_all, p.mapping, p.qr_text, p.transcript,
-                               p.ocr_words, p.upright_path, b.sor_no, bd.bundle_id, b.status::text AS bundle_status
-                          FROM staging.page p
+                               p.ocr_words, p.upright_path, b.sor_no, bd.bundle_id, b.status::text AS bundle_status,
+                               s.received_at
+                          FROM staging.page p JOIN staging.scan_batch s ON s.id = p.batch_id
                           LEFT JOIN staging.document d ON d.batch_id=p.batch_id AND p.page_no BETWEEN d.page_from AND d.page_to
                           LEFT JOIN staging.bundle_document bd ON bd.document_id=d.id
                           LEFT JOIN staging.bundle b ON b.id=bd.bundle_id
@@ -261,6 +270,22 @@ def _confirmed(c, bid, n):
                          WHERE f.batch_id=%s AND f.page_no=%s""", (bid, n)).fetchall()
     return ({r["field"]: r["value"] for r in rows if r["pile"] != "exam"},
             {r["field"]: r["value"] for r in rows if r["pile"] == "exam"})
+
+
+def _settled(c, bid, n):
+    """The header fields of a page backed independently of which line the AI picked (wiki.INDEPENDENT)."""
+    return {r["f"] for r in c.execute(
+        """SELECT substr(field_path, 8) AS f FROM staging.field_check WHERE batch_id=%s AND page_no=%s
+             AND status='ok' AND field_path LIKE 'header.%%' AND confirmed_by = ANY(%s)""",
+        (bid, n, sorted(wiki.INDEPENDENT)))}
+
+
+def _order_of(p, printed, doc_type, sos):
+    """The Satellite order a page's known answers come from: the one it was grouped to, else (a Faktur Pajak, often
+    held until its numbers are sure) the one SOR it prints."""
+    if p["sor_no"]:
+        return sos.get(flat(p["sor_no"]))
+    return wiki.printed_order(printed, sos) if doc_type == "FPJ" else None
 
 
 def _cells(doc_type, fa_a, fa, truth, cols):
@@ -306,8 +331,8 @@ def gate(doc_type, version, show=print):
         if wiki.knowledge_sha(doc_type, cc) == wiki.knowledge_sha(doc_type, bc):
             continue                                    # this proposal changes nothing for this page
         named = {c_["field"] for c_ in cc + bc}
-        so = sos.get(flat(p["sor_no"])) if p["sor_no"] else None
         printed = _printed(p["transcript"])
+        so = _order_of(p, printed, doc_type, sos)
         truth = wiki.truth_of(doc_type, practice, so, printed)
         truth_exam = wiki.truth_of(doc_type, exam, None, printed) if exam else {}
         ok = wiki.counts(cc, (bid, n), bundle_of)
@@ -317,16 +342,22 @@ def gate(doc_type, version, show=print):
         countable = [f for f in heads if f in truth and ok.get(f, True)] + \
             [f for f in line_t if ok.get("lines." + wiki.LINE_FIELD.match(f).group(2), True)]
         plan.append({"p": p, "chain": chain, "how": how, "cc": cc, "heads": heads, "cols": cols, "truth": truth,
-                     "exam": truth_exam, "ok": ok, "countable": countable})
+                     "exam": truth_exam, "ok": ok, "countable": countable,
+                     "exam_fields": [f for f in heads if f in truth_exam and ok.get(f, True)],
+                     "person": any(f in practice for f in heads), "at": p["received_at"]})
+    tested = {id(x) for x in wiki.test_pages([x for x in plan if x["countable"]])}
+    for x in plan:                                       # over the limit: not mapped, said so
+        if x["countable"] and id(x) not in tested:
+            x["countable"], x["over_cap"] = [], True
     rows, exam_rows, detail, flips, calls = [], [], {}, 0, 0
-    to_map = sum(1 for x in plan if x["countable"])
+    to_map = sum(1 for x in plan if x["countable"] or x["exam_fields"])
     _progress(doc_type, version, step="testing", done=0, of=to_map)
     for x in plan:                                       # 2: map again only the pages that can be scored
         p, bid, n = x["p"], x["p"]["batch_id"], x["p"]["page_no"]
         page_rows = []
         fa_a, _ = wiki.undo(p["fields_all"], p["mapping"])
         after_fa, pb = None, {}
-        if x["countable"]:
+        if x["countable"] or x["exam_fields"]:          # an exam-pile page is mapped to be scored apart
             after_fa, _, pb = step(bid, n, doc_type, p["fields_all"], p["mapping"], p["qr_text"], ctx,
                                    md=row["markdown"], version=version)
             calls += 1
@@ -361,7 +392,8 @@ def gate(doc_type, version, show=print):
                     page_rows.append({"field": f, "was": ((p["fields_all"] or {}).get(wiki.canon_of(doc_type, f))
                                                           or {}).get("value"), "now": None,
                                       "truth": str(x["truth"][f]), "counted": False,
-                                      "why": "learned from this page or its bundle (not mapped again)"})
+                                      "why": f"over the test's limit of {wiki.TEST_PAGES} pages" if x.get("over_cap")
+                                      else "learned from this page or its bundle (not mapped again)"})
         detail[f"{bid}/{n}"] = {"chain": x["chain"], "chain_by": x["how"], "fields": x["heads"] + x["cols"],
                                 "rows": page_rows, "unscored": [f for f in x["heads"] if f not in x["truth"]]}
         show(f"{bid} p{n} ({x['chain'] or 'customer unknown'}, {x['how']}): " + ("; ".join(
@@ -444,8 +476,11 @@ def apply(doc_type, show=print, bid=None):
     whose order is already published (wiki.to_apply). Its progress is shown on the status bar. {page: changed}."""
     with db.connect() as c:
         ctx = _ctx(c)
-        pages = wiki.to_apply([p for p in _scope(c, doc_type, bid) if p["status"] == "read"])
+        stored = wiki.to_apply([p for p in _scope(c, doc_type, bid) if p["status"] == "read"])
         now = active(c, doc_type)
+        pages, settled_n = _needing(c, doc_type, stored, now)
+    if settled_n:
+        show(f"{doc_type}: {settled_n} stored page(s) skipped: what the knowledge names is already settled there")
     version = now["version"] if now is not None and bid is None else None   # after_grouping's per-batch passes
     _progress(doc_type, version, step="applying", done=0, of=len(pages), changed=0)  # don't report (version None)
     out, batches = {}, set()
@@ -461,6 +496,31 @@ def apply(doc_type, show=print, bid=None):
             vf.regroup(b)
     _progress(doc_type, version, step="applied", done=len(pages), of=len(pages), changed=len(out))
     return out
+
+
+def _needing(c, doc_type, pages, now):
+    """(the stored pages a switched-on page of knowledge still has to be used on, how many were skipped). A page whose
+    every field the knowledge names (for its customer) is settled is skipped: backed independently of the AI's choice,
+    or equal to its known answer. Taking knowledge away (none active) goes over every page."""
+    parsed = wiki.parse(now["markdown"]) if now else None
+    if not parsed:
+        return pages, 0
+    sos = satellite.load(c)
+    known = customer.learned(c, sos)
+    out = []
+    for p in pages:
+        bid, n = p["batch_id"], p["page_no"]
+        fa_a, _ = wiki.undo(p["fields_all"], p["mapping"])
+        chain, _ = chain_of(c, bid, n, fa_a, p["qr_text"], sos, known)
+        named = {c_["field"] for c_ in wiki.claims_for(parsed, chain)}
+        practice, _ = _confirmed(c, bid, n)
+        printed = _printed(p["transcript"])
+        truth = wiki.truth_of(doc_type, practice, _order_of(p, printed, doc_type, sos), printed)
+        right = {f for f in named if f in truth and wiki.score(
+            f, ((p["fields_all"] or {}).get(wiki.canon_of(doc_type, f)) or {}).get("value"), truth[f]) == "right"}
+        if wiki.needs_tip(named, _settled(c, bid, n) | right):
+            out.append(p)
+    return out, len(pages) - len(out)
 
 
 def after_grouping(bid, show=print):
@@ -624,12 +684,12 @@ def teach_one(e, ask=None, show=print):
         try:
             answer, meta = ask(prompt)
             if real:
-                vf.ledger("zai", "teach_wiki", bid, n, True, {"model": meta.get("model"), "ms": meta.get("ms"),
+                vf.ledger(teacher.provider_of(TEACH_MODEL), "teach_wiki", bid, n, True, {"model": meta.get("model"), "ms": meta.get("ms"),
                                                               "tokens_in": meta.get("prompt_tokens"),
                                                               "tokens_out": meta.get("completion_tokens")})
         except Exception as err:
             if real:
-                vf.ledger("zai", "teach_wiki", bid, n, False, {"model": TEACH_MODEL},
+                vf.ledger(teacher.provider_of(TEACH_MODEL), "teach_wiki", bid, n, False, {"model": TEACH_MODEL},
                           f"{type(err).__name__}: {err}"[:300])
             _lesson(e["id"], "waiting", {"error": f"{type(err).__name__}: {err}"[:300]})
             return "retry"

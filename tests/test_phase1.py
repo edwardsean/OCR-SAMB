@@ -7,7 +7,9 @@ import time
 
 import httpx
 
-pytestmark = pytest.mark.skipif(os.environ.get("PIPELINE") == "vlm-first", reason="v1 acceptance; vlm-first has its own")
+pytestmark = [pytest.mark.skipif(os.environ.get("PIPELINE") == "vlm-first", reason="v1 acceptance; vlm-first has its own")]
+from _sample import needs_sample  # noqa: E402
+pytestmark.append(needs_sample)
 
 UI = os.environ.get("API_URL", "http://localhost:8000")
 SAMPLE = "/data/sample.pdf"

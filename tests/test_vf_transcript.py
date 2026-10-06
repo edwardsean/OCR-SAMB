@@ -310,7 +310,7 @@ def test_a_look_again_is_carried_over_only_where_the_first_answer_is_unchanged()
 def test_a_mapping_made_twice_is_another_version(monkeypatch):
     from common import context
     from worker import classify, vf
-    ctx = context.seed(classify.JEV_QUESTION["doc_type"]["criteria"], classify.KEYWORDS, classify.JEV_TYPES)
+    ctx = context.seed_content()
     monkeypatch.setattr(vf, "MAP_TWICE", True)
     a = vf.two_step_versions(ctx)
     monkeypatch.setattr(vf, "MAP_TWICE", False)

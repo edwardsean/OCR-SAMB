@@ -3,10 +3,10 @@
 // typed once at the top. After an answer the order is checked again on the server, so the page is asked for again.
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { createContext, useContext, useState, type ReactNode } from "react";
+import { createContext, useContext, useEffect, useState, type ReactNode } from "react";
 import { api, why } from "@/lib/client";
 import { cx } from "@/lib/format";
-import type { FieldEntry, SoLine } from "@/lib/types";
+import type { FieldEntry, PairRow, PairRun, SoLine } from "@/lib/types";
 import { useSpot } from "@/components/Spread";
 import { useWords } from "@/components/Words";
 
@@ -154,6 +154,76 @@ export function PairForm({ page, row }: { page: number; row: number }) {
       <button className="btn primary" disabled={busy}>Pasangkan</button>
       <Err text={error} />
     </form>
+  );
+}
+
+/** "Barang yang belum dikenali" (2026-10-06): the customer's rows no rule paired with a line of SAMB's order. The AI
+ * can suggest which line each is (in the background, a few seconds to a minute); a person's "Benar" or own choice
+ * pairs the row, and that pair is saved as the customer's product code, so the product pairs by itself next time. */
+export function PairingBox({ rows }: { rows: PairRow[] }) {
+  const r = useReview();
+  const router = useRouter();
+  const [job, setJob] = useState<PairRun>({ state: "idle" });
+  const [error, setError] = useState<string | null>(null);
+  const unasked = rows.filter((p) => p.ai === null).length;
+  useEffect(() => {                                     // a run already going (the page was reloaded)
+    api.get<PairRun>(`/orders/${r.sor}/pair-proposals`).then((a) => { if (a.ok) setJob(a.data); });
+  }, [r.sor]);
+  useEffect(() => {                                     // while it runs: ask every few seconds, then draw the page again
+    if (job.state !== "running") return;
+    const t = setInterval(async () => {
+      const a = await api.get<PairRun>(`/orders/${r.sor}/pair-proposals`);
+      if (a.ok) { setJob(a.data); if (a.data.state !== "running") router.refresh(); }
+    }, 3000);
+    return () => clearInterval(t);
+  }, [job.state, r.sor, router]);
+  async function ask() {
+    if (!r.name.trim()) { r.needName(); return; }
+    setError(null);
+    const a = await api.post<PairRun>(`/orders/${r.sor}/pair-proposals`, { by: r.name.trim() });
+    if (a.ok || a.status === 409) setJob(a.data); else setError(why(a));
+  }
+  if (!rows.length) return null;
+  const running = job.state === "running";
+  return (
+    <section className="rv-pair" id="pairing">
+      <h3>Barang yang belum dikenali <span className="count">{rows.length}</span></h3>
+      <p className="fine">Baris di PO atau Tanda Terima pelanggan yang belum diketahui barang mana di order SAMB. Pasangan yang
+        Anda pastikan disimpan sebagai kode produk pelanggan ini, jadi barang yang sama dikenali sendiri di order berikutnya.</p>
+      {unasked > 0 && (
+        <div className="acts">
+          <button className="btn" onClick={ask} disabled={running}>{running ? "AI sedang memasangkan…" : `Minta saran AI (${unasked} baris)`}</button>
+          <span className="fine">{running ? "biasanya kurang dari satu menit" : "memakai kuota AI"}</span>
+        </div>
+      )}
+      {job.state === "done" && <p className="fine">AI memberi {job.proposed} saran untuk {job.rows} baris
+        {(job.proposed ?? 0) < (job.rows ?? 0) ? "; sisanya AI tidak yakin: pilih sendiri" : ""}.</p>}
+      {job.state === "failed" && <p className="salah">AI tidak bisa dihubungi: {job.error}</p>}
+      <Err text={error} />
+      {rows.map((p) => (
+        <div className="prow" key={`${p.page}:${p.i}`}>
+          <div><b>{p.desc || "sebuah baris"}</b>{" "}
+            <span className="fine">{p.type === "PO" ? "PO" : "Tanda Terima"} {r.pageName(p.page)}, baris {p.i + 1}
+              {p.code ? ` · kode ${p.code}` : ""}{p.qty ? ` · ${p.qty} ${p.uom ?? ""}` : ""}</span></div>
+          {p.ai !== null && <AiPair page={p.page} row={p.i} line={p.ai} note={p.why} />}
+          <PairForm page={p.page} row={p.i} />
+        </div>
+      ))}
+    </section>
+  );
+}
+
+/** The AI's suggested SAMB line for one row, confirmed in one click. */
+function AiPair({ page, row, line, note }: { page: number; row: number; line: number; note: string | null }) {
+  const r = useReview();
+  const { run, busy, error } = useAct();
+  const s = r.lines.find((x) => x.line_no === line);
+  return (
+    <div className="ai-pair">
+      <span>Saran AI: <b>no. {line} · {s?.description ?? ""}</b>{note && <span className="fine"> · {note}</span>}</span>
+      <button className="btn primary" disabled={busy} onClick={() => run("/pairings", { page, row, line_no: String(line) })}>Benar, pasangkan</button>
+      <Err text={error} />
+    </div>
   );
 }
 

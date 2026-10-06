@@ -1,0 +1,533 @@
+{
+  "types": {
+    "FP": {
+      "what": "SAMB's own sales invoice: title FAKTUR PENJUALAN, a Sales Order [SO] # starting SOR, Kepada (customer), item table with Kode, Nama Produk, Kemasan, Harga, Disc columns",
+      "fields": [
+        {
+          "name": "sor",
+          "note": "",
+          "how_often": "always"
+        },
+        {
+          "name": "dpp",
+          "note": "",
+          "how_often": "always"
+        },
+        {
+          "name": "ppn",
+          "note": "",
+          "how_often": "always"
+        },
+        {
+          "name": "total",
+          "note": "",
+          "how_often": "always"
+        },
+        {
+          "name": "po_number",
+          "note": "",
+          "how_often": "always"
+        },
+        {
+          "name": "customer_name",
+          "note": "",
+          "how_often": "always"
+        },
+        {
+          "name": "customer_code",
+          "note": "",
+          "how_often": "always"
+        },
+        {
+          "name": "document_title",
+          "note": "",
+          "how_often": "usually"
+        },
+        {
+          "name": "page_marker",
+          "note": "",
+          "how_often": "sometimes"
+        }
+      ],
+      "titles": [
+        "FAKTUR PENJUALAN"
+      ],
+      "jev_key": "faktur_penjualan",
+      "not_for": ""
+    },
+    "PO": {
+      "what": "The customer's purchase order to SAMB",
+      "fields": [
+        {
+          "name": "po_number",
+          "note": "",
+          "how_often": "always"
+        },
+        {
+          "name": "vendor_code",
+          "note": "",
+          "how_often": "usually"
+        },
+        {
+          "name": "vendor_name",
+          "note": "",
+          "how_often": "usually"
+        },
+        {
+          "name": "ppn",
+          "note": "",
+          "how_often": "usually"
+        },
+        {
+          "name": "total",
+          "note": "",
+          "how_often": "usually"
+        },
+        {
+          "name": "customer_name",
+          "note": "",
+          "how_often": "usually"
+        },
+        {
+          "name": "document_title",
+          "note": "",
+          "how_often": "usually"
+        },
+        {
+          "name": "page_marker",
+          "note": "",
+          "how_often": "sometimes"
+        },
+        {
+          "name": "dpp",
+          "note": "PT DFI Retail Nusantara prints it as DPP (Dasar Pengenaan Pajak) in their purchase orders/receiving slips.",
+          "how_often": "usually"
+        }
+      ],
+      "titles": [
+        "PURCHASE ORDER",
+        "SURAT PESANAN",
+        "Purchase Order",
+        "Surat Pesanan"
+      ],
+      "jev_key": "purchase_order",
+      "not_for": ""
+    },
+    "SJ": {
+      "what": "Delivery note that travelled with the goods",
+      "fields": [
+        {
+          "name": "document_title",
+          "note": "",
+          "how_often": "usually"
+        },
+        {
+          "name": "page_marker",
+          "note": "",
+          "how_often": "sometimes"
+        }
+      ],
+      "titles": [
+        "SURAT JALAN",
+        "DELIVERY NOTE",
+        "DELIVERY ORDER",
+        "Surat Jalan",
+        "Delivery Note"
+      ],
+      "jev_key": "surat_jalan",
+      "not_for": ""
+    },
+    "FPJ": {
+      "what": "Indonesian tax invoice",
+      "fields": [
+        {
+          "name": "sor",
+          "note": "",
+          "how_often": "sometimes"
+        },
+        {
+          "name": "billing_number",
+          "note": "",
+          "how_often": "usually"
+        },
+        {
+          "name": "kode_seri",
+          "note": "",
+          "how_often": "usually"
+        },
+        {
+          "name": "npwp_pengusaha",
+          "note": "",
+          "how_often": "usually"
+        },
+        {
+          "name": "nitku_pengusaha",
+          "note": "",
+          "how_often": "usually"
+        },
+        {
+          "name": "npwp_pembeli",
+          "note": "",
+          "how_often": "usually"
+        },
+        {
+          "name": "nitku_pembeli",
+          "note": "",
+          "how_often": "usually"
+        },
+        {
+          "name": "dpp",
+          "note": "",
+          "how_often": "usually"
+        },
+        {
+          "name": "ppn",
+          "note": "",
+          "how_often": "usually"
+        },
+        {
+          "name": "tanggal_transaksi",
+          "note": "",
+          "how_often": "usually"
+        },
+        {
+          "name": "document_title",
+          "note": "",
+          "how_often": "usually"
+        },
+        {
+          "name": "page_marker",
+          "note": "",
+          "how_often": "sometimes"
+        }
+      ],
+      "titles": [
+        "FAKTUR PAJAK"
+      ],
+      "jev_key": "faktur_pajak",
+      "not_for": "a page that only mentions faktur pajak in small print"
+    },
+    "PEL": {
+      "what": "Customer payment / remittance document listing invoices paid",
+      "fields": [
+        {
+          "name": "document_title",
+          "note": "",
+          "how_often": "usually"
+        },
+        {
+          "name": "page_marker",
+          "note": "",
+          "how_often": "sometimes"
+        }
+      ],
+      "titles": [
+        "BUKTI PEMBAYARAN",
+        "PAYMENT ADVICE",
+        "REMITTANCE",
+        "PELUNASAN"
+      ],
+      "jev_key": "pelunasan",
+      "not_for": ""
+    },
+    "TTG": {
+      "what": "The customer's receipt of goods from SAMB",
+      "fields": [
+        {
+          "name": "document_no",
+          "note": "",
+          "how_often": "always"
+        },
+        {
+          "name": "posting_date",
+          "note": "",
+          "how_often": "usually"
+        },
+        {
+          "name": "po_number",
+          "note": "labels vary: No PO, PO No, Order No, No. Pesanan, a PO column in the rows; AEON prints it as RECEIPT NO",
+          "how_often": "usually"
+        },
+        {
+          "name": "vendor_code",
+          "note": "",
+          "how_often": "usually"
+        },
+        {
+          "name": "customer_name",
+          "note": "",
+          "how_often": "usually"
+        },
+        {
+          "name": "sor",
+          "note": "some customers print SAMB's SOR: Hari Hari as No Ref, Puri Indah as DO#, Indogrosir as S/Fak (the last two without the letters SOR)",
+          "how_often": "sometimes"
+        },
+        {
+          "name": "document_title",
+          "note": "",
+          "how_often": "usually"
+        },
+        {
+          "name": "page_marker",
+          "note": "",
+          "how_often": "sometimes"
+        },
+        {
+          "name": "total",
+          "note": "Some customers print a total amount and PPN on their receiving slips.",
+          "how_often": "sometimes"
+        }
+      ],
+      "titles": [
+        "RECEIVING SLIP",
+        "GOODS RECEIVE",
+        "GOOD RECEIPT",
+        "GOODS RECEIPT",
+        "TANDA TERIMA",
+        "BUKTI PENERIMAAN BARANG",
+        "RECEIVING NOTE",
+        "RECEIVED NOTE",
+        "PRODUCT RECEIPT",
+        "Receiving Slip Order",
+        "Goods Receive Note",
+        "Good Receipt",
+        "Tanda Terima"
+      ],
+      "jev_key": "tanda_terima",
+      "not_for": ""
+    },
+    "OTHER": {
+      "what": "Anything else, or too unreadable to tell",
+      "fields": [
+        {
+          "name": "document_title",
+          "note": "",
+          "how_often": "usually"
+        },
+        {
+          "name": "page_marker",
+          "note": "",
+          "how_often": "sometimes"
+        }
+      ],
+      "titles": [],
+      "jev_key": "other",
+      "not_for": ""
+    },
+    "CONTINUATION": {
+      "what": "A later page of a multi-page document: it has NO document title or header of its own, only continued table rows or totals",
+      "fields": [
+        {
+          "name": "document_title",
+          "note": "",
+          "how_often": "never"
+        },
+        {
+          "name": "page_marker",
+          "note": "",
+          "how_often": "usually"
+        }
+      ],
+      "titles": [],
+      "jev_key": "continuation",
+      "not_for": "a page that has its own title, even if its footer says Page 5 of 35"
+    }
+  },
+  "fields": {
+    "dpp": {
+      "kind": "amount",
+      "role": "store",
+      "meaning": "Dasar Pengenaan Pajak: the tax base amount",
+      "printed_as": [
+        "Dasar Pengenaan Pajak",
+        "DPP"
+      ]
+    },
+    "ppn": {
+      "kind": "amount",
+      "role": "store",
+      "meaning": "PPN: the VAT amount",
+      "printed_as": [
+        "PPN",
+        "PPn",
+        "VAT",
+        "Tax"
+      ]
+    },
+    "sor": {
+      "kind": "id",
+      "role": "store",
+      "meaning": "SAMB's sales order number: SOR followed by 11 digits (SOR26110245292). Some customers print it without the letters SOR (11 digits starting 26…)",
+      "printed_as": [
+        "Sales Order [SO] #",
+        "No Ref",
+        "No. Reff",
+        "DO#",
+        "S/Fak"
+      ]
+    },
+    "total": {
+      "kind": "amount",
+      "role": "store",
+      "meaning": "the document's total amount (never an item count)",
+      "printed_as": [
+        "TOTAL",
+        "Total",
+        "Total Include Tax"
+      ]
+    },
+    "kode_seri": {
+      "kind": "id",
+      "role": "store",
+      "meaning": "the Faktur Pajak's code and serial number",
+      "printed_as": [
+        "Kode dan Nomor Seri Faktur Pajak"
+      ]
+    },
+    "po_number": {
+      "kind": "id",
+      "role": "store",
+      "meaning": "the customer's purchase order number (SAMB's invoice calls it Nomor CPO)",
+      "printed_as": [
+        "Nomor CPO",
+        "No PO",
+        "PO No",
+        "Purchase Order No",
+        "Order No",
+        "No. Pesanan",
+        "PO# or OT#",
+        "Receipt No (AEON)"
+      ]
+    },
+    "document_no": {
+      "kind": "id",
+      "role": "store",
+      "meaning": "the customer's goods-receipt number",
+      "printed_as": [
+        "No Receive",
+        "NO GRN",
+        "No. GR",
+        "Document No",
+        "REC NO",
+        "BPB No",
+        "Receiving#"
+      ]
+    },
+    "page_marker": {
+      "kind": "text",
+      "role": "clue",
+      "meaning": "a page marker if printed, e.g. 'Page 12 of 35' or 'Hal : 1 / 1'",
+      "printed_as": [
+        "Page",
+        "Hal"
+      ]
+    },
+    "vendor_code": {
+      "kind": "id",
+      "role": "store",
+      "meaning": "SAMB's supplier / vendor number at this customer",
+      "printed_as": [
+        "No Supplier",
+        "Vendor",
+        "Kepada YTH",
+        "Supplier Code",
+        "Supplier"
+      ]
+    },
+    "vendor_name": {
+      "kind": "text",
+      "role": "store",
+      "meaning": "SAMB's name as the customer printed it (as the supplier)",
+      "printed_as": [
+        "Nama Supplier",
+        "Vendor Name",
+        "Supplier Description"
+      ]
+    },
+    "npwp_pembeli": {
+      "kind": "id",
+      "role": "store",
+      "meaning": "NPWP of the buyer on a Faktur Pajak",
+      "printed_as": [
+        "NPWP"
+      ]
+    },
+    "posting_date": {
+      "kind": "date",
+      "role": "store",
+      "meaning": "the date the customer received or posted the goods",
+      "printed_as": [
+        "Tgl Terima",
+        "Posting Date",
+        "TGL KONFIRMASI GRN",
+        "Tanggal BPB",
+        "Date Received"
+      ]
+    },
+    "customer_code": {
+      "kind": "id",
+      "role": "store",
+      "meaning": "SAMB's code for the customer, in brackets under Kepada on SAMB's invoice (14000…)",
+      "printed_as": [
+        "Kepada [kode]"
+      ]
+    },
+    "customer_name": {
+      "kind": "text",
+      "role": "store",
+      "meaning": "the customer buying from SAMB: the addressee (Kepada) on SAMB's invoice, or the company that issued a receipt or order",
+      "printed_as": [
+        "Kepada",
+        "Customer"
+      ]
+    },
+    "nitku_pembeli": {
+      "kind": "id",
+      "role": "store",
+      "meaning": "NITKU of the buyer on a Faktur Pajak",
+      "printed_as": [
+        "NITKU"
+      ]
+    },
+    "billing_number": {
+      "kind": "id",
+      "role": "store",
+      "meaning": "billing / reference number printed on a Faktur Pajak; never the handwritten number written on SAMB's invoice",
+      "printed_as": [
+        "Nomor Referensi",
+        "Billing"
+      ]
+    },
+    "document_title": {
+      "kind": "text",
+      "role": "clue",
+      "meaning": "the document's printed title, exactly as printed",
+      "printed_as": []
+    },
+    "npwp_pengusaha": {
+      "kind": "id",
+      "role": "store",
+      "meaning": "NPWP of the seller (Pengusaha Kena Pajak) on a Faktur Pajak",
+      "printed_as": [
+        "NPWP"
+      ]
+    },
+    "nitku_pengusaha": {
+      "kind": "id",
+      "role": "store",
+      "meaning": "NITKU of the seller on a Faktur Pajak",
+      "printed_as": [
+        "NITKU"
+      ]
+    },
+    "tanggal_transaksi": {
+      "kind": "date",
+      "role": "store",
+      "meaning": "the transaction date on a Faktur Pajak",
+      "printed_as": [
+        "Tanggal"
+      ]
+    }
+  }
+}

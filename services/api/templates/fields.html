@@ -1,10 +1,9 @@
 {% extends "base.html" %}
-{% block title %}Field lists{% endblock %}
+{% block title %}Daftar field{% endblock %}
 {% block main %}
   <section class="head">
-    <h1>Field lists · what the AI OCR reads, per document type</h1>
-    <p class="lede">One list per document type, from <strong>§6.1 "Field penting per dokumen"</strong> of the Problem Statement. This single list drives both the AI OCR's instructions and the Satellite table columns, so they can't drift apart. Source: <code>services/common/fields.py</code>.</p>
-    <p class="lede"><span class="badge s61">§6.1</span> listed in §6.1: stored in Satellite · <span class="badge link">linking</span> not in §6.1; read only so the document can be tied to its SOR (§6.2).</p>
+    <h1>Daftar field</h1>
+    <p class="lede">What the AI reads per document type (<code>services/common/fields.py</code>). <span class="badge s61">§6.1</span> stored in Satellite · <span class="badge link">linking</span> only ties the document to its SOR.</p>
   </section>
   {% for code, d in docs.items() %}
   <section>
@@ -37,6 +36,5 @@
   <section>
     <h2>No field list yet</h2>
     <ul class="plain">{% for code, why in not_yet.items() %}<li><span class="tchip t-{{ code }}">{{ code }}</span> {{ why }}</li>{% endfor %}</ul>
-    <p class="note">Dropped on purpose (2026-09-24): the handwritten number on the FP (it is the SAP billing number, already in SAP after posting), and dates / subtotals / page markers that §6.1 doesn't list.</p>
   </section>
 {% endblock %}

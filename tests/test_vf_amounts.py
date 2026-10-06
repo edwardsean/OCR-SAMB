@@ -33,7 +33,7 @@ def test_an_amount_cut_off_at_the_edge_never_gets_a_tick():
 
 
 def test_amount_values_come_from_the_printed_text():
-    ctx = context.seed(classify.JEV_QUESTION["doc_type"]["criteria"], classify.KEYWORDS, classify.JEV_TYPES)
+    ctx = context.seed_content()
     fa = {"total": {"value": "1126.006", "source_text": "1.126.006"}, "po_number": {"value": "45", "source_text": "45"}}
     vf.normalise_amounts(fa, ctx)
     assert fa["total"] == {"value": "1126006.00", "source_text": "1.126.006", "ai_value": "1126.006"}

@@ -340,7 +340,9 @@ def truth_of(doc_type, confirmed, so, printed):
       - a person's confirmation (the caller passes practice-pile ones only; a line cell's as lines[<row key>].<col>);
       - the order the page was grouped to, in Satellite: a PO number or SOR reference where the page prints it
         (flat, in the AI OCR's copy), an FP's SOR, Nomor CPO, customer code and printed amounts (paper()). A
-        receipt that prints no SOR reference at all (none like SOR… or 2611…, its order's included) has none.
+        receipt that prints no SOR reference at all (none like SOR… or 2611…, its order's included) has none;
+      - a Faktur Pajak's billing number: Satellite's for its order (grouped to, or the one SOR it prints:
+        printed_order) where the page prints it (2026-10-06: before, only people's corrections could score one).
     Never a PO's or receipt's amounts or quantities from Satellite: comparing those with SAMB's record is the point."""
     out = {}
     so = so or {}
@@ -352,6 +354,8 @@ def truth_of(doc_type, confirmed, so, printed):
             out["no_ref"] = so["sor_no"]
         elif not SOR_LIKE.search(printed):
             out["no_ref"] = NOT_PRINTED
+    if doc_type == "FPJ" and so.get("billing_no") and flat(so["billing_no"]) in printed:
+        out["billing_number"] = so["billing_no"]
     if doc_type == "FP":
         for k, v in (("sor", so.get("sor_no")), ("nomor_cpo", so.get("cpo_no")),
                      ("customer_code", so.get("customer_code"))):
@@ -362,6 +366,24 @@ def truth_of(doc_type, confirmed, so, printed):
                 out[k] = v
     out.update(confirmed or {})
     return out
+
+
+def printed_order(printed, sos):
+    """The one Satellite order whose SOR the page prints (with or without its letters), or None when it prints none,
+    or several, or one Satellite doesn't know. A misread SOR names no order, or another order whose billing number
+    the page doesn't print (truth_of asks for that too)."""
+    found = {"SOR" + m[-11:] for m in SOR_LIKE.findall(printed or "")}
+    hits = [sos[k] for k in found if k in (sos or {})]
+    return hits[0] if len(hits) == 1 else None
+
+
+BILLING = re.compile(r"(?<![0-9])[0-9]{10}(?![0-9])")
+
+
+def _billing(v):
+    """A Faktur Pajak prints '<billing number>/<SOR>': the billing number is what a value is scored on."""
+    m = BILLING.search(re.sub(r"\s+", "", str(v or "")))
+    return m.group(0) if m else flat(v)
 
 
 def line_truth(truth, keys):
@@ -382,6 +404,8 @@ def score(field, value, truth):
         return "right" if empty else "wrong"
     if empty:
         return "empty"
+    if field == "billing_number":
+        return "right" if _billing(value) == _billing(truth) else "wrong"
     if field in AMOUNTS:
         a = verify.amount(value)
         b = verify.amount(truth) if isinstance(truth, str) else float(truth)
@@ -573,7 +597,27 @@ def diff(a, b):
 
 # ---------------------------------------------------------------------------------------------- the teacher (Stage 3)
 
-TEACH_V = 1
+TEACH_V = 2          # 2 (2026-10-06): one position format (x/y), the axes explained, the place given in words: FPJ #2
+                     # said "bottom right" for x 35-220 (the left fifth), reading [top, left, bottom, right] as x first
+
+
+def place(region):
+    """Where a region sits on the page, in words: 'lower left, about 72% down the page'. region = [ymin, xmin, ymax,
+    xmax] on 0-1000 of the upright page (0,0 = the top-left corner)."""
+    y0, x0, y1, x1 = region
+    cx, cy = (x0 + x1) / 2, (y0 + y1) / 2
+    across = x1 - x0 > 667
+    side = "across the page" if across else "left" if cx < 333 else "right" if cx > 667 else "centre"
+    height = "top" if cy < 200 else "upper" if cy < 400 else "middle" if cy < 600 else "lower" if cy < 800 else "bottom"
+    words = f"{height} part, across the page" if across else "centre" if (height, side) == ("middle", "centre") \
+        else f"{height} {side}"
+    return f"{words}, about {round(cy / 10)}% down the page"
+
+
+def xy(region):
+    """A region in the copy's own terms: 'x 34-118, y 719-727'."""
+    y0, x0, y1, x1 = region
+    return f"x {x0}-{x1}, y {y0}-{y1}"
 
 
 def teach_prompt(doc_type, what, meaning, example, customer, section, general, others, copy, mapped):
@@ -581,6 +625,8 @@ def teach_prompt(doc_type, what, meaning, example, customer, section, general, o
     correction, the page as the AI OCR copied it (with positions), what the text model mapped, the customer's section
     and "Any customer", and other people's corrections of this field (practice pile only)."""
     a = example.get("anchor") or {}
+    r = example.get("region")
+    where = f"{place(r)} ({xy(r)})" if r else "not marked on the page"
     said = ("the page prints no such value" if example["kind"] == "not_printed"
             else f"the right value is {example['value']!r}")
     beside = "; ".join(f"{k}: {v!r}" for k, v in (("label on its left", a.get("left")), ("printed above", a.get("above")),
@@ -595,7 +641,7 @@ DOCUMENT TYPE: {doc_type} ({what})
 CUSTOMER: {customer or 'not known'}
 FIELD: {example['field']} ({meaning})
 THE CORRECTION: the reading had {example.get('shown')!r}; the person says {said}.
-WHERE IT IS PRINTED: region {example.get('region')} (0-1000 of the page, [top, left, bottom, right]){'; ' + beside if beside else ''}.
+WHERE IT IS PRINTED: {where}{'; ' + beside if beside else ''}.
 WHAT THE TEXT MODEL MAPPED FOR IT: {mapped!r}
 
 THE WIKI NOW, for this customer:
@@ -609,6 +655,10 @@ OTHER CORRECTIONS OF THIS FIELD (other pages):
 THE PAGE AS COPIED (block id, kind, position, text):
 {copy}
 
+POSITIONS: every position above is on a 0-1000 grid over the upright page. x runs from the left edge (0) to the right
+edge (1000); y runs from the top edge (0) to the bottom edge (1000). So x below 333 is the left third and above 667
+the right third; y below 200 is the top of the page and above 800 the bottom.
+
 Rules for the claim:
 - It says where or how the value is printed on this customer's {doc_type}s, in plain words. Never this page's value
   itself: the claim must hold on the customer's next page, with other numbers.
@@ -619,6 +669,8 @@ Rules for the claim:
   nothing in it is particular to this customer.
 - If the wiki already has a claim for this field that the correction shows is wrong, replace it: say which in
   "replaces" (its text).
+- If you say where on the page it is, use the words given in WHERE IT IS PRINTED (e.g. "lower left"), never your own
+  reading of the numbers, and give no coordinates: they are added from the place the person marked.
 
 Answer with ONE JSON object, nothing else:
 {{"claim": "…", "kind": "label", "anchor": "RECEIPT NO", "scope": "customer", "replaces": null, "why": "…"}}
@@ -773,6 +825,28 @@ def teacher_badge(teaching=None, progress=None, waiting=0, approvals=0):
     if waiting:
         return f"Teacher: {waiting} lesson{'s' if waiting != 1 else ''} waiting"
     return None
+
+
+TEST_PAGES = 30            # at most this many pages decide a proposal's test (2026-10-06: cost follows the help needed)
+
+
+def test_pages(plan, cap=TEST_PAGES):
+    """The pages that decide a proposal's test, at most cap: those a person corrected first (the answers people
+    gave), then the newest. plan entries: {"person": bool, "at": when the scan arrived}."""
+    def when(x):
+        return x["at"].timestamp() if hasattr(x.get("at"), "timestamp") else 0
+    return sorted(plan, key=lambda x: (not x["person"], -when(x)))[:cap]
+
+
+INDEPENDENT = {"person", "qr", "satellite", "ship_to", "rows", "receipt_no"}   # backed whichever line the AI chose
+
+
+def needs_tip(named, settled):
+    """Whether a stored page still needs a switched-on tip: some field the tip names isn't settled. Settled = backed
+    by something independent of which line the AI picked (a person, the QR code, Satellite: INDEPENDENT), or equal to
+    a known right answer. A print ✅ alone isn't: it proves the characters are printed, not that they are this field.
+    A table column is never settled as a whole, so a tip about one always applies."""
+    return any(f.startswith("lines.") or f not in settled for f in named)
 
 
 def to_apply(pages):

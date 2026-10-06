@@ -17,7 +17,7 @@ import time
 import httpx
 from PIL import Image
 
-from common import config
+from common import config, settings
 from common.models import vlm
 
 _URL = config.PROVIDER_URLS     # where each provider answers (common/config.py: <PROVIDER>_BASE_URL)
@@ -66,14 +66,15 @@ def _wait_seconds(r):
     return 10.0
 
 
-def _post(spec, content, max_tokens=4096):
+def _post(spec, content, max_tokens=4096, role="VF_AI_OCR"):
+    """role: the model setting this call is for (VF_AI_OCR, VF_AI_MAP): its own API key, else its provider's."""
     provider, model = spec_parts(spec)
     base, key_var, _ = PROVIDERS[provider]
     headers = {}
     if key_var:
-        key = config.API_KEYS.get(key_var)
+        key = settings.key(role, spec)
         if not key:
-            raise RuntimeError(f"no {key_var} in .env")
+            raise RuntimeError(f"no API key for {role}: set it on Teknis → Model & kunci API, or {key_var} in .env")
         headers["Authorization"] = f"Bearer {key}"
     body = {"model": model, "temperature": 0, "max_tokens": max_tokens, "response_format": {"type": "json_object"},
             "messages": [{"role": "user", "content": content}]}
@@ -226,7 +227,7 @@ def salvage_blocks(text):
 def map_text(prompt, spec):
     """Step 2 of read-then-map: a text-only call (the transcript and the field list are in the prompt). Returns
     (the answer's JSON object, meta)."""
-    text, meta = _post(spec, [{"type": "text", "text": prompt}], max_tokens=4096)
+    text, meta = _post(spec, [{"type": "text", "text": prompt}], max_tokens=4096, role="VF_AI_MAP")
     raw = _json(text)
     return (raw if isinstance(raw, dict) else {}), meta
 

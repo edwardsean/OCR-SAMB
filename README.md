@@ -85,7 +85,8 @@ thousands of records and several workers.
 | `services/common/` | shared by every service: `config.py` (every setting), the database, queues, storage, the field lists, the checks |
 | `services/intake/`, `worker/`, `grouper/`, `publisher/`, `scheduler/` | the background services above |
 | `schema/` | the database, as SQL files applied in order |
-| `scripts/` | `setup.sh` (first-time setup), `load_satellite.py` (Satellite's export) |
+| `scripts/` | `setup.sh` (first-time setup), `seed.sh` (Jev's context into the database), `load_satellite.py` (Satellite's export) |
+| `services/seed/` | the data a new database starts from: Jev's context (`jev-context.json`); refresh it from a working database with `python -m common.seed export` |
 | `tests/` | pytest, run inside the API container; `tests/browser/` drives the web app in Chrome |
 | `docs/` | [API](docs/api.md), [testing](docs/testing.md), [Postman collection](docs/postman/) |
 
@@ -101,6 +102,7 @@ cp .env.example .env                                   # then fill in the AI key
 docker compose -f docker-compose.servers.yml up -d     # Postgres, RabbitMQ, MinIO
 ./scripts/setup.sh                                     # the database (every migration) and the RabbitMQ vhost
 docker compose up -d --build                           # the API, the web app, the workers
+./scripts/seed.sh                                      # Jev's context into the database (once)
 ```
 
 Then open:
@@ -108,7 +110,12 @@ Then open:
 - the API's docs: <http://localhost:8002/docs>
 - the Status page: Teknis → Status sistem (every service should be green)
 
-**Keys** (in `.env`; `.env.example` lists them):
+Check it with the tests: `docker compose exec -e PYTHONPATH=/app rtm-api pytest -q tests/`. On a fresh clone about
+80 of them skip: they read the sample scan (`testdata/sample.pdf`) or stored orders, real customer documents that are
+not in git. None should fail.
+
+**Models and keys**: in `.env` (`.env.example` lists them), or later on Teknis → Model & kunci API, which overrides
+`.env` for each model:
 - the AI OCR's provider key for `VF_AI_OCR` (e.g. `DASHSCOPE_API_KEY` for `dashscope:qwen3-vl-plus`);
 - `TYPESAFE_API_KEY` for Jev;
 - `ZAI_API_KEY` for the teacher.

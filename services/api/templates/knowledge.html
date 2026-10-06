@@ -1,26 +1,15 @@
 {% extends "base.html" %}
-{% block title %}Knowledge{% endblock %}
+{% block title %}Pengetahuan AI{% endblock %}
 {% block main %}
   <section class="head">
-    <h1>Knowledge <span class="muted">what people taught, per document type and customer</span></h1>
-    <p class="lede">A person fixes a value on a page (the page viewer, or Review). That fixes the page at once and keeps an
-      <strong>example</strong>: where it is printed, and the label beside it. When examples on two pages in two bundles
-      agree, they become a <strong>claim</strong> on the type's page below, for one customer or for any. Pages are also
-      written by a person here (later by the teacher). Before a page is used it is <strong>replayed</strong>: the text
-      model maps the stored pages it would change again, with it, and every value it changes is scored against a
-      person's confirmation or Satellite. A value never counts on the page it was learned from. It must make at least one
-      value right, none newly wrong, and lose none. A page drafted from corrections marked on the paper becomes active
-      by itself when it passes; any other waits for a person's approval. Once active, the text model's second mapping
-      (<strong>pass B</strong>, after Jev decides the type) gets "Any customer" and the page's own customer's section, and
-      only the fields those claims name are taken from it. The AI OCR never sees any of this.</p>
+    <h1>Pengetahuan AI</h1>
+    <p class="lede">Tips learned from corrections, per document type and customer. Each tip is replayed on stored pages before it is used.</p>
   </section>
 
   {% if msg %}<div class="alert warn" style="padding:10px 14px;margin:10px 0">{{ msg }}</div>{% endif %}
   <p class="small">
     <form method="post" action="/knowledge/teach" style="display:inline"><button class="ghost" type="submit">Wake the teacher</button></form>
-    <form method="post" action="/knowledge/lint" style="display:inline"><button class="ghost" type="submit">Run the lint</button></form>
-    <span class="muted">The teacher (Z.ai GLM, text) takes each practice correction as a lesson, one at a time, and writes
-      one claim for it; the lint takes out a claim a person's later correction contradicts.</span></p>
+    <form method="post" action="/knowledge/lint" style="display:inline"><button class="ghost" type="submit">Run the lint</button></form></p>
 
   {% for t in k.types %}
   <section id="{{ t.type }}">
@@ -71,8 +60,8 @@
               <td colspan="5" class="small muted">nothing to score ({{ d.unscored|join(', ') }}: no confirmation, not in Satellite)</td></tr>
           {% endfor %}{% endfor %}</tbody>
         </table></details>
-      {% if g.needs_pages %}<p class="small">No other stored page it changes has a value to score it on (a claim never counts on the page it was learned from): it waits for more pages of this customer. Nothing was mapped.</p>{% endif %}
-      {% else %}<p class="small">Not replayed yet. The replay maps the stored pages it changes again with the text model (about 5K tokens a mapping, twice a page).</p>{% endif %}
+      {% if g.needs_pages %}<p class="small">No other stored page can test it yet: it waits for more pages.</p>{% endif %}
+      {% else %}<p class="small">Not replayed yet (about 10K tokens a page).</p>{% endif %}
       <form method="post" action="/knowledge/{{ t.type }}/{{ v.version }}/gate" style="display:inline"><button type="submit" class="ghost"{% if v.stale %} disabled{% endif %}>{{ 'Replay again' if v.gate else 'Run the replay' }}</button></form>
       <form method="post" action="/knowledge/{{ t.type }}/{{ v.version }}/approve" style="display:inline">
         <input name="by" class="js-name" placeholder="your name" required size="12">
@@ -85,8 +74,7 @@
       <form method="post" action="/knowledge/{{ t.type }}/draft" style="margin:8px 0"><button class="ghost" type="submit">Draft from examples</button>
         <span class="small muted">claims two pages in two bundles agree on</span></form>
       <form method="post" action="/knowledge/{{ t.type }}/propose">
-        <p class="small muted">One claim a line: <span class="mono">- field: what to do [kind · printed label · pages b-…/3, …]</span>, under
-          <span class="mono">## Any customer</span> or <span class="mono">## NAME (chain 11000…)</span>. Field names as on <a href="/fields">Field lists</a>.</p>
+        <p class="small muted">One tip a line: <span class="mono">- field: what to do [kind · label · pages b-…/3]</span>, under <span class="mono">## Any customer</span> or <span class="mono">## NAME (chain …)</span>.</p>
         <textarea name="markdown" rows="10" style="width:100%" class="mono small">{{ t.active.markdown if t.active else '# ' ~ t.type ~ '\n\n## Any customer\n' }}</textarea>
         <p><input name="by" class="js-name" placeholder="your name" required size="14"> <input name="note" placeholder="what changes and why" size="50">
           <button type="submit">Propose</button></p>
@@ -108,8 +96,6 @@
 
   <section>
     <h2>Customers</h2>
-    <p class="small muted">How a page's customer is known before grouping (common/customer.py): its keys in Satellite, the name
-      it prints, SAMB's vendor code at the customer. The names and codes below were printed on bundles already grouped.</p>
     <table class="grid small">
       <thead><tr><th>Customer</th><th>Chain</th><th>Its name as printed</th><th>SAMB's code there</th><th>Bundles</th><th>Sections</th></tr></thead>
       <tbody>{% for c in k.index %}
@@ -121,10 +107,7 @@
 
   <section>
     <h2>Lessons <span class="muted">the teacher's queue</span></h2>
-    <p class="small muted">Every practice-pile correction is a lesson. <strong>already right</strong>: the page's reading
-      has the value now (nothing to teach). <strong>needs pages</strong>: its claim can't be proven until another page of
-      that customer is stored. <strong>proposed</strong>: waiting for a person above. <strong>learned</strong>: its claim is
-      active.</p>
+    <p class="small muted">One lesson per correction (hidden-pile corrections excluded).</p>
     {% if k.lessons %}
     <table class="grid small">
       <thead><tr><th>Page</th><th>Type</th><th>Customer</th><th>Field</th><th>Correction</th><th>Lesson</th><th>Why</th></tr></thead>
@@ -141,7 +124,7 @@
 
   <section>
     <h2>Examples waiting for a second page</h2>
-    <p class="small muted">Practice-pile corrections no claim uses yet. {{ k.exam }} example{{ '' if k.exam == 1 else 's' }} in the exam pile {{ 'is' if k.exam == 1 else 'are' }} never learned from.</p>
+    <p class="small muted">Corrections no tip uses yet. {{ k.exam }} more {{ 'is' if k.exam == 1 else 'are' }} in the hidden pile.</p>
     {% if k.waiting %}
     <table class="grid small">
       <thead><tr><th>Page</th><th>Type</th><th>Customer</th><th>Field</th><th>What</th><th>Printed beside it</th><th>From</th></tr></thead>

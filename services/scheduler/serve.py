@@ -20,7 +20,7 @@ import traceback
 
 from psycopg.types.json import Json
 
-from common import config, db, health
+from common import config, db, health, settings
 
 TICK_S = 30                                            # how often it looks for a job that is due
 
@@ -72,6 +72,7 @@ def finish(name, result=None, error=None):
 
 def tick():
     """Every job that is due, in order. Returns {name: result or error} for the jobs that ran."""
+    settings.refresh()                          # the models and keys saved on the Teknis screen
     ran = {}
     for name, (every, job, vf_only) in JOBS.items():
         if vf_only and not config.VF:

@@ -782,3 +782,11 @@ h2.sect { margin: 32px 0 12px; }
   .ws-list th:nth-child(2), .ws-list td:nth-child(2), .ws-list th:nth-child(3), .ws-list td:nth-child(3) { display: none; }
   .ws-list td .muted.small { min-width: 140px; }
 }
+/* "Barang yang belum dikenali" on an order (2026-10-06): the customer's unpaired rows, the AI's suggestions */
+.rv-pair { margin-top: 26px; padding-top: 16px; border-top: 1.5px solid var(--tinta); }
+.rv-pair h3 { font-size: 16px; margin: 0 0 4px; } .rv-pair .count { color: var(--pensil); font-weight: 500; }
+.rv-pair .acts { margin: 10px 0 4px; display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
+.rv-pair .prow { padding: 12px 0; border-top: 1px solid var(--garis); }
+.rv-pair .prow .fixrow { margin-top: 6px; }
+.ai-pair { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; margin: 8px 0 2px; font-size: 13.5px; }
+.ai-pair > span:first-child::before { content: "✦ "; color: var(--biru-pulpen); }

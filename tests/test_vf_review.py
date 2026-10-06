@@ -52,6 +52,8 @@ def test_approval_waits_until_nothing_is_left():
 
 @pytest.mark.skipif(not VF, reason="vlm-first only")
 def test_the_review_screens_answer():
+    import _data
+    _data.order("SOR26110257250")
     r = httpx.get(f"{UI}/api/v1/orders", params={"batch": BID}, timeout=60)
     assert r.status_code == 200 and "SOR26110257250" in [x["sor_no"] for x in r.json()["rows"]]
     o = httpx.get(f"{UI}/api/v1/orders/SOR26110257250", params={"batch": BID}, timeout=60).json()
@@ -94,6 +96,8 @@ def test_open_checks_become_cards_and_passing_ones_dont():
 def test_review_asks_only_for_what_is_left():
     """Before S5 the Duta Buah bundle drew 73 forms for 2 open items; a row or a value kept as read never asks. What
     the web app draws before its fold is one card per open item (and the customer's questions), nothing else."""
+    import _data
+    _data.scan(BID)
     for batch, sor in ((BID, "SOR26110256810"), (BID, "SOR26110257259"), (BID, "SOR26110255837")):
         v = httpx.get(f"{UI}/api/v1/orders/{sor}", params={"batch": batch}, timeout=60).json()
         assert {i["kind"] for i in v["open_items"]} <= {"check", "page", "label", "wait"}, sor

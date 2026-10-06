@@ -53,4 +53,4 @@ curl -sf -u "$RMQ_USER:$RMQ_PASS" -X PUT -H "content-type: application/json" \
      -d '{"configure": ".*", "write": ".*", "read": ".*"}' "$RMQ_URL/api/permissions/$VHOST/$RMQ_USER" >/dev/null
 echo "  vhost $VHOST ready for $RMQ_USER"
 
-echo "Done. Next: docker compose up -d --build   (then open http://localhost:$(setting WEB_PORT 3002))"
+echo "Done. Next: docker compose up -d --build, then ./scripts/seed.sh   (then open http://localhost:$(setting WEB_PORT 3002))"

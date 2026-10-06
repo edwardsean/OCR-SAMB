@@ -7,6 +7,9 @@ an exam-pile label; lesson.py refuses those before calling it.
 Z.ai: POST https://api.z.ai/api/paas/v4/chat/completions, Bearer ZAI_API_KEY. Images up to 5 MB and 6000 px, sent
 as a base64 data URL. Vision models have no JSON mode, so the answer is parsed strictly (and asked once more if it
 isn't JSON). Rate limits aren't published: one call at a time, backing off on 429 and 5xx.
+
+A model is a Z.ai model name, or provider:model for another OpenAI-compatible provider (2026-10-06: the teachers'
+models are set on the Teknis screen "Model & kunci API", common/settings.py).
 """
 import base64
 import json
@@ -15,41 +18,65 @@ import time
 
 import httpx
 
-from common import config
+from common import config, settings
 
-URL = config.PROVIDER_URLS["zai"] + "/chat/completions"
 MODEL = config.TEACHER_MODEL
 
 
-def _post(messages, model=None):
-    """model: another Z.ai model for a text-only task (the product matching, grouper/matching.py)."""
-    key = config.ZAI_API_KEY
-    if not key:
-        raise RuntimeError("no ZAI_API_KEY: add a free Z.ai key to .env to run the teacher")
-    model = model or MODEL
+@settings.on_change
+def _model_changed():
+    global MODEL
+    MODEL = config.TEACHER_MODEL
+
+
+def provider_of(spec):
+    """'zai' for a bare model name, else the provider of provider:model."""
+    p, sep, _ = (spec or "").partition(":")
+    return p if sep else "zai"
+
+
+def _where(spec):
+    """(chat URL, API key setting, model name) for a model setting."""
+    from common.models.openai_vlm import PROVIDERS
+    provider = provider_of(spec)
+    name = spec.partition(":")[2] if ":" in spec else spec
+    if provider not in PROVIDERS:
+        raise RuntimeError(f"{spec!r}: unknown provider (one of {', '.join(sorted(PROVIDERS))})")
+    base, key_var, _ = PROVIDERS[provider]
+    return base + "/chat/completions", key_var, name
+
+
+def _post(messages, model=None, role="TEACHER_MODEL"):
+    """model: another model for a text-only task (the knowledge teacher, the product matching); role: the model
+    setting it is for, whose own API key it calls with (else its provider's)."""
+    url, key_var, name = _where(model or MODEL)
+    key = settings.key(role, model or MODEL) if key_var else ""
+    if key_var and not key:
+        raise RuntimeError(f"no API key for {role}: set it on Teknis → Model & kunci API, or {key_var} in .env")
+    headers = {"Authorization": f"Bearer {key}"} if key else {}
     t0 = time.time()
     for attempt in range(5):
-        r = httpx.post(URL, headers={"Authorization": f"Bearer {key}"},
-                       json={"model": model, "messages": messages, "temperature": 0.2}, timeout=240)
+        r = httpx.post(url, headers=headers,
+                       json={"model": name, "messages": messages, "temperature": 0.2}, timeout=240)
         if r.status_code == 429 or r.status_code >= 500:
             time.sleep(min(60, 5 * 2 ** attempt)); continue
         r.raise_for_status()
         j = r.json()
-        return j["choices"][0]["message"]["content"], {"model": j.get("model", model),
+        return j["choices"][0]["message"]["content"], {"model": j.get("model", name),
                                                        "ms": int((time.time() - t0) * 1000), **(j.get("usage") or {})}
-    raise RuntimeError(f"Z.ai unavailable (HTTP {r.status_code}) after retries")
+    raise RuntimeError(f"{provider_of(model or MODEL)} unavailable (HTTP {r.status_code}) after retries")
 
 
-def ask_text(prompt, model):
+def ask_text(prompt, model, role="WIKI_TEACHER_MODEL"):
     """(parsed JSON answer, meta) from a text model."""
     messages = [{"role": "user", "content": prompt}]
-    text, meta = _post(messages, model)
+    text, meta = _post(messages, model, role)
     try:
         return parse(text), meta
     except ValueError:
         messages += [{"role": "assistant", "content": text},
                      {"role": "user", "content": "Answer again with ONLY the JSON object, nothing else."}]
-        text, meta = _post(messages, model)
+        text, meta = _post(messages, model, role)
         return parse(text), meta
 
 

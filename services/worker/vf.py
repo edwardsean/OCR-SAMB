@@ -55,7 +55,7 @@ import psycopg
 from psycopg.rows import dict_row
 from psycopg.types.json import Json
 
-from common import config, context, db, gates, satellite, transcript, verify, wiki
+from common import config, context, db, gates, satellite, settings, transcript, verify, wiki
 from common import keys as keymod
 from common.fields import DECIDES, DOCS, TYPE_MAP, decides, lift, project
 from common.models import openai_vlm, vlm
@@ -71,6 +71,16 @@ DAILY_CAP = config.VF_AI_OCR_DAILY_CAP
 MAP_CAP = config.VF_AI_MAP_DAILY_CAP
 CAPS = {AI_OCR: DAILY_CAP, **({AI_MAP: MAP_CAP} if AI_MAP != AI_OCR else {})}   # per model: each has its own quota
 READER = config.VF_READER                    # two_step: the mentor's transcribe, then map (read_then_map)
+
+
+@settings.on_change
+def _models_changed():
+    """The models saved on the Teknis screen (common/settings.py) replace .env's: a page read after this uses them,
+    and its versions name them, so a page another model read is read again."""
+    global AI_OCR, AI_MAP, CAPS
+    AI_OCR, AI_MAP = config.VF_AI_OCR, config.VF_AI_MAP
+    CAPS = {AI_OCR: DAILY_CAP, **({AI_MAP: MAP_CAP} if AI_MAP != AI_OCR else {})}
+
 MAP_TWICE = config.VF_MAP_TWICE              # map each transcript twice and merge (transcript.merge)
 STARTING = {"read_all", "transcribe"}      # a page's first call; everything else finishes a page already started
 TEXT_PURPOSES = {"map", "map_b"}           # calls that go to the text model (map_b: pass B, with knowledge)
@@ -497,8 +507,7 @@ def recompute(bid, n):
         if (not p or p["type_status"] not in ("decided", "labelled") or p["fields_all"] is None
                 or p["classical_text"] is None):
             return None
-        _, ctx = context.ensure(c, classify.JEV_QUESTION["doc_type"]["criteria"], classify.KEYWORDS,
-                                classify.JEV_TYPES)
+        _, ctx = context.ensure(c)
         sos, confirmed, day = satellite.load(c), satellite.confirmations(c, bid, n), scan_day_of(c, bid)
     dt = p["doc_type"]
     rd = {"classical_text": p["classical_text"], "ocr_words": p["ocr_words"] or []}
@@ -654,8 +663,7 @@ def handle(ticket, v1_reading=None, second_look=True):
 def _handle(ticket, bid, n, run, v1_reading, second_look):
     with db.connect() as c:
         prev = c.execute("SELECT * FROM staging.page WHERE batch_id=%s AND page_no=%s", (bid, n)).fetchone()
-        ctx_v, ctx = context.ensure(c, classify.JEV_QUESTION["doc_type"]["criteria"], classify.KEYWORDS,
-                                    classify.JEV_TYPES)
+        ctx_v, ctx = context.ensure(c)
     fv = context.fields_version(ctx) + "@" + AI_OCR           # a reading belongs to the list AND the model that made it
     if READER == "two_step":                                   # … and, read then mapped, to the transcript and mapper
         fv = two_step_versions(ctx)[2]
@@ -943,7 +951,7 @@ def trial(bid, pages, variant=None, twice=True):
     models costs one image read. twice: map a second time to measure the text model's flip rate."""
     variant = variant or f"map@{AI_MAP}"
     with db.connect() as c:
-        _, ctx = context.ensure(c, classify.JEV_QUESTION["doc_type"]["criteria"], classify.KEYWORDS, classify.JEV_TYPES)
+        _, ctx = context.ensure(c)
     schema = context.vlm_schema(ctx)
     tv = transcript.transcript_version(AI_OCR, PREP_VERSION)
     mv = transcript.map_version(context.fields_version(ctx), tv, AI_MAP)
@@ -1007,7 +1015,7 @@ def reground(bid, variant=None):
     """The trial's stored text-model answers (mapping.raw) grounded again with today's code: a grounding fix measured
     with no model call. Pages whose raw answer wasn't kept are left as they are."""
     with db.connect() as c:
-        _, ctx = context.ensure(c, classify.JEV_QUESTION["doc_type"]["criteria"], classify.KEYWORDS, classify.JEV_TYPES)
+        _, ctx = context.ensure(c)
         rows = c.execute("""SELECT t.page_no, t.variant, t.transcript, t.mapping, p.upright_path, p.ocr_words
                               FROM staging.reading_trial t JOIN staging.page p USING (batch_id, page_no)
                              WHERE t.batch_id=%s AND (%s::text IS NULL OR t.variant=%s)
@@ -1115,8 +1123,7 @@ def evaluate_reading(bid, n, fields_all):
         if (not p or p["type_status"] not in ("decided", "labelled") or p["classical_text"] is None
                 or fields_all is None):
             return None
-        _, ctx = context.ensure(c, classify.JEV_QUESTION["doc_type"]["criteria"], classify.KEYWORDS,
-                                classify.JEV_TYPES)
+        _, ctx = context.ensure(c)
         sos, confirmed, day = satellite.load(c), satellite.confirmations(c, bid, n), scan_day_of(c, bid)
     dt = p["doc_type"]
     rd = {"classical_text": p["classical_text"], "ocr_words": p["ocr_words"] or []}
