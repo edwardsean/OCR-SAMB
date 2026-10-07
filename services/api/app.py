@@ -152,16 +152,12 @@ def status():
                 "where table_schema in ('satellite','staging') order by 1")]
     except Exception:
         pass
-    keys = {
-        "TYPESAFE_API_KEY (Jev, phase 3)": bool(config.API_KEYS["TYPESAFE_API_KEY"]),
-        "GEMINI_API_KEY (VLM, phase 4)": bool(config.API_KEYS["GEMINI_API_KEY"]),
-    }
-    usage = []
-    if VF:                                  # presence only, never the values
-        keys["GROQ_API_KEY (vlm-first AI OCR)"] = bool(config.API_KEYS["GROQ_API_KEY"])
-        keys["DASHSCOPE_API_KEY (Model Studio)"] = bool(config.API_KEYS["DASHSCOPE_API_KEY"])
-        keys["ZAI_API_KEY (vlm-first teacher)"] = bool(config.API_KEYS["ZAI_API_KEY"])
-        usage = _model_usage()
+    keys = {}                               # set or not, never the values (Teknis → Model & kunci API)
+    for kind, (title, _, _) in settings.ROWS.items():
+        row = settings.EFFECTIVE.get(kind) or {}
+        keys[f"{title} ({row.get('ident') or 'not set'})"] = (
+            bool(row.get("ident")) and (bool(row.get("key")) or not settings.needs_key(row.get("url"))))
+    usage = _model_usage() if VF else []
     jobs = []
     if VF:                                  # the scheduler's jobs: when each last ran, and what it did
         try:
@@ -428,34 +424,54 @@ def _s_back(msg, name="", bad=False):
 
 @app.get("/settings", response_class=HTMLResponse, include_in_schema=False)
 def page_settings(request: Request, msg: str | None = None, bad: int = 0):
-    """Each model the system uses (image OCR, text model, Jev, the teachers, the matcher) and the API key it calls
-    with, saved here over .env (common/settings.py). Keys are only ever shown masked."""
-    from common.models.openai_vlm import PROVIDERS
+    """The three models (vision, text, classification): each an endpoint, its API key and a model from that endpoint's
+    list, set only here, never in .env (common/settings.py). Keys are only ever shown masked."""
     try:
         with db.connect() as c:
             v = settings.view(c)
     except Exception as e:                       # before migration 027
         v, msg, bad = None, f"Settings can't be read: {type(e).__name__} (apply schema/027-setting.sql)", 1
-    return templates.TemplateResponse("settings.html", ctx(request, v=v, msg=msg, bad=bad, providers=sorted(PROVIDERS)))
+    return templates.TemplateResponse("settings.html", ctx(request, v=v, msg=msg, bad=bad, missing=settings.missing()))
 
 
-@app.post("/settings", include_in_schema=False)
-def save_setting(name: str = Form(...), value: str = Form(""), by: str = Form("")):
+def _row_title(kind):
+    return settings.ROWS.get(kind, (kind,))[0]
+
+
+@app.post("/settings/row", include_in_schema=False)
+def save_model_row(kind: str = Form(...), url: str = Form(""), model: str = Form(""), key: str = Form(""),
+                   by: str = Form("")):
+    """A row's endpoint, model and (when typed) key."""
     try:
         with db.connect() as c:
-            settings.save(c, name, value, by)
+            settings.save_row(c, kind, url, model, key, by)
     except ValueError as e:
-        return _s_back(f"{name} not saved: {e}", name, bad=True)
+        return _s_back(f"{_row_title(kind)} not saved: {e}", kind, bad=True)
     settings.refresh(force=True)
-    return _s_back(f"{name} saved: every service uses it within seconds" if value.strip()
-                   else f"{name} removed: the value in .env is used again", name)
+    print(f"settings: {kind} row = {settings.norm(url)} {model.strip()}, by {by.strip()}", flush=True)
+    return _s_back(f"{_row_title(kind)} saved: every service uses {model.strip()} within seconds. Press Test to check it.",
+                   kind)
 
 
-@app.post("/settings/check", include_in_schema=False)
-def check_setting(name: str = Form(...)):
-    """Ask the provider whether it accepts the key in effect (its model list: no tokens)."""
-    ok, said = settings.check_key(name)
-    return _s_back(f"{name}: {said}", name, bad=not ok)
+@app.post("/settings/models", include_in_schema=False)
+def endpoint_models(kind: str = Form(...), url: str = Form(""), key: str = Form("")):
+    """For the screen's dropdown: the endpoint's model list (GET /models: no tokens), the model it suggests, and the
+    row's model when the endpoint is the row's. An empty key on the row's own endpoint uses the row's key (it never
+    leaves the server)."""
+    settings.refresh()
+    row = settings.EFFECTIVE.get(kind) or {}
+    url = settings.norm(url) or row.get("url", "")
+    same = url == row.get("url")
+    ids, why = settings.list_models(url, key.strip() or (row.get("key", "") if same else ""))
+    return JSONResponse({"url": url, "models": ids, "error": why, "recommended": settings.recommend(kind, ids),
+                         "current": row.get("model") if same else None})
+
+
+@app.post("/settings/test", include_in_schema=False)
+def test_model_row(kind: str = Form(...)):
+    """The row's model list, then one tiny call (a few tokens): the vision model reads a number from an image."""
+    ok, said = settings.test_row(kind)
+    return _s_back(f"{_row_title(kind)}: {said}", kind, bad=not ok)
 
 
 @app.get("/status", response_class=HTMLResponse, include_in_schema=False)

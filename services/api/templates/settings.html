@@ -3,74 +3,113 @@
 {% block main %}
   <section class="head">
     <h1>Model & kunci API</h1>
-    <p class="lede">Each model the system uses, and the API key it calls with. Saved here, used within seconds; empty = <code>.env</code>.</p>
+    <p class="lede">Three models do the AI work: the <strong>vision model</strong> for every call that sends a page image,
+      the <strong>text model</strong> for every call that sends only text, and the <strong>classification model</strong>
+      that decides each page's type. Each is an endpoint (any OpenAI-compatible API) and its API key, then a model
+      chosen from that endpoint's list. Choose instruct (non-thinking) models: a thinking model writes a long hidden
+      reasoning first, slow and paid for. They are set only here, never in <code>.env</code>:
+      while one isn't set, no page is read (pages wait, then go on by themselves once it is). Saved here, used within
+      seconds.</p>
   </section>
 
   {% if msg %}<div class="alert {{ 'bad' if bad else 'warn' }}" style="padding:10px 14px;margin:10px 0">{{ msg }}</div>{% endif %}
+  {% if v and missing %}<div class="alert bad" style="padding:10px 14px;margin:10px 0">Not set: {{ missing|join(', ') }}.
+    No page is read until {{ 'it is' if missing|length == 1 else 'they are' }} set below.</div>{% endif %}
 
   {% if v %}
   <p class="small">Your name <input class="js-name" placeholder="saved with each change" size="18"></p>
 
-  <table class="grid set">
-    <thead><tr><th>Model</th><th>Which model</th><th>Its API key</th></tr></thead>
-    <tbody>{% for m in v %}
-      <tr id="{{ m.name }}">
-        <td><strong>{{ m.what }}</strong><br><span class="small muted">{{ m.does }}</span></td>
-        <td>
-          <form method="post" action="/settings" class="setf">
-            <input type="hidden" name="name" value="{{ m.name }}"><input type="hidden" name="by" class="js-by">
-            <input name="value" class="mono" value="{{ m.value if m.from == 'UI' else '' }}" size="30"
-                   placeholder="{{ m.env or ('model name' if m.fixed else 'provider:model') }}">
-            <button type="submit">Save</button>
-          </form>
-          <div class="small muted"><span class="mono">{{ m.name }}</span> ·
-            {% if m.from == 'UI' %}saved by {{ m.by }}, {{ m.at|tgl }} <form method="post" action="/settings" class="inl">
-              <input type="hidden" name="name" value="{{ m.name }}"><input type="hidden" name="value" value="">
-              <input type="hidden" name="by" class="js-by"><button class="linkbtn" type="submit">use .env</button></form>
-            {% elif m.from %}from .env{% else %}not set{% endif %}{% if m.fixed %} · {{ m.fixed }}{% endif %}</div>
-        </td>
-        <td>
-          <form method="post" action="/settings" class="setf">
-            <input type="hidden" name="name" value="{{ m.key_name }}"><input type="hidden" name="by" class="js-by">
-            <input type="password" name="value" autocomplete="off" size="22" placeholder="{{ m.key or 'paste a key' }}">
-            <button type="submit">Save</button>
-          </form>
-          <div class="small muted">
-            {% if m.key %}<span class="mono">{{ m.key }}</span> ·
-              {% if m.key_from == 'UI' %}saved by {{ m.key_by }}, {{ m.key_at|tgl }} <form method="post" action="/settings" class="inl">
-                <input type="hidden" name="name" value="{{ m.key_name }}"><input type="hidden" name="value" value="">
-                <input type="hidden" name="by" class="js-by"><button class="linkbtn" type="submit">use .env</button></form>
-              {% else %}from .env (<span class="mono">{{ m.key_name }}</span>){% endif %}
-            {% elif m.shared and m.shared_key %}uses <span class="mono">{{ m.shared }}</span> from .env (<span class="mono">{{ m.shared_key }}</span>)
-            {% elif m.needs_key %}<span class="bad">⚠ no key</span>
-            {% else %}needs no key{% endif %}
-            {% if m.has_key and not m.fixed %} · <form method="post" action="/settings/check" class="inl"><input type="hidden" name="name" value="{{ m.name }}">
-              <button class="linkbtn" type="submit" title="ask the provider for its model list (no tokens)">check</button></form>{% endif %}
-          </div>
-        </td>
-      </tr>
-    {% endfor %}</tbody>
-  </table>
-  <p class="small muted">Model as <span class="mono">provider:model</span>, e.g. <span class="mono">dashscope:qwen-plus</span>. Providers:
-    {{ providers|join(', ') }}; the image OCR may also be <span class="mono">gemini</span>; the teachers' and the matcher's plain
-    name is a Z.ai model. A new image OCR or text model re-reads pages when they are next processed. Keys are stored in the
-    database and only ever shown masked.</p>
+  {% for r in v.rows %}
+  <section class="mrow" id="{{ r.kind }}">
+    <h2>{{ r.title }} <span class="small muted">{{ r.does }}</span>{% if not r.set %} <span class="bad small">⚠ not set</span>{% endif %}</h2>
+    <ul class="jobs small muted">{% for j in r.jobs %}<li>{{ j }}</li>{% endfor %}</ul>
+    <table class="grid set">
+      <tbody>
+        <tr><th>Endpoint</th><td><span class="mono">{{ r.url or '—' }}</span>
+          {% if r.by %}<div class="small muted">saved by {{ r.by }}{% if r.at %}, {{ r.at|tgl }}{% endif %}</div>{% endif %}</td></tr>
+        <tr><th>Model</th><td><span class="mono">{{ r.model or '—' }}</span>
+          {% if r.ident and r.ident != r.model %}<div class="small muted">known to the system as <span class="mono">{{ r.ident }}</span></div>{% endif %}</td></tr>
+        <tr><th>API key</th><td>{% if r.key %}<span class="mono">{{ r.key }}</span>{% if r.key_by %}<div class="small muted">saved by {{ r.key_by }}</div>{% endif %}
+          {% elif r.url and not r.needs_key %}<span class="small muted">none (an endpoint on this network)</span>
+          {% else %}<span class="bad">—</span>{% endif %}</td></tr>
+      </tbody>
+    </table>
+    {% if r.set %}<p class="small acts">
+      <form method="post" action="/settings/test" class="inl"><input type="hidden" name="kind" value="{{ r.kind }}">
+        <button type="submit" title="its model list, then one tiny call (a few tokens)">Test</button></form>
+    </p>{% endif %}
+    <details{% if not r.set %} open{% endif %}><summary>{{ 'Change the endpoint, key or model' if r.set else 'Set it: endpoint, key, then the model' }}</summary>
+      <form method="post" action="/settings/row" class="rowf" data-kind="{{ r.kind }}">
+        <input type="hidden" name="kind" value="{{ r.kind }}"><input type="hidden" name="by" class="js-by">
+        <label>Endpoint <input name="url" class="mono js-url" value="{{ r.url }}" placeholder="https://…/v1" autocomplete="off"></label>
+        <label>API key <input type="password" name="key" class="js-key" autocomplete="off"
+                              placeholder="{{ ('empty = keep ' ~ r.key) if r.key else 'paste the key' }}"></label>
+        <div class="pick">
+          <button type="button" class="js-find">Find models</button>
+          <select name="model" class="mono js-model" hidden></select>
+          <button type="submit" class="js-save" disabled>Save</button>
+        </div>
+        <div class="small muted js-said">Find models asks the endpoint for its list (no tokens) and suggests one.</div>
+      </form>
+    </details>
+  </section>
+  {% endfor %}
+
+  <p class="small muted">Endpoints: Alibaba Model Studio (international) <span class="mono">https://dashscope-intl.aliyuncs.com/compatible-mode/v1</span>
+    · Z.ai <span class="mono">https://api.z.ai/api/paas/v4</span> · OpenRouter <span class="mono">https://openrouter.ai/api/v1</span>
+    · Groq <span class="mono">https://api.groq.com/openai/v1</span> · Gemini <span class="mono">https://generativelanguage.googleapis.com/v1beta/openai</span>.
+    A new vision model reads pages again, and a new text model maps them again, when they are next processed. Models and
+    keys live only in the database (never in <code>.env</code>), and keys are only ever shown masked.</p>
   {% endif %}
 
   <script>
-    (function () {                           // the name, typed once (as on Review), signs every change
-      var input = document.querySelector('.js-name'), n = '';
+    (function () {
+      var input = document.querySelector('.js-name'), n = '';      // the name, typed once (as on Review), signs every change
       try { n = localStorage.getItem('rv-name') || ''; } catch (e) {}
       if (input) {
         input.value = n;
         input.addEventListener('input', function () { try { localStorage.setItem('rv-name', input.value); } catch (e) {} });
       }
       document.querySelectorAll('form').forEach(function (f) {
-        if (f.getAttribute('action') === '/settings/check') return;      // checking a key changes nothing
+        if (f.getAttribute('action') === '/settings/test') return;      // testing changes nothing
         f.addEventListener('submit', function (e) {
           var who = (input && input.value.trim()) || '';
           if (!who) { e.preventDefault(); if (input) { input.focus(); input.placeholder = 'type your name first'; } return; }
           f.querySelectorAll('.js-by').forEach(function (b) { b.value = who; });
+        });
+      });
+
+      // a row: Find models lists the endpoint's models and pre-selects the suggested one; Save waits for a list
+      document.querySelectorAll('form.rowf').forEach(function (f) {
+        var url = f.querySelector('.js-url'), key = f.querySelector('.js-key'), sel = f.querySelector('.js-model'),
+            save = f.querySelector('.js-save'), said = f.querySelector('.js-said');
+        function stale() { save.disabled = true; sel.hidden = true; }
+        url.addEventListener('input', stale);
+        key.addEventListener('input', stale);
+        f.querySelector('.js-find').addEventListener('click', function () {
+          said.textContent = 'asking the endpoint…';
+          var body = new FormData();
+          body.append('kind', f.dataset.kind); body.append('url', url.value); body.append('key', key.value);
+          fetch('/settings/models', {method: 'POST', body: body}).then(function (r) { return r.json(); }).then(function (d) {
+            sel.innerHTML = '';
+            if (d.error) { said.textContent = d.error; stale(); return; }
+            if (!d.models.length) { said.textContent = 'the endpoint lists no models'; stale(); return; }
+            var order = d.models.slice().sort(function (a, b) {
+              return (b === d.recommended) - (a === d.recommended) || (b === d.current) - (a === d.current) || a.localeCompare(b);
+            });
+            order.forEach(function (m) {
+              var o = document.createElement('option');
+              o.value = m;
+              o.textContent = m + (m === d.recommended ? '  (suggested)' : '') + (m === d.current ? '  (in use)' : '');
+              sel.appendChild(o);
+            });
+            sel.value = d.current && d.models.indexOf(d.current) >= 0 ? d.current : (d.recommended || order[0]);
+            sel.hidden = false; save.disabled = false;
+            said.textContent = d.models.length + ' models at this endpoint. ' + (d.recommended
+              ? 'Suggested: ' + d.recommended + ', the one this system was measured with.'
+              : 'None this system knows: choose ' + ({vision: 'one that reads images.', text: 'an instruct (non-thinking) model.',
+                                                       classify: 'an instruct (non-thinking) model, then Test it: it must give probabilities.'}[f.dataset.kind]));
+          }).catch(function () { said.textContent = 'the screen could not ask the endpoint'; stale(); });
         });
       });
     })();

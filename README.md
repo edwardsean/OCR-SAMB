@@ -98,7 +98,7 @@ You need Docker (give it at least 4 GB of memory) and git.
 
 ```bash
 git clone git@github.com:edwardsean/OCR-SAMB.git && cd OCR-SAMB && git checkout read-then-map
-cp .env.example .env                                   # then fill in the AI keys you have (see below)
+cp .env.example .env                                   # servers and passwords (the AI models come later, in the web app)
 docker compose -f docker-compose.servers.yml up -d     # Postgres, RabbitMQ, MinIO
 ./scripts/setup.sh                                     # the database (every migration) and the RabbitMQ vhost
 docker compose up -d --build                           # the API, the web app, the workers
@@ -114,13 +114,17 @@ Check it with the tests: `docker compose exec -e PYTHONPATH=/app rtm-api pytest 
 80 of them skip: they read the sample scan (`testdata/sample.pdf`) or stored orders, real customer documents that are
 not in git. None should fail.
 
-**Models and keys**: in `.env` (`.env.example` lists them), or later on Teknis → Model & kunci API, which overrides
-`.env` for each model:
-- the AI OCR's provider key for `VF_AI_OCR` (e.g. `DASHSCOPE_API_KEY` for `dashscope:qwen3-vl-plus`);
-- `TYPESAFE_API_KEY` for Jev;
-- `ZAI_API_KEY` for the teacher.
+**Models and keys** are set only in the web app, on Teknis → Model & kunci API (never in `.env`):
+- the **vision model**, for every call that sends a page image (including the page-type teacher);
+- the **text model**, for every call that sends only text (including the knowledge teacher and the product matcher);
+- the **classification model**, which decides each page's type (an instruct, non-thinking model; it replaced
+  TypeSafe's Jev).
 
-Without them the screens and the API work, but no page gets read.
+For each: enter the endpoint (any OpenAI-compatible API, e.g. Alibaba Model Studio's
+`https://dashscope-intl.aliyuncs.com/compatible-mode/v1`) and its API key, press Find models (it suggests the model
+this system was measured with), Save, then Test.
+
+Until they are set, the screens and the API work, but no page is read: pages wait and go on by themselves once they are.
 
 **Satellite's export.** The orders are checked against it, so without it every order stays on hold. It is three CSV
 files of real customer data: ask Edward, keep them out of git, and load them with:

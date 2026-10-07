@@ -23,8 +23,6 @@ x-py: &py
     STORAGE_PREFIX: ${STORAGE_PREFIX:-rtm/}
     SERVICE_PREFIX: ${SERVICE_PREFIX:-rtm}
     PIPELINE: ${PIPELINE:-vlm-first}
-    VF_AI_OCR: ${VF_AI_OCR:-groq:qwen/qwen3.8-27b}     # the AI OCR (vision): transcribes
-    VF_AI_MAP: ${VF_AI_MAP:-}                           # the text model that maps a transcript (empty = the AI OCR)
     VF_READER: ${VF_READER:-two_step}                   # adopted here: transcribe everything, then map (twice, merged)
   restart: unless-stopped
 

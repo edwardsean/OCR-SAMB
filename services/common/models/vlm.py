@@ -35,7 +35,7 @@ def _models():
 
 
 def _call(parts, schema, retries=4, timeout=180):
-    key = settings.key("VF_AI_OCR", "gemini")       # the image OCR's own key, else GEMINI_API_KEY
+    key = settings.key("vision")                    # the vision row's key (Teknis → Model & kunci API)
     if not key:
         raise RuntimeError("no GEMINI_API_KEY")
     body = {"contents": [{"role": "user", "parts": parts}],

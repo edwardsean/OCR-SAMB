@@ -35,7 +35,7 @@ from common.verify import flat
 from worker import classify, vf
 from worker import main as v1
 
-TEACH_MODEL = config.WIKI_TEACHER_MODEL   # text: a Z.ai model name, or provider:model (the Teknis screen)
+TEACH_MODEL = config.WIKI_TEACHER_MODEL   # the text model (the Teknis screen "Model & kunci API")
 
 
 @settings.on_change

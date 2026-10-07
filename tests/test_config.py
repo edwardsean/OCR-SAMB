@@ -29,7 +29,6 @@ def test_every_setting_is_listed_for_people():
         pytest.skip(".env.example isn't mounted here")
     listed = set(re.findall(r"^#?\s*([A-Z][A-Z0-9_]+)=", EXAMPLE.read_text(), re.M))
     read = set(re.findall(r'_(?:str|int|float|bool|url)\("([A-Z0-9_]+)"', (CODE / "common" / "config.py").read_text()))
-    read |= {"GROQ_API_KEY", "OPENROUTER_API_KEY", "ZAI_API_KEY", "MISTRAL_API_KEY", "DASHSCOPE_API_KEY", "GEMINI_API_KEY"}
     # set by docker-compose.yml from other settings, never by hand
     composed = {"DATABASE_URL", "MAIN_DATABASE_URL", "AMQP_URL"}
     assert not (read - listed - composed), sorted(read - listed - composed)
@@ -40,6 +39,16 @@ def test_a_missing_required_setting_says_which(monkeypatch):
     monkeypatch.setattr(config, "DATABASE_URL", "")
     with pytest.raises(RuntimeError, match="DATABASE_URL is not set"):
         config.required("DATABASE_URL")
+
+
+def test_no_model_or_key_comes_from_the_environment():
+    """Models and their keys are set only on the Teknis screen (the user, 2026-10-07): config reads none of them."""
+    text = (CODE / "common" / "config.py").read_text()
+    read = set(re.findall(r'_(?:str|int|float|bool|url)\("([A-Z0-9_]+)"', text))
+    assert not {n for n in read if n.endswith("_API_KEY") or n in {
+        "VF_AI_OCR", "VF_AI_MAP", "JEV_MODEL", "TEACHER_MODEL", "WIKI_TEACHER_MODEL", "MATCH_MODEL",
+        "VISION_BASE_URL", "VISION_MODEL", "TEXT_BASE_URL", "TEXT_MODEL", "CLASSIFY_BASE_URL", "CLASSIFY_MODEL",
+        "TYPESAFE_URL"}}, read
 
 
 def test_values_are_typed(monkeypatch):
