@@ -1,0 +1,37 @@
+{% extends "base.html" %}
+{% block title %}Semua jawaban jenis halaman{% endblock %}
+{% block main %}
+  <section class="head">
+    <p class="crumbs"><a href="/label?batch={{ batch }}">Jenis halaman</a> / semua jawaban</p>
+    <h1>Semua jawaban jenis halaman <span class="muted">{{ rows|length }}</span></h1>
+    <p class="lede">Halaman yang jenisnya sudah ditentukan orang. Jawaban latihan boleh dipelajari; jawaban ujian hanya untuk mengukur.</p>
+  </section>
+  {% if prog %}
+  <section class="progress">
+    <div>latihan <strong>{{ prog.practice }}</strong> · ujian <strong>{{ prog.exam }}</strong> · halaman belum pasti yang sudah dijawab {{ prog.unsure_done }} dari {{ prog.unsure }}</div>
+    <div>{% for t, n in by_type.items() %}<span class="tchip t-{{ t }}">{{ DOC_SHORT.get(t, t) }}</span> {{ n }} &nbsp; {% endfor %}</div>
+  </section>
+  {% endif %}
+  <section>
+    <table class="grid small">
+      <thead><tr><th></th><th>Halaman</th><th>Jawaban</th><th>Pelanggan</th><th>Catatan</th><th>Tumpukan</th><th>Tebakan sistem</th><th>Oleh</th><th></th></tr></thead>
+      <tbody>
+      {% for r in rows %}
+        <tr>
+          <td><img class="mini" src="/img/{{ r.thumb_upright_path }}" alt=""></td>
+          <td><a href="/batches/{{ r.batch_id }}/pages/{{ r.page_no }}">{{ r.page_no }}</a></td>
+          <td><span class="tchip t-{{ r.label }}">{{ DOC_SHORT.get(r.label, r.label) }}</span></td>
+          <td>{{ r.customer or '' }}</td>
+          <td class="muted">{{ r.note or '' }}</td>
+          <td><span class="pill {{ 'exam' if r.pile == 'exam' else '' }}">{{ 'ujian' if r.pile == 'exam' else 'latihan' }}</span></td>
+          <td class="muted">{% if r.type_status == 'decided' %}{{ DOC_SHORT.get(r.doc_type, r.doc_type) }}{% else %}belum pasti (tebakan {{ r.type_guess or '—' }}){% endif %}</td>
+          <td class="muted">{{ r.labelled_by or '' }}</td>
+          <td><a href="/label?batch={{ r.batch_id }}&page={{ r.page_no }}">ubah</a></td>
+        </tr>
+      {% else %}
+        <tr><td colspan="9" class="muted">Belum ada jawaban. <a href="/label?batch={{ batch }}">Mulai tentukan jenis halaman</a>.</td></tr>
+      {% endfor %}
+      </tbody>
+    </table>
+  </section>
+{% endblock %}

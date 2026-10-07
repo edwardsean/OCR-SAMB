@@ -1,9 +1,10 @@
 """Notices: bundles that newly need a person (vlm-first, Stage 2; schema/018-notice.sql).
 
-  n8n's "vf — needs you" schedule calls vf-ui every 5 minutes (/internal/vf/notify → record). A bundle needs a person
+  The scheduler's "notify" job (scheduler/serve.py, every NOTIFY_EVERY_MINUTES) calls record. A bundle needs a person
   when its status is needs_review; it is new when no earlier notice had it with the same fingerprint (a bundle that
-  was approved and then changed needs a person again). The UI shows unseen notices as a count on the Review tab and
-  a list on /review, and opening /review marks them seen. Only in the UI for now (the user, 2026-09-29).
+  was approved and then changed needs a person again). The web app shows unseen notices as a count on the Periksa
+  order tab and a list on its screen, which marks them seen once a browser shows it. Only in the web app for now
+  (the user, 2026-09-29).
 """
 from psycopg.types.json import Json
 

@@ -1,0 +1,75 @@
+<section class="checks {% if s.all_ok %}pass{% else %}fail{% endif %}">
+  <h2>Ringkasan <span class="count">acceptance</span></h2>
+  <ul>
+  {% for label, ok, detail in s.checks %}
+    <li class="{{ 'ok' if ok else 'bad' }}"><span class="dot"></span>{{ label }} <em>{{ detail }}</em></li>
+  {% endfor %}
+  </ul>
+</section>
+
+<section>
+  <h2>Layanan</h2>
+  <table class="grid">
+    <thead><tr><th></th><th>Layanan</th><th>Tugas</th><th>Detail</th><th>Konsol</th></tr></thead>
+    <tbody>
+    {% for r in s.services %}
+      <tr class="{{ 'ok' if r.ok else 'bad' }}">
+        <td><span class="dot"></span></td>
+        <td><strong>{{ r.name }}</strong></td>
+        <td class="muted">{{ r.role }}</td>
+        <td class="mono">{{ r.detail }}</td>
+        <td>{% if r.link %}<a href="{{ r.link }}" target="_blank" rel="noopener">buka ↗</a>{% endif %}</td>
+      </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+</section>
+
+{% if s.jobs %}
+<section>
+  <h2>Jadwal <span class="count">the scheduler's jobs</span></h2>
+  <table class="grid">
+    <thead><tr><th>Job</th><th>Last started</th><th>Last finished</th><th>Runs</th><th>Result</th></tr></thead>
+    <tbody>
+    {% for j in s.jobs %}
+      <tr class="{{ 'bad' if j.last_error else '' }}"><td class="mono">{{ j.name }}</td><td>{{ j.last_started|tgl }}</td>
+        <td>{{ j.last_finished|tgl }}</td><td>{{ j.runs }}</td>
+        <td class="mono small">{{ j.last_error or (j.last_result|tojson|truncate(160)) }}</td></tr>
+    {% endfor %}
+    </tbody>
+  </table>
+</section>
+{% endif %}
+
+{% if s.usage %}
+<section>
+  <h2>Model AI</h2>
+  <table class="grid">
+    <thead><tr><th>Model</th><th>Panggilan hari ini</th><th>Token terpakai</th></tr></thead>
+    <tbody>
+    {% for u in s.usage %}
+      <tr><td class="mono">{{ u.model }}</td><td>{{ u.today }} dari {{ u.cap }}</td>
+          <td>{{ '{:,}'.format(u.tokens) }}{% if u.since %} <span class="muted">sejak {{ u.since|tgl }}</span>{% endif %}</td></tr>
+    {% endfor %}
+    </tbody>
+  </table>
+</section>
+{% endif %}
+
+<div class="two">
+  <section>
+    <h2>Tabel <span class="count">{{ s.tables|length }}</span></h2>
+    <ul class="tables mono">
+      {% for t in s.tables %}<li>{{ t }}</li>{% else %}<li class="muted">none — schema not loaded</li>{% endfor %}
+    </ul>
+  </section>
+  <section>
+    <h2>Kunci API model</h2>
+    <ul class="keys">
+      {% for k, set in s.model_keys.items() %}
+        <li class="{{ 'ok' if set else 'warn' }}"><span class="dot"></span>{{ k }} <em>{{ 'terpasang' if set else 'belum dipasang (cadangan dipakai)' }}</em></li>
+      {% endfor %}
+    </ul>
+    <p class="note">Free-tier Gemini inputs may be used by Google to improve its models. These are real invoices with NPWP numbers: use it on the sample only, and switch to a paid tier or the local Ollama model before real volume.</p>
+  </section>
+</div>

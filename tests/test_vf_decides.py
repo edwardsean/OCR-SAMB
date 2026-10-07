@@ -16,7 +16,7 @@ EMPTY = {"verdict": "empty"}
 
 
 def ctx():
-    return context.seed(classify.JEV_QUESTION["doc_type"]["criteria"], classify.KEYWORDS, classify.JEV_TYPES)
+    return context.seed_content()
 
 
 def test_decision_values_are_fields_of_their_type():
@@ -89,7 +89,7 @@ def test_the_vendor_is_information():
 
 @pytest.mark.skipif(os.environ.get("PIPELINE") != "vlm-first", reason="vlm-first only")
 def test_review_folds_values_kept_as_read():
-    from ui import app
+    from api import app
     v = app.review_view("b-4bab9b736d", "SOR26110257259")                  # Hero: FP 29, PO 30, receipt 31
     if not v:
         pytest.skip("bundle not in this database")

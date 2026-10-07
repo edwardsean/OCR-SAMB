@@ -11,22 +11,23 @@ here: every field comes back as {value, source_text, box}, with box converted to
 import base64
 import io
 import json
-import os
 import re
 import time
 
 import httpx
 from PIL import Image
 
+from common import config, settings
 from common.models import vlm
 
+_URL = config.PROVIDER_URLS     # where each provider answers (common/config.py: <PROVIDER>_BASE_URL)
 PROVIDERS = {   # name -> (base URL, key variable, max images per request)
-    "groq": ("https://api.groq.com/openai/v1", "GROQ_API_KEY", 3),
-    "openrouter": ("https://openrouter.ai/api/v1", "OPENROUTER_API_KEY", 8),
-    "zai": ("https://api.z.ai/api/paas/v4", "ZAI_API_KEY", 8),
-    "mistral": ("https://api.mistral.ai/v1", "MISTRAL_API_KEY", 8),
-    "dashscope": ("https://dashscope-intl.aliyuncs.com/compatible-mode/v1", "DASHSCOPE_API_KEY", 8),
-    "ollama": (os.environ.get("OLLAMA_URL", "http://host.docker.internal:11434") + "/v1", None, 8),
+    "groq": (_URL["groq"], "GROQ_API_KEY", 3),
+    "openrouter": (_URL["openrouter"], "OPENROUTER_API_KEY", 8),
+    "zai": (_URL["zai"], "ZAI_API_KEY", 8),
+    "mistral": (_URL["mistral"], "MISTRAL_API_KEY", 8),
+    "dashscope": (_URL["dashscope"], "DASHSCOPE_API_KEY", 8),
+    "ollama": (_URL["ollama"], None, 8),
 }
 MAX_IMAGE_BYTES = 3_500_000
 
@@ -43,12 +44,13 @@ def spec_parts(spec):
 
 
 def _image(png_bytes):
-    """(data URL, width, height). Shrinks a page only if it's too big to send."""
+    """(data URL, width, height of the image SENT). Shrinks a page only if it's too big to send."""
     im = Image.open(io.BytesIO(png_bytes))
     w, h = im.size
     if len(png_bytes) > MAX_IMAGE_BYTES:
         im = im.convert("L")
         im.thumbnail((2000, 2000))
+        w, h = im.size                    # the size actually sent: a pixel box is on this image, not the original
         b = io.BytesIO(); im.save(b, "PNG", optimize=True)
         png_bytes = b.getvalue()
     return "data:image/png;base64," + base64.b64encode(png_bytes).decode(), w, h
@@ -64,14 +66,15 @@ def _wait_seconds(r):
     return 10.0
 
 
-def _post(spec, content, max_tokens=4096):
+def _post(spec, content, max_tokens=4096, role="VF_AI_OCR"):
+    """role: the model setting this call is for (VF_AI_OCR, VF_AI_MAP): its own API key, else its provider's."""
     provider, model = spec_parts(spec)
     base, key_var, _ = PROVIDERS[provider]
     headers = {}
     if key_var:
-        key = os.environ.get(key_var)
+        key = settings.key(role, spec)
         if not key:
-            raise RuntimeError(f"no {key_var} in .env")
+            raise RuntimeError(f"no API key for {role}: set it on Teknis → Model & kunci API, or {key_var} in .env")
         headers["Authorization"] = f"Bearer {key}"
     body = {"model": model, "temperature": 0, "max_tokens": max_tokens, "response_format": {"type": "json_object"},
             "messages": [{"role": "user", "content": content}]}
@@ -175,6 +178,58 @@ def extract_all(png_bytes, schema, spec):
     colnames = list(schema["properties"].get("lines", {}).get("items", {}).get("properties", {}))
     out["lines"] = [{c: _text(r.get(c)) for c in colnames} for r in raw.get("lines") or [] if isinstance(r, dict)]
     return out, meta
+
+
+def transcribe(png_bytes, spec):
+    """Step 1 of read-then-map: the page copied whole, no field list (vlm.TRANSCRIBE). Returns (blocks, meta):
+    blocks [{id, kind, text, cells?, box [ymin, xmin, ymax, xmax] 0-1000 or None, about?}] in the model's order.
+    Shape only here; common/transcript.py checks the content."""
+    url, w, h = _image(png_bytes)
+    content = [{"type": "text", "text": vlm.TRANSCRIBE}, {"type": "image_url", "image_url": {"url": url}}]
+    text, meta = _post(spec, content, max_tokens=TRANSCRIBE_TOKENS)
+    try:
+        raw = _json(text)
+    except json.JSONDecodeError:            # a long page's answer broken somewhere (or cut at max_tokens): keep every
+        raw = {"blocks": salvage_blocks(text)}          # whole block before the break, and say so
+        meta = {**meta, "salvaged": len(raw["blocks"])}
+        if not raw["blocks"]:
+            raise
+    if (meta.get("tokens_out") or 0) >= TRANSCRIBE_TOKENS - 16:
+        meta = {**meta, "cut": True}                    # the model stopped at the limit: the page's end is missing
+    blocks = []
+    for b in raw.get("blocks") or [] if isinstance(raw, dict) else []:
+        if not isinstance(b, dict):
+            continue
+        cells = b.get("cells")
+        blocks.append({"id": _text(b.get("id")), "kind": _text(b.get("kind")) or "printed",
+                       "text": _text(b.get("text")) or "",
+                       "cells": [("" if c is None else str(c)) for c in cells] if isinstance(cells, list) else None,
+                       "box": _box(b.get("box"), w, h), "about": _text(b.get("about"))})
+    return blocks, meta
+
+
+TRANSCRIBE_TOKENS = 12000
+
+
+def salvage_blocks(text):
+    """The complete block objects in a broken answer, in order: each '{"id": …}' that parses on its own."""
+    out, dec = [], json.JSONDecoder()
+    for m in re.finditer(r'\{\s*"id"\s*:', text or ""):
+        try:
+            obj, _ = dec.raw_decode(text, m.start())
+        except json.JSONDecodeError:
+            continue
+        if isinstance(obj, dict):
+            out.append(obj)
+    return out
+
+
+def map_text(prompt, spec):
+    """Step 2 of read-then-map: a text-only call (the transcript and the field list are in the prompt). Returns
+    (the answer's JSON object, meta)."""
+    text, meta = _post(spec, [{"type": "text", "text": prompt}], max_tokens=4096, role="VF_AI_MAP")
+    raw = _json(text)
+    return (raw if isinstance(raw, dict) else {}), meta
 
 
 def second_look(png_bytes, asks, crops, spec):

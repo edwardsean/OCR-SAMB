@@ -1,4 +1,4 @@
-"""Phase 1 acceptance: upload → MinIO → n8n → 288 page rows → 288 tickets; same file twice rejected."""
+"""Phase 1 acceptance: upload → MinIO → q.intake → 288 page rows → 288 tickets; same file twice rejected."""
 import os
 
 import pytest
@@ -7,9 +7,11 @@ import time
 
 import httpx
 
-pytestmark = pytest.mark.skipif(os.environ.get("PIPELINE") == "vlm-first", reason="v1 acceptance; vlm-first has its own")
+pytestmark = [pytest.mark.skipif(os.environ.get("PIPELINE") == "vlm-first", reason="v1 acceptance; vlm-first has its own")]
+from _sample import needs_sample  # noqa: E402
+pytestmark.append(needs_sample)
 
-UI = os.environ.get("UI_URL", "http://ui:8000")   # vlm-first sets its own UI
+UI = os.environ.get("API_URL", "http://localhost:8000")
 SAMPLE = "/data/sample.pdf"
 NAME = "7000356304 - 7000356499.pdf"
 
@@ -20,16 +22,15 @@ def _batch_id():
 
 def _upload():
     with open(SAMPLE, "rb") as f:
-        return httpx.post(f"{UI}/upload", files={"file": (NAME, f, "application/pdf")},
-                          follow_redirects=False, timeout=60)
+        return httpx.post(f"{UI}/api/v1/scans", files={"file": (NAME, f, "application/pdf")}, timeout=60)
 
 
 def test_upload_split_and_queue():
     bid = _batch_id()
     if httpx.get(f"{UI}/api/batches/{bid}").status_code == 404:
         r = _upload()
-        assert r.status_code == 303, r.text[:300]
-        assert r.headers["location"] == f"/batches/{bid}"
+        assert r.status_code == 201, r.text[:300]
+        assert r.json()["batch_id"] == bid
 
     deadline = time.time() + 420
     while time.time() < deadline:

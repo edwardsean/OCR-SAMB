@@ -8,7 +8,7 @@ import pytest
 from common import satellite
 from grouper import crosscheck
 
-UI = os.environ.get("UI_URL", "http://ui:8000")
+UI = os.environ.get("API_URL", "http://localhost:8000")
 BID = "b-4bab9b736d"
 VF = os.environ.get("PIPELINE") == "vlm-first"
 
@@ -52,10 +52,13 @@ def test_approval_waits_until_nothing_is_left():
 
 @pytest.mark.skipif(not VF, reason="vlm-first only")
 def test_the_review_screens_answer():
-    r = httpx.get(f"{UI}/review", params={"batch": BID}, timeout=60)
-    assert r.status_code == 200 and "SOR26110257250" in r.text
-    r = httpx.get(f"{UI}/review/SOR26110257250", params={"batch": BID}, timeout=60)
-    assert r.status_code == 200 and "CGR" in r.text and ("What is left" in r.text or "Published" in r.text)
+    import _data
+    _data.order("SOR26110257250")
+    r = httpx.get(f"{UI}/api/v1/orders", params={"batch": BID}, timeout=60)
+    assert r.status_code == 200 and "SOR26110257250" in [x["sor_no"] for x in r.json()["rows"]]
+    o = httpx.get(f"{UI}/api/v1/orders/SOR26110257250", params={"batch": BID}, timeout=60).json()
+    assert o["labels"]["received"] == "Barang diterima = CGR Satellite"       # every check, named for people
+    assert o["bundle"]["status"] in ("published", "auto_ok", "reviewed", "needs_review", "grouping")
 
 
 # ------------------------------------------------------------------------------------------ S5: anomalies only
@@ -67,7 +70,7 @@ def test_a_bundle_never_checked_cant_be_approved():
 def test_a_page_shows_only_the_values_that_hold_it():
     """A PO waits for its key; its total and PPN are the bundle's to judge and its vendor code is kept as read, so
     the card asks for the PO number alone."""
-    from ui import app
+    from api import app
     check = {"verdict": "check", "why": "not in Tesseract's text"}
     pages = {6: {"outcome": "needs_person", "fields": {"purchase_order_no": {"value": "PO.2026.09.32029"},
                                                        "total": {"value": "775397.00"}},
@@ -79,7 +82,7 @@ def test_a_page_shows_only_the_values_that_hold_it():
 
 
 def test_open_checks_become_cards_and_passing_ones_dont():
-    from ui import app
+    from api import app
     checks = {"sor_in_satellite": {"status": "pass", "why": ""}, "fp_po_lines": {"status": "info", "why": ""},
               "docs_complete": {"status": "fail", "why": "no TTG in the bundle", "print": "x"},
               "received": {"status": "waiting", "why": "no goods receipt yet", "print": "y"},
@@ -91,19 +94,15 @@ def test_open_checks_become_cards_and_passing_ones_dont():
 
 @pytest.mark.skipif(not VF, reason="vlm-first only")
 def test_review_asks_only_for_what_is_left():
-    """Before S5 the Duta Buah bundle drew 73 forms for 2 open items; a row or a value kept as read never asks."""
-    import re
-    from ui import app
+    """Before S5 the Duta Buah bundle drew 73 forms for 2 open items; a row or a value kept as read never asks. What
+    the web app draws before its fold is one card per open item (and the customer's questions), nothing else."""
+    import _data
+    _data.scan(BID)
     for batch, sor in ((BID, "SOR26110256810"), (BID, "SOR26110257259"), (BID, "SOR26110255837")):
-        v = app.review_view(batch, sor)
-        r = httpx.get(f"{UI}/review/{sor}", params={"batch": batch}, timeout=60)
-        top = r.text.split('<details class="rv-all"')[0]
-        cal = sum(len(c["asks"]) for c in [v["calibration"]] if c)
-        allowed = sum(1 + len(i.get("fix") or []) + len(i.get("fields") or [])
-                      + sum(1 for x in i.get("qty_fix") or [] if (x.get("key") and x.get("line")) or not x.get("line"))
-                      for i in v["open_items"]) + cal + \
-            (1 if v["can_approve"] else 0)
-        assert len(re.findall(r"<form", top)) <= allowed, sor
+        v = httpx.get(f"{UI}/api/v1/orders/{sor}", params={"batch": batch}, timeout=60).json()
+        assert {i["kind"] for i in v["open_items"]} <= {"check", "page", "label", "wait"}, sor
+        for i in v["open_items"]:                          # a page card asks only for what holds the page
+            assert i["kind"] != "page" or i["fields"], sor
         for d in v["documents"]:                          # quantity suggestions carry their unit (a bare 48 on a
             for row in d["rows"]:                         # carton row was taken as 48 cartons)
                 for x in row["todo"]:
@@ -124,3 +123,28 @@ def test_a_person_can_say_a_value_isnt_printed():
     pages = {5: {"doc_type": "TTG", "fields": f, "fields_all": {"total": {"value": "190.00"}},
                  "checks": {"header": h}}}
     assert crosscheck._read(pages, [5], "TTG", "total") is None                 # never the AI's 190.00
+
+
+def test_each_receipt_row_says_what_was_read_and_what_is_wrong():
+    """The user (2026-10-02): "i dont know what the system read for qty". Each receipt row the card shows carries one
+    plain problem (quantity not read, a pack size read as one, a different number, a product not recognised), the
+    card's title counts them, and Satellite's rejection shows on the row of its line."""
+    from api import app
+    rows = [{"page": 3, "i": 0, "line": 10, "qty": None, "uom": "CARTON 20", "pieces": None, "want": 0.0, "per": 20.0,
+             "pack": False, "desc": "AYAM 2 TELOR"},
+            {"page": 3, "i": 1, "line": 20, "qty": "20", "uom": "CTN", "pieces": 400.0, "want": 40.0, "per": 20.0,
+             "pack": True, "desc": "SENNA KRUPUKKU"},
+            {"page": 3, "i": 2, "line": None, "qty": "0.00", "uom": "CARTON 20", "pieces": None, "want": None, "per": None,
+             "pack": None, "desc": "HIRUNKU"}]
+    checks = {"received": {"status": "fail", "why": "w", "print": "p", "qty_rows": rows,
+                           "lines": [{"line_no": 10, "receipt": None, "satellite": 0.0},
+                                     {"line_no": 20, "receipt": 400.0, "satellite": 40.0}],
+                           "tolakan": ["line 10: 40 pieces (DITOLAK ITEM TIDAK SESUAI PO)",
+                                       "line 30: 10 pieces (DITOLAK KEMASAN RUSAK)"]}}
+    pages = {3: {"outcome": "clear", "fields": {"lines": [{}, {}, {}]}, "checks": {"header": {}}}}
+    it = app._open_items("b", "SOR1", [(3, "TTG", [3])], pages, checks, [], {}, lambda n, t, f: {})[0]
+    assert [x["issue"] for x in it["qty_fix"]] == ["unread", "pack", "unpaired"]
+    assert it["plain"] == ("Tanda Terima: 1 jumlah diterima tidak terbaca, 1 angka terbaca adalah isi kemasan, "
+                           "1 baris belum dikenali")
+    assert it["qty_fix"][0]["rejected"] == (40.0, "DITOLAK ITEM TIDAK SESUAI PO")       # on the row of its line
+    assert it["tolakan_rows"] == [{"line": 30, "pcs": 10.0, "why": "DITOLAK KEMASAN RUSAK"}]   # the others, listed

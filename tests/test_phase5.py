@@ -3,16 +3,16 @@ Unit tests pin each rule; the acceptance test reads the batch's phase-5 checks (
 import os
 
 import pytest
-import hashlib
 
 import httpx
 
 from common import verify
 
-pytestmark = pytest.mark.skipif(os.environ.get("PIPELINE") == "vlm-first", reason="v1 acceptance; vlm-first has its own")
+pytestmark = [pytest.mark.skipif(os.environ.get("PIPELINE") == "vlm-first", reason="v1 acceptance; vlm-first has its own")]
 
-UI = os.environ.get("UI_URL", "http://ui:8000")   # vlm-first sets its own UI
-BID = "b-" + hashlib.sha256(open("/data/sample.pdf", "rb").read()).hexdigest()[:10]
+UI = os.environ.get("API_URL", "http://localhost:8000")
+from _sample import BID, needs_sample  # noqa: E402  (skips without the sample scan)
+pytestmark.append(needs_sample)
 
 
 def v(value, source):

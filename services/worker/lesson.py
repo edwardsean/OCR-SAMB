@@ -29,7 +29,7 @@ from concurrent.futures import ThreadPoolExecutor
 
 from psycopg.types.json import Json
 
-from common import context, db, verify
+from common import config, context, db, settings, verify
 from common.models import teacher
 from worker import classify, vf
 from worker import main as v1
@@ -158,7 +158,7 @@ def jev_decides(fields_all, ctx, qr_text, layout_score, bid, n, purpose, title=N
     return _decide(fields_all, ctx, qr_text, layout_score, bid, n, purpose, title)[0]
 
 
-JEV_AT_ONCE = 6                                       # replay calls are independent: ask Jev about several at once
+JEV_AT_ONCE = config.JEV_AT_ONCE  # replay calls are independent: ask Jev about several at once
 
 
 def replay(old, new, trial=None):
@@ -252,8 +252,7 @@ def run_one(lesson):
         page = c.execute("""SELECT p.*, l.pile, l.note, l.label::text AS label FROM staging.page p
                             JOIN staging.type_label l USING (batch_id, page_no)
                             WHERE p.batch_id=%s AND p.page_no=%s""", (bid, n)).fetchone()
-        ctx_v, ctx = context.ensure(c, classify.JEV_QUESTION["doc_type"]["criteria"], classify.KEYWORDS,
-                                    classify.JEV_TYPES)
+        ctx_v, ctx = context.ensure(c)
         newer = approved_after(c, ctx_v, lesson["created_at"])
 
     def done(status, **kw):
@@ -294,9 +293,9 @@ def run_one(lesson):
     for _ in range(2):                                # a second try is told why the first wasn't kept
         try:
             answer, meta = teacher.ask(png, prompt(ctx, page["label"], page["note"], state, jev, earlier))
-            vf.ledger("zai", "teach", bid, n, True, meta)
+            vf.ledger(teacher.provider_of(teacher.MODEL), "teach", bid, n, True, meta)
         except Exception as e:
-            vf.ledger("zai", "teach", bid, n, False, error=f"{type(e).__name__}: {e}"[:300])
+            vf.ledger(teacher.provider_of(teacher.MODEL), "teach", bid, n, False, error=f"{type(e).__name__}: {e}"[:300])
             return later(f"teacher: {type(e).__name__}: {e}"[:300])
         change = answer.get("change") or {"kind": "none"}
         if change.get("kind") == "none":
@@ -314,7 +313,7 @@ def run_one(lesson):
             trial = None
             if change.get("kind") == "new_field":    # the AI OCR must read the new field before the replay means much
                 try:
-                    reading, _ = vf.ai_call("read_all", bid, n, vf.read_all, png, context.vlm_schema(new))
+                    reading = vf.read_fields(bid, n, new)   # one step: the image again; two: the transcript
                 except Exception as e:
                     return later(f"AI OCR: {type(e).__name__}: {e}"[:300])
                 trial = {n: reading}
@@ -349,6 +348,7 @@ def ask_in_turn(lessons, ask):
 
 
 def run(limit=50, quiet=False):
+    settings.refresh()                          # the models and keys saved on the Teknis screen
     with db.connect() as c:
         pending = c.execute("SELECT version FROM staging.context_version WHERE status='proposed'").fetchall()
         # only pages vlm-first prepared: the teacher needs the upright image (the tests' throwaway pages have none)
@@ -383,14 +383,27 @@ def serve():
             ch.basic_qos(prefetch_count=1)
             print("vf-teacher waiting on", queue.Q_LESSONS, flush=True)
             run(quiet=True)                           # whatever waited while this service was down
+            teach_wiki()
             for method, _, body in ch.consume(queue.Q_LESSONS, inactivity_timeout=1800):
                 if method:
                     ch.basic_ack(method.delivery_tag)   # a wake-up; the work itself is in staging.lesson
                     print("woken:", json.loads(body or b"{}").get("reason"), flush=True)
                 run(quiet=True)
+                teach_wiki()
         except Exception as e:
             print("vf-teacher reconnecting:", e, flush=True)
             time.sleep(5)
+
+
+def teach_wiki():
+    """Stage 3 (read-then-map): the extraction lessons, one at a time, after Jev's (worker/learn.py teach). A
+    failure never stops the teacher: the lesson waits."""
+    try:
+        from worker import learn
+        settings.refresh()
+        learn.teach(show=lambda *a: print(*a, flush=True))
+    except Exception as e:
+        print("the wiki's lessons failed:", type(e).__name__, e, flush=True)
 
 
 def score_exam(version):

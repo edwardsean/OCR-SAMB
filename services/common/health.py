@@ -3,7 +3,7 @@ import json
 import threading
 from http.server import BaseHTTPRequestHandler, HTTPServer
 
-from . import db, queue, storage
+from . import config, db, queue, storage
 
 
 def probe_postgres():
@@ -42,8 +42,10 @@ def run_probes(names=PROBES):
     return out
 
 
-def serve(service_name, port=8080, role=""):
-    """Background /health endpoint the UI polls: this service is up and can reach its dependencies."""
+def serve(service_name, port=None, role=""):
+    """Background /health endpoint the API's Status page polls: this service is up and can reach its dependencies.
+    port: HEALTH_PORT (8080)."""
+    port = int(port or config.HEALTH_PORT)
     class H(BaseHTTPRequestHandler):
         def do_GET(self):
             deps = run_probes()

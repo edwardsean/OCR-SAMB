@@ -1,0 +1,11 @@
+{% extends "base.html" %}
+{# A scan's technical detail for the developers: queues, re-running pages, each phase's acceptance checks. The scan
+   itself (its progress, orders, pages) is the web app's /batches/<id>. #}
+{% block title %}{{ b.file_name if b else batch_id }} · teknis{% endblock %}
+{% block main %}
+  <section class="head">
+    <p class="crumbs"><a href="/batches/{{ batch_id }}">{{ b.file_name if b else batch_id }}</a> / detail teknis</p>
+    <h1>{{ b.file_name if b else batch_id }}: detail teknis</h1>
+  </section>
+  {% if b %}{% include "_batch_tech.html" %}{% else %}<section class="alert bad">Scan ini tidak ditemukan.</section>{% endif %}
+{% endblock %}

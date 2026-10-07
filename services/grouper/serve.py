@@ -5,6 +5,9 @@
   each batch is grouped once per round (group.run, serialised per batch by its own lock), and the round's messages
   are acknowledged after it, so a crash leaves them to be taken again.
 
+  After grouping, a page whose knowledge (read-then-map, worker/learn.py) was chosen for another customer than its
+  order's is done again with its order's customer, and the batch regrouped once more.
+
   After grouping, the pages a bundle's check asked to look again (crosscheck.ask_again) go back to q.pages. Only
   pages that are 'read' are sent: a page with a ticket (on q.pages or in the waiting room) keeps its one. A page
   whose look-again failed waits under another reason, so a failing call can't bounce between the two.
@@ -15,7 +18,7 @@ import json
 import time
 import traceback
 
-from common import health, queue
+from common import health, queue, settings
 
 POLL_S = 1.0
 
@@ -31,11 +34,20 @@ def round_(batches):
     """One round: group each batch once, then send what its bundles asked. A failure in one batch never stops the
     others (the next wake-up tries again)."""
     from grouper import group
+    settings.refresh()                          # the models and keys saved on the Teknis screen
     done = {}
     for bid in batches:
         try:
             t0 = time.time()
             group.run(bid)
+            try:                                       # read-then-map 2c: knowledge chosen for another customer
+                from worker import learn
+                redone = learn.after_grouping(bid, show=lambda *a: None)
+                if redone:
+                    print(f"{bid}: knowledge done again for its order's customer on {sorted(redone)}", flush=True)
+                    group.run(bid)
+            except Exception:
+                traceback.print_exc()
             sent = dispatch(bid)
             done[bid] = sent
             print(f"{bid}: grouped in {time.time() - t0:.1f} s" + (f" · look again sent for pages {sent}" if sent else ""),

@@ -1,6 +1,7 @@
 """Load Satellite's sales-order export into satellite.sor and satellite.sor_item (vlm-first database only).
 
-The export is real customer data: it stays on this machine (*.csv is git-ignored) and goes only into ocr_vf.
+The export is real customer data: it stays on this machine (*.csv is git-ignored) and goes only into the pipeline's
+database (PIPELINE_DB).
 Three files, from the user (2026-09-25):
   HEADER-1-bulan-kebelakang.csv          one row per SO: customer, invoice amounts, billing no, CGR, status
   ITEM-1-bulan-kebelakang.csv            one row per SO line (joined to HEADER by order_id)
@@ -8,7 +9,7 @@ Three files, from the user (2026-09-25):
 Re-running replaces every SO it contains and all SO lines. SOs in the PO file but not in HEADER are skipped (no
 customer). Afterwards: python -m grouper.group <batch> --recheck.
 
-  docker compose run --rm -v <folder with the CSVs>:/data/so:ro -v ./scripts:/scripts:ro vf-ui \
+  docker compose run --rm -v <folder with the CSVs>:/data/so:ro -v ./scripts:/scripts:ro rtm-api \
       python /scripts/load_satellite.py /data/so
 """
 import csv

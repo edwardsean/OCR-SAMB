@@ -1,0 +1,29 @@
+<section class="checks {{ 'pass' if vf.all_ok else 'fail' }}">
+  <h2>vlm-first acceptance · pages 1–31 · AI OCR reads everything → Jev classifies → Tesseract checks → look again</h2>
+  <ul>
+  {% for label, ok, detail in vf.checks %}
+    <li class="{{ 'ok' if ok else 'bad' }}"><span class="dot"></span>{{ label }} <em>{{ detail }}</em></li>
+  {% endfor %}
+  </ul>
+  <p class="note">
+    {% set names = {'clear': 'clear', 'waiting_ai': 'waiting for the AI OCR (read or look again)',
+                    'needs_person': 'a person checks values', 'held_unsure': 'held for a label'} %}
+    Outcomes: {% for k, n in vf.outcomes.items() %}{{ names.get(k, k) }} {{ n }} · {% endfor %}<br>
+    Main-field checks: {% for k, n in vf['values']|dictsort %}{{ k }} {{ n }} · {% endfor %}<br>
+    Model calls: {% for c in vf.calls %}{{ c.provider }} {{ c.purpose }} {{ c.ok }}/{{ c.n }}{% if c.avg_ms %} (avg {{ (c.avg_ms / 1000)|round(1) }} s){% endif %} · {% endfor %}
+    {% if not vf.calls %}none yet{% endif %}
+    · <a href="/context">Jev context</a>
+  </p>
+  {% if vf.table %}
+  <details><summary>Type per page: the machine's answer vs the answer key (the key is only used here, for grading)</summary>
+  <table class="grid small">
+    <thead><tr><th>Page</th><th>Answer key</th><th>Machine</th><th>Why</th><th>Labelled</th><th>Outcome</th></tr></thead>
+    <tbody>{% for t in vf.table %}
+      <tr class="{{ 'warn' if not t.machine else ('ok' if t.machine in t.key.split('/') else 'bad') }}">
+        <td><a href="/batches/{{ batch_id }}/pages/{{ t.page }}">{{ t.page }}</a></td><td>{{ t.key }}</td>
+        <td>{% if t.machine %}<span class="tchip t-{{ t.machine }}">{{ t.machine }}</span>{% elif t.unread %}<span class="muted">not read yet</span>{% else %}<span class="muted">unsure ({{ t.guess or '—' }})</span>{% endif %}</td>
+        <td class="small muted">{{ t.reason }}</td><td>{{ t.labelled or '' }}</td><td>{{ t.outcome or '' }}</td></tr>
+    {% endfor %}</tbody>
+  </table></details>
+  {% endif %}
+</section>

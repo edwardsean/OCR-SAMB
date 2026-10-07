@@ -1,0 +1,11 @@
+{% extends "base.html" %}
+{% block title %}Status sistem{% endblock %}
+{% block main %}
+  <section class="head">
+    <h1>Status sistem</h1>
+    <p class="lede">Dicek setiap 5 detik. Hijau = berjalan, merah = bermasalah.</p>
+  </section>
+  <div hx-get="/partials/status" hx-trigger="every 5s" hx-swap="innerHTML">
+    {% include "_status_body.html" %}
+  </div>
+{% endblock %}

@@ -1,0 +1,78 @@
+{% extends "base.html" %}
+{% block title %}Model & kunci API{% endblock %}
+{% block main %}
+  <section class="head">
+    <h1>Model & kunci API</h1>
+    <p class="lede">Each model the system uses, and the API key it calls with. Saved here, used within seconds; empty = <code>.env</code>.</p>
+  </section>
+
+  {% if msg %}<div class="alert {{ 'bad' if bad else 'warn' }}" style="padding:10px 14px;margin:10px 0">{{ msg }}</div>{% endif %}
+
+  {% if v %}
+  <p class="small">Your name <input class="js-name" placeholder="saved with each change" size="18"></p>
+
+  <table class="grid set">
+    <thead><tr><th>Model</th><th>Which model</th><th>Its API key</th></tr></thead>
+    <tbody>{% for m in v %}
+      <tr id="{{ m.name }}">
+        <td><strong>{{ m.what }}</strong><br><span class="small muted">{{ m.does }}</span></td>
+        <td>
+          <form method="post" action="/settings" class="setf">
+            <input type="hidden" name="name" value="{{ m.name }}"><input type="hidden" name="by" class="js-by">
+            <input name="value" class="mono" value="{{ m.value if m.from == 'UI' else '' }}" size="30"
+                   placeholder="{{ m.env or ('model name' if m.fixed else 'provider:model') }}">
+            <button type="submit">Save</button>
+          </form>
+          <div class="small muted"><span class="mono">{{ m.name }}</span> ·
+            {% if m.from == 'UI' %}saved by {{ m.by }}, {{ m.at|tgl }} <form method="post" action="/settings" class="inl">
+              <input type="hidden" name="name" value="{{ m.name }}"><input type="hidden" name="value" value="">
+              <input type="hidden" name="by" class="js-by"><button class="linkbtn" type="submit">use .env</button></form>
+            {% elif m.from %}from .env{% else %}not set{% endif %}{% if m.fixed %} · {{ m.fixed }}{% endif %}</div>
+        </td>
+        <td>
+          <form method="post" action="/settings" class="setf">
+            <input type="hidden" name="name" value="{{ m.key_name }}"><input type="hidden" name="by" class="js-by">
+            <input type="password" name="value" autocomplete="off" size="22" placeholder="{{ m.key or 'paste a key' }}">
+            <button type="submit">Save</button>
+          </form>
+          <div class="small muted">
+            {% if m.key %}<span class="mono">{{ m.key }}</span> ·
+              {% if m.key_from == 'UI' %}saved by {{ m.key_by }}, {{ m.key_at|tgl }} <form method="post" action="/settings" class="inl">
+                <input type="hidden" name="name" value="{{ m.key_name }}"><input type="hidden" name="value" value="">
+                <input type="hidden" name="by" class="js-by"><button class="linkbtn" type="submit">use .env</button></form>
+              {% else %}from .env (<span class="mono">{{ m.key_name }}</span>){% endif %}
+            {% elif m.shared and m.shared_key %}uses <span class="mono">{{ m.shared }}</span> from .env (<span class="mono">{{ m.shared_key }}</span>)
+            {% elif m.needs_key %}<span class="bad">⚠ no key</span>
+            {% else %}needs no key{% endif %}
+            {% if m.has_key and not m.fixed %} · <form method="post" action="/settings/check" class="inl"><input type="hidden" name="name" value="{{ m.name }}">
+              <button class="linkbtn" type="submit" title="ask the provider for its model list (no tokens)">check</button></form>{% endif %}
+          </div>
+        </td>
+      </tr>
+    {% endfor %}</tbody>
+  </table>
+  <p class="small muted">Model as <span class="mono">provider:model</span>, e.g. <span class="mono">dashscope:qwen-plus</span>. Providers:
+    {{ providers|join(', ') }}; the image OCR may also be <span class="mono">gemini</span>; the teachers' and the matcher's plain
+    name is a Z.ai model. A new image OCR or text model re-reads pages when they are next processed. Keys are stored in the
+    database and only ever shown masked.</p>
+  {% endif %}
+
+  <script>
+    (function () {                           // the name, typed once (as on Review), signs every change
+      var input = document.querySelector('.js-name'), n = '';
+      try { n = localStorage.getItem('rv-name') || ''; } catch (e) {}
+      if (input) {
+        input.value = n;
+        input.addEventListener('input', function () { try { localStorage.setItem('rv-name', input.value); } catch (e) {} });
+      }
+      document.querySelectorAll('form').forEach(function (f) {
+        if (f.getAttribute('action') === '/settings/check') return;      // checking a key changes nothing
+        f.addEventListener('submit', function (e) {
+          var who = (input && input.value.trim()) || '';
+          if (!who) { e.preventDefault(); if (input) { input.focus(); input.placeholder = 'type your name first'; } return; }
+          f.querySelectorAll('.js-by').forEach(function (b) { b.value = who; });
+        });
+      });
+    })();
+  </script>
+{% endblock %}

@@ -1,0 +1,151 @@
+{% extends "base.html" %}
+{% block title %}Pengetahuan AI{% endblock %}
+{% block main %}
+  <section class="head">
+    <h1>Pengetahuan AI</h1>
+    <p class="lede">Tips learned from corrections, per document type and customer. Each tip is replayed on stored pages before it is used.</p>
+  </section>
+
+  {% if msg %}<div class="alert warn" style="padding:10px 14px;margin:10px 0">{{ msg }}</div>{% endif %}
+  <p class="small">
+    <form method="post" action="/knowledge/teach" style="display:inline"><button class="ghost" type="submit">Wake the teacher</button></form>
+    <form method="post" action="/knowledge/lint" style="display:inline"><button class="ghost" type="submit">Run the lint</button></form></p>
+
+  {% for t in k.types %}
+  <section id="{{ t.type }}">
+    <h2><span class="tchip t-{{ t.type }}">{{ t.type }}</span>
+      {% if t.active %}#{{ t.active.version }} <span class="muted">{{ t.active.source }} · {{ t.active.created_by }}{% if t.active.approved_by %}, approved by {{ t.active.approved_by }}{% endif %} ·
+        <a href="/knowledge/{{ t.type }}.md">.md</a></span>
+      {% else %}<span class="muted">nothing learned yet</span>{% endif %}</h2>
+
+    {% if t.parsed %}
+      {% for sec in t.parsed.sections %}
+      <h3 class="small" style="margin:12px 0 4px">{{ sec.head }}</h3>
+      {% for line in sec.prose %}<p class="small muted" style="margin:2px 0">{{ line }}</p>{% endfor %}
+      {% if sec.claims %}
+      <table class="grid small">
+        <tbody>{% for cl in sec.claims %}
+          <tr><td class="mono" style="width:18%">{{ cl.field }}</td><td>{{ cl.text }}</td>
+            <td class="small" style="width:14%">{% if cl.kind %}<span class="pill">{{ cl.kind }}</span>{% endif %}{% if cl.anchor %} <span class="mono">{{ cl.anchor }}</span>{% endif %}{% if cl.region %} <span class="mono muted">region {{ cl.region|join(',') }}</span>{% endif %}</td>
+            <td class="small muted" style="width:18%">{% for b, n in cl.pages %}<a href="/batches/{{ b }}/pages/{{ n }}">{{ b[-4:] }}/p{{ n }}</a>{% if not loop.last %}, {% endif %}{% else %}written by a person{% endfor %}</td></tr>
+        {% endfor %}</tbody>
+      </table>
+      {% elif not sec.prose %}<p class="small muted">nothing here yet</p>{% endif %}
+      {% endfor %}
+    {% endif %}
+
+    {% for v in t.proposals %}
+    <div class="alert warn" style="padding:10px 14px;margin:10px 0">
+      <p><strong>{{ t.type }} #{{ v.version }}</strong>{% if v.parent %}, built on #{{ v.parent }}{% endif %} · proposed by {{ v.created_by }} ({{ v.source }}){% if v.note %} · {{ v.note }}{% endif %}</p>
+      {% if v.stale %}<p class="small">⚠ built on #{{ v.parent or '-' }}, but #{{ t.active.version if t.active else '-' }} is active now: reject it and write or draft it again.</p>{% endif %}
+      {% if v.diff %}<pre class="small mono" style="white-space:pre-wrap;margin:6px 0">{% for d in v.diff %}{{ d }}
+{% endfor %}</pre>{% endif %}
+      {% if v.gate %}{% set g = v.gate %}
+      <p class="small">Replay: {{ g.pages_changed }} stored page{{ '' if g.pages_changed == 1 else 's' }} it changes, {{ g.mapped }} mapped again ·
+        {{ g.scored }} value{{ '' if g.scored == 1 else 's' }} scored · right <strong>{{ g.right_before }} → {{ g.right_after }}</strong> ·
+        wrong {{ g.wrong_before }} → {{ g.wrong_after }} · the text model's own flips {{ g.flips }} ·
+        <strong>{{ 'passed' if g.passed else 'did not pass' }}</strong>: {{ g.why }}{% if g.exam %} · exam pile: right {{ g.exam.right_before }} → {{ g.exam.right_after }}{% endif %}</p>
+      {% if g.cites_exam %}<p class="small">⚠ learned from an exam-pile example ({{ g.cites_exam|join(', ') }}): the exam pile is meant to stay unseen, so those pages are left out of its exam score.</p>{% endif %}
+      <details><summary class="small">Page by page</summary>
+        <table class="grid small">
+          <thead><tr><th>Page</th><th>Customer</th><th>Field</th><th>Before</th><th>With it</th><th>Truth</th><th></th></tr></thead>
+          <tbody>{% for pg, d in g.pages.items() %}{% for r in d.rows %}
+            <tr><td><a href="/batches/{{ pg.split('/')[0] }}/pages/{{ pg.split('/')[1] }}">{{ pg }}</a></td>
+              <td class="small">{{ k.labels.get(d.chain, d.chain) if d.chain else '?' }} <span class="muted">({{ d.chain_by }})</span></td>
+              <td class="mono">{{ r.field }}</td><td class="mono">{{ r.was if r.was is not none else '—' }}</td>
+              <td class="mono">{{ r.now if r.now is not none else '—' }}</td><td class="mono">{{ r.truth }}</td>
+              <td class="small">{% if r.counted %}{{ r.before }} → <strong>{{ r.after }}</strong>{% else %}<span class="muted">not counted: {{ r.why }}</span>{% endif %}</td></tr>
+            {% else %}
+            <tr><td><a href="/batches/{{ pg.split('/')[0] }}/pages/{{ pg.split('/')[1] }}">{{ pg }}</a></td><td class="small">{{ k.labels.get(d.chain, d.chain) if d.chain else '?' }}</td>
+              <td colspan="5" class="small muted">nothing to score ({{ d.unscored|join(', ') }}: no confirmation, not in Satellite)</td></tr>
+          {% endfor %}{% endfor %}</tbody>
+        </table></details>
+      {% if g.needs_pages %}<p class="small">No other stored page can test it yet: it waits for more pages.</p>{% endif %}
+      {% else %}<p class="small">Not replayed yet (about 10K tokens a page).</p>{% endif %}
+      <form method="post" action="/knowledge/{{ t.type }}/{{ v.version }}/gate" style="display:inline"><button type="submit" class="ghost"{% if v.stale %} disabled{% endif %}>{{ 'Replay again' if v.gate else 'Run the replay' }}</button></form>
+      <form method="post" action="/knowledge/{{ t.type }}/{{ v.version }}/approve" style="display:inline">
+        <input name="by" class="js-name" placeholder="your name" required size="12">
+        <button type="submit"{% if v.stale or not (v.gate or {}).get('passed') %} disabled title="the replay must pass first"{% endif %}>Approve</button></form>
+      <form method="post" action="/knowledge/{{ t.type }}/{{ v.version }}/reject" style="display:inline"><input type="hidden" name="by" value=""><button class="ghost" type="submit">Reject</button></form>
+    </div>
+    {% endfor %}
+
+    <details{% if open_type == t.type %} open{% endif %}><summary class="small">Write a proposal, draft one from examples, or see the log</summary>
+      <form method="post" action="/knowledge/{{ t.type }}/draft" style="margin:8px 0"><button class="ghost" type="submit">Draft from examples</button>
+        <span class="small muted">claims two pages in two bundles agree on</span></form>
+      <form method="post" action="/knowledge/{{ t.type }}/propose">
+        <p class="small muted">One tip a line: <span class="mono">- field: what to do [kind · label · pages b-…/3]</span>, under <span class="mono">## Any customer</span> or <span class="mono">## NAME (chain …)</span>.</p>
+        <textarea name="markdown" rows="10" style="width:100%" class="mono small">{{ t.active.markdown if t.active else '# ' ~ t.type ~ '\n\n## Any customer\n' }}</textarea>
+        <p><input name="by" class="js-name" placeholder="your name" required size="14"> <input name="note" placeholder="what changes and why" size="50">
+          <button type="submit">Propose</button></p>
+      </form>
+      {% if t.versions %}
+      <table class="grid small">
+        <thead><tr><th>#</th><th>Status</th><th>From</th><th>By</th><th>What changed</th><th>Replay</th><th>When</th></tr></thead>
+        <tbody>{% for v in t.versions %}
+          <tr><td><a href="/knowledge/{{ t.type }}.md?version={{ v.version }}">#{{ v.version }}</a></td><td>{{ v.status }}</td><td>{{ v.source }}</td>
+            <td>{{ v.created_by }}{% if v.approved_by %} · {{ v.approved_by }}{% endif %}</td><td>{{ v.note or '' }}</td>
+            <td>{% if v.gate %}{{ 'passed' if v.gate.passed else 'not passed' }} (right {{ v.gate.right_before }} → {{ v.gate.right_after }}){% else %}—{% endif %}</td>
+            <td class="muted">{{ v.created_at.strftime('%d %b %H:%M') }}</td></tr>
+        {% endfor %}</tbody>
+      </table>
+      {% endif %}
+    </details>
+  </section>
+  {% endfor %}
+
+  <section>
+    <h2>Customers</h2>
+    <table class="grid small">
+      <thead><tr><th>Customer</th><th>Chain</th><th>Its name as printed</th><th>SAMB's code there</th><th>Bundles</th><th>Sections</th></tr></thead>
+      <tbody>{% for c in k.index %}
+        <tr><td>{{ c.label }}</td><td class="mono">{{ c.chain }}</td><td class="mono small">{{ c.names|join(' · ') or '—' }}</td>
+          <td class="mono small">{{ c.vendor|join(' · ') or '—' }}</td><td>{{ c.bundles }}</td><td>{{ c.sections|join(', ') or '—' }}</td></tr>
+      {% endfor %}</tbody>
+    </table>
+  </section>
+
+  <section>
+    <h2>Lessons <span class="muted">the teacher's queue</span></h2>
+    <p class="small muted">One lesson per correction (hidden-pile corrections excluded).</p>
+    {% if k.lessons %}
+    <table class="grid small">
+      <thead><tr><th>Page</th><th>Type</th><th>Customer</th><th>Field</th><th>Correction</th><th>Lesson</th><th>Why</th></tr></thead>
+      <tbody>{% for e in k.lessons %}
+        <tr><td><a href="/batches/{{ e.batch_id }}/pages/{{ e.page_no }}">{{ e.batch_id[-4:] }}/p{{ e.page_no }}</a></td><td>{{ e.doc_type }}</td>
+          <td>{{ e.label or e.chain or '?' }}</td><td class="mono">{{ e.field }}</td>
+          <td class="mono">{{ 'not printed' if e.kind == 'not_printed' else e.value }} <span class="muted">({{ e.source }})</span></td>
+          <td><strong>{{ e.lesson_status|replace('_', ' ') }}</strong>{% if e.lesson_version %} · <a href="#{{ e.lesson_doc }}">{{ e.lesson_doc }} #{{ e.lesson_version }}</a>{% endif %}</td>
+          <td class="small muted">{{ e.lesson_says or '' }}</td></tr>
+      {% endfor %}</tbody>
+    </table>
+    {% else %}<p class="small muted">none</p>{% endif %}
+  </section>
+
+  <section>
+    <h2>Examples waiting for a second page</h2>
+    <p class="small muted">Corrections no tip uses yet. {{ k.exam }} more {{ 'is' if k.exam == 1 else 'are' }} in the hidden pile.</p>
+    {% if k.waiting %}
+    <table class="grid small">
+      <thead><tr><th>Page</th><th>Type</th><th>Customer</th><th>Field</th><th>What</th><th>Printed beside it</th><th>From</th></tr></thead>
+      <tbody>{% for e in k.waiting %}
+        <tr><td><a href="/batches/{{ e.batch_id }}/pages/{{ e.page_no }}">{{ e.batch_id[-4:] }}/p{{ e.page_no }}</a></td><td>{{ e.doc_type }}</td>
+          <td>{{ e.label or e.chain or '?' }}</td><td class="mono">{{ e.field }}</td>
+          <td class="mono">{{ 'not printed' if e.kind == 'not_printed' else e.value }}</td>
+          <td class="mono small">{{ (e.anchor or {}).get('left') or (e.anchor or {}).get('header_cell') or '—' }}</td>
+          <td>{{ e.source }} · {{ e.made_by }}</td></tr>
+      {% endfor %}</tbody>
+    </table>
+    {% else %}<p class="small muted">none</p>{% endif %}
+  </section>
+
+  <script>
+    (function () {                           // the reviewer's name, typed once (as on Review)
+      var n = ''; try { n = localStorage.getItem('rv-name') || ''; } catch (e) {}
+      document.querySelectorAll('.js-name').forEach(function (i) {
+        if (n && !i.value) i.value = n;
+        i.addEventListener('input', function () { try { localStorage.setItem('rv-name', i.value); } catch (e) {} });
+      });
+    })();
+  </script>
+{% endblock %}

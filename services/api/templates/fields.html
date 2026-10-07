@@ -1,0 +1,40 @@
+{% extends "base.html" %}
+{% block title %}Daftar field{% endblock %}
+{% block main %}
+  <section class="head">
+    <h1>Daftar field</h1>
+    <p class="lede">What the AI reads per document type (<code>services/common/fields.py</code>). <span class="badge s61">§6.1</span> stored in Satellite · <span class="badge link">linking</span> only ties the document to its SOR.</p>
+  </section>
+  {% for code, d in docs.items() %}
+  <section>
+    <h2><span class="tchip t-{{ code }}">{{ code }}</span> {{ d.name }} <span class="muted">— {{ d.about }} · table <code>satellite.{{ d.table }}</code></span></h2>
+    <div class="two" style="margin-top:0">
+      <div>
+        <h3 class="sub">Header fields <span class="muted">(each read as value + text as printed)</span></h3>
+        <table class="grid small">
+          <thead><tr><th>Field</th><th></th><th>§6.1 wording</th><th>What the AI OCR is told</th><th>Column</th></tr></thead>
+          <tbody>{% for f in d.header %}
+            <tr><td class="mono">{{ f.name }}</td><td><span class="badge {{ 's61' if f.source == '6.1' else 'link' }}">{{ '§6.1' if f.source == '6.1' else 'linking' }}</span></td>
+              <td>{{ f.label }}</td><td class="muted">{{ f.desc }}</td><td class="mono muted">{{ column(f) }} <small>{{ sql[f.kind] }}</small></td></tr>
+          {% endfor %}</tbody>
+        </table>
+      </div>
+      <div>
+        <h3 class="sub">Line items <span class="muted">(one row per printed item)</span></h3>
+        {% if d.lines %}
+        <table class="grid small">
+          <thead><tr><th>Field</th><th>§6.1 wording</th><th>What the AI OCR is told</th><th>Column</th></tr></thead>
+          <tbody>{% for f in d.lines %}
+            <tr><td class="mono">{{ f.name }}</td><td>{{ f.label }}</td><td class="muted">{{ f.desc }}</td><td class="mono muted">{{ sql[f.kind] }}</td></tr>
+          {% endfor %}</tbody>
+        </table>
+        {% else %}<p class="muted">None: §6.1 lists no item fields for this document.</p>{% endif %}
+      </div>
+    </div>
+  </section>
+  {% endfor %}
+  <section>
+    <h2>No field list yet</h2>
+    <ul class="plain">{% for code, why in not_yet.items() %}<li><span class="tchip t-{{ code }}">{{ code }}</span> {{ why }}</li>{% endfor %}</ul>
+  </section>
+{% endblock %}

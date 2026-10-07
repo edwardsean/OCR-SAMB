@@ -28,6 +28,8 @@ def snapshot():
 
 
 def test_shadow_writes_nothing():
+    import _data
+    _data.scan(BID)
     from grouper import crosscheck
     before = snapshot()
     out = crosscheck.shadow(BID, show=lambda *_: None)
@@ -54,7 +56,7 @@ def test_stored_checks_are_todays(xs):
 
 def test_fp_graded_as_ordered():
     """The FP prints the SO as ordered; the invoice (sor.dpp/ppn/total) is what was received, lower after a tolakan."""
-    from ui import app
+    from api import app
     assert {k: app.FP_SATELLITE[k] for k in ("dpp", "ppn", "total")} == \
         {"dpp": "order_dpp", "ppn": "order_ppn", "total": "order_total"}
 
@@ -62,8 +64,10 @@ def test_fp_graded_as_ordered():
 def test_bundle_bends(monkeypatch):
     """Every value a passing bundle check used, bent at each digit: beyond the allowance it must stop passing. And the
     test itself catches a check that passes whatever it's given."""
+    import _data
+    _data.scan(BID)
     from grouper import crosscheck
-    from ui import app
+    from api import app
     changed, missed = app._vf_bend_bundles(BID)
     assert changed and not missed, missed
     real = crosscheck.check_bundle
@@ -79,7 +83,7 @@ def test_bundle_bends(monkeypatch):
 
 
 def test_beyond():
-    from ui import app
+    from api import app
     amount = {"kind": "amount", "ref": 1078330.01, "allow": 5.0}
     assert not app._beyond(amount, "1078329.00") and app._beyond(amount, "1078339.00")
     date = {"kind": "date", "lo": "2026-09-07", "hi": "2026-09-23"}

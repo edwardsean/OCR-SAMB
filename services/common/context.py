@@ -1,7 +1,7 @@
 """vlm-first: Jev's context, versioned in staging.context_version.
 
 One registry holds both lists, so they can't drift apart:
-  fields   the combined field list (common/fields.py CANON at first). The AI OCR reads every page against it.
+  fields   the combined field list (common/fields.py CANON). The AI OCR reads every page against it.
   types    per document type: what it is, its titles, what it's not, and which fields it has and how often
            (always / usually / sometimes / never, with a note such as "AEON prints it as RECEIPT NO").
 Invariant, checked by validate() on every save: the union of all types' fields = the combined field list.
@@ -18,9 +18,10 @@ Never: the meaning or kind of an existing field, removing fields, the set of typ
 import copy
 import hashlib
 import json
+import os
 import re
 
-from common.fields import CANON, LINE_CANON, TYPE_MAP
+from common.fields import CANON, LINE_CANON
 
 HOW_OFTEN = ("always", "usually", "sometimes", "never")
 KINDS = ("id", "text", "amount", "qty", "date")
@@ -29,40 +30,19 @@ COMMON = ("document_title", "page_marker")          # clue fields every type lis
 BUDGET = {"fields": 30, "what": 400, "not_for": 300, "titles": 20, "title": 60, "note": 160, "meaning": 200}
 NAME = re.compile(r"^[a-z][a-z0-9_]{1,40}$")
 
-HOW_OFTEN_SEED = {   # how often each type prints its fields, as seen on the sample (the teacher refines it)
-    "FP": dict.fromkeys(TYPE_MAP["FP"], "always"),
-    "TTG": {"document_no": "always", "posting_date": "usually", "po_number": "usually", "vendor_code": "usually",
-            "customer_name": "usually", "sor": "sometimes"},
-    "PO": {"po_number": "always", "vendor_code": "usually", "vendor_name": "usually", "ppn": "usually",
-           "total": "usually", "customer_name": "usually"},
-    "FPJ": {**dict.fromkeys(TYPE_MAP["FPJ"], "usually"), "sor": "sometimes"},
-}
-NOTES_SEED = {
-    ("TTG", "sor"): "some customers print SAMB's SOR: Hari Hari as No Ref, Puri Indah as DO#, Indogrosir as S/Fak "
-                    "(the last two without the letters SOR)",
-    ("TTG", "po_number"): "labels vary: No PO, PO No, Order No, No. Pesanan, a PO column in the rows; "
-                          "AEON prints it as RECEIPT NO",
-}
+SEED_FILE = os.path.join(os.path.dirname(__file__), "..", "seed", "jev-context.json")
+NO_CONTEXT = ("Jev's context isn't in the database yet: load it once with ./scripts/seed.sh "
+              "(it loads services/seed/jev-context.json)")
 
 
 # ---------------------------------------------------------------------------------------------------- the seed
 
-def seed(jev_criteria, keywords, jev_types):
-    """Version 1: the combined field list + v1's Jev descriptions and title words (worker/classify.py)."""
-    key_of = {code: key for key, code in jev_types.items()}
-    types = {}
-    for code in TYPES:
-        crit = jev_criteria[key_of[code]]
-        examples = crit.get("examples", [])
-        fields = [{"name": n, "how_often": h, "note": NOTES_SEED.get((code, n), "")}
-                  for n, h in HOW_OFTEN_SEED.get(code, {}).items()]
-        fields += [{"name": "document_title", "how_often": "never" if code == "CONTINUATION" else "usually", "note": ""},
-                   {"name": "page_marker", "how_often": "usually" if code == "CONTINUATION" else "sometimes", "note": ""}]
-        types[code] = {"jev_key": key_of[code], "what": crit["what"],
-                       "titles": list(dict.fromkeys([*keywords.get(code, []), *examples])),
-                       "not_for": crit.get("not_for", ""), "fields": fields}
-    fields = {n: {k: f[k] for k in ("kind", "meaning", "printed_as", "role")} for n, f in CANON.items()}
-    return {"fields": fields, "types": types}
+def seed_content():
+    """The context a new database starts from: services/seed/jev-context.json, loaded into the database by
+    common/seed.py (./scripts/seed.sh). It is data, never built in code (the user, 2026-10-07: "this should live in the
+    database"). Made from a working database's active context by `python -m common.seed export`."""
+    with open(SEED_FILE, encoding="utf-8") as f:
+        return json.load(f)
 
 
 # ---------------------------------------------------------------------------------------------------- checks
@@ -229,18 +209,12 @@ def active(conn):
     return (r["version"], r["content"]) if r else (None, None)
 
 
-def ensure(conn, jev_criteria, keywords, jev_types):
-    """The active context; seeds version 1 if there is none. Refuses an invalid one."""
+def ensure(conn):
+    """The active context. Refuses when there is none (the database wasn't seeded: NO_CONTEXT says how) or when it is
+    invalid. The context lives in the database only; nothing here builds one."""
     version, content = active(conn)
     if version is None:
-        content = seed(jev_criteria, keywords, jev_types)
-        problems = validate(content)
-        if problems:
-            raise RuntimeError(f"seed context is invalid: {problems}")
-        conn.execute("""INSERT INTO staging.context_version (version, status, content, created_by, note)
-                        VALUES (1, 'active', %s, 'seed', 'combined field list + v1 Jev descriptions')
-                        ON CONFLICT (version) DO NOTHING""", (json.dumps(content),))
-        version, content = active(conn)
+        raise RuntimeError(NO_CONTEXT)
     problems = validate(content)
     if problems:
         raise RuntimeError(f"active context #{version} is invalid: {problems}")

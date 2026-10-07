@@ -1,16 +1,17 @@
-import os
 from minio import Minio
+
+from common import config
 
 
 def client():
-    return Minio(os.environ["MINIO_ENDPOINT"],
-                 access_key=os.environ["MINIO_ROOT_USER"],
-                 secret_key=os.environ["MINIO_ROOT_PASSWORD"],
-                 secure=False)
+    return Minio(config.required("MINIO_ENDPOINT"),
+                 access_key=config.required("MINIO_ROOT_USER"),
+                 secret_key=config.required("MINIO_ROOT_PASSWORD"),
+                 secure=config.MINIO_SECURE)
 
 
 def bucket():
-    return os.environ.get("MINIO_BUCKET", "scans")
+    return config.MINIO_BUCKET
 
 
 def ensure_bucket(c=None):
