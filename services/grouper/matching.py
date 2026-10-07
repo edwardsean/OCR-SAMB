@@ -32,7 +32,7 @@ import time
 
 from common import config, db, satellite, settings, verify
 
-AI_MODEL = config.MATCH_MODEL        # text only: a Z.ai model name, or provider:model (the Teknis screen)
+AI_MODEL = config.MATCH_MODEL        # the text model (the Teknis screen "Model & kunci API")
 
 
 @settings.on_change

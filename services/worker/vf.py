@@ -94,6 +94,17 @@ class OutOfBudget(Exception):
     pass
 
 
+class NotSet(Exception):
+    """A model the page needs isn't set on the Teknis screen "Model & kunci API": no call is made, the page waits."""
+
+
+def not_set():
+    """Why no model call can be made because something isn't set on the Teknis screen (a page needs the vision model,
+    the text model and Jev), else None."""
+    m = settings.missing()
+    return f"NotSet: {', '.join(m)} not set: set {'it' if len(m) == 1 else 'them'} on {settings.WHERE}" if m else None
+
+
 # ---------------------------------------------------------------------------------------------- bookkeeping
 
 def pacific_day():
@@ -184,6 +195,9 @@ def ai_call(purpose, bid, n, call, *args):
     call: several page workers share the cap). While the model's last refusal still says to wait, the page waits
     without a call: its worker parks it on q.pages.wait (park)."""
     spec = spec_for(purpose)
+    unset = not_set()
+    if unset:
+        raise NotSet(unset.removeprefix("NotSet: "))
     wait = refused_for(spec)
     if wait:
         raise openai_vlm.DailyLimit(f"{spec}: daily limit reached (its last refusal), "
@@ -275,19 +289,20 @@ def needs_title(jev, qr_sor, layout_score):
 
 
 def decide(jev, qr_sor, layout_score, title=False):
-    """(type_status, doc_type, guess, reason). Jev decides at >= 0.85; the image vetoes a wrong FP: an FP also needs
-    the SOR QR code, the FP layout or the printed title (Jev said FP 0.88 on SAMB's handwritten SALES ORDER form)."""
+    """(type_status, doc_type, guess, reason). The classification model (`jev`: Jev until 2026-10-07) decides at
+    >= 0.85; the image vetoes a wrong FP: an FP also needs the SOR QR code, the FP layout or the printed title (Jev said
+    FP 0.88 on SAMB's handwritten SALES ORDER form; qwen-flash 0.97 on a description of it)."""
     jc, conf = jev.get("choice"), jev.get("confidence") or 0.0
     if not jc:
-        return "unsure", None, None, "Jev unavailable"
+        return "unsure", None, None, "the classification model didn't answer"
     fp_witness = qr_sor or (layout_score or 0) >= classify.LAYOUT_FP or bool(title)
     if conf < JEV_DECIDE:
-        return "unsure", None, jc, f"Jev not sure enough ({jc} {conf:.2f} < {JEV_DECIDE})"
+        return "unsure", None, jc, f"the classification model isn't sure enough ({jc} {conf:.2f} < {JEV_DECIDE})"
     if qr_sor and jc != "FP":
-        return "unsure", None, jc, f"the SOR QR code says FP, Jev says {jc}"
+        return "unsure", None, jc, f"the SOR QR code says FP, the classification model says {jc}"
     if jc == "FP" and not fp_witness:
         return "unsure", None, "FP", "an FP needs the QR code, the FP layout or the printed title as well"
-    return "decided", jc, jc, f"Jev {jc} {conf:.2f}" + (" + QR" if qr_sor else "" if jc != "FP" else " + FP layout"
+    return "decided", jc, jc, f"classified {jc} {conf:.2f}" + (" + QR" if qr_sor else "" if jc != "FP" else " + FP layout"
                                                         if (layout_score or 0) >= classify.LAYOUT_FP else " + printed title")
 
 
@@ -676,7 +691,10 @@ def _handle(ticket, bid, n, run, v1_reading, second_look):
     earlier = None                                   # this reading's earlier look-again, if the reading is reused
     two = {"notes": (prev or {}).get("notes"), "mapping": (prev or {}).get("mapping"),
            "blocks": (prev or {}).get("transcript"), "tv": (prev or {}).get("transcript_version")}
-    if prev and prev["fields_all"] and prev["fields_version"] == fv:
+    unset = None if v1_reading is not None else not_set()
+    if unset:                                        # a model isn't set on the Teknis screen: no call, the page waits
+        x.update(extract_status="failed", extract_error=unset)
+    elif prev and prev["fields_all"] and prev["fields_version"] == fv:
         x.update(fields_all=prev["fields_all"], extract_status="done", vlm_meta=prev["vlm_meta"] or {})
         earlier = prev["second_look"]
     elif v1_reading is not None:
@@ -708,8 +726,8 @@ def _handle(ticket, bid, n, run, v1_reading, second_look):
         else:
             t0 = time.time()
             jev = classify.jev_ask(state, context.jev_question(ctx))
-            ledger("jev", "classify", bid, n, bool(jev.get("choice")), {"model": jev.get("model"),
-                   "ms": int((time.time() - t0) * 1000)}, jev.get("error") or jev.get("skipped"))
+            provider, meta = classify.ledger_meta(jev, int((time.time() - t0) * 1000))
+            ledger(provider, "classify", bid, n, bool(jev.get("choice")), meta, jev.get("error") or jev.get("skipped"))
         qr_sor = bool(prep["qr_text"] and classify.SOR_RE.match(prep["qr_text"]))
         if title is None and needs_title(jev, qr_sor, prep["layout_score"]):
             title = fp_title(up)
@@ -1215,12 +1233,16 @@ def compare_trial(bid, n, trial_row, page_row):
 # ---------------------------------------------------------------------------------------------- the queue's side
 
 MAX_TRIES = 3                  # a call that failed (not a limit) is tried this many times from the waiting room
-LIMITS = ("DailyLimit", "OutOfBudget")
+LIMITS = ("DailyLimit", "OutOfBudget", "NotSet")       # a page stopped by one waits in q.pages.wait, never failing
 
 
 def blocked():
     """Why no AI OCR call can be made right now (today's cap is used up, or the provider's last refusal still
-    stands), else None. Checked before any work on a parked page: waiting it out costs one query, not a page run."""
+    stands, or a model isn't set on the Teknis screen), else None. Checked before any work on a parked page: waiting
+    it out costs one query, not a page run."""
+    unset = not_set()
+    if unset:
+        return unset
     for spec in CAPS:                    # a page needs every model: the AI OCR, and the text model that maps
         if ai_left(spec) <= 0:
             return f"OutOfBudget: vlm-first's daily cap for {spec} ({cap_of(spec)}) is used up"

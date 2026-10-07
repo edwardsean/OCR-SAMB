@@ -25,6 +25,7 @@ def vf(monkeypatch):
     monkeypatch.setattr(vf, "AI_OCR", SPEC)
     monkeypatch.setattr(vf, "AI_MAP", SPEC)
     monkeypatch.setattr(vf, "CAPS", {SPEC: 150})
+    monkeypatch.setattr(vf, "not_set", lambda: None)   # the models count as set: this is about the budget
     yield vf
     with db.connect() as c:
         c.execute("DELETE FROM staging.model_call WHERE provider=%s", (PROVIDER,))

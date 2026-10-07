@@ -2,7 +2,9 @@
 
 Independent votes, then a decision that prefers "unsure" to a guess:
   keyword  document title words in the top of the page (no AI)
-  jev      TypeSafe Jev Choice over the page text (text only, never the image)
+  jev      the classification model's choice over the page's reading (text only, never the image): an instruct
+           text model set on Teknis → Model & kunci API (llm_ask; until 2026-10-07 TypeSafe's Jev, whose name
+           the code keeps for this vote)
   layout   similarity to SAMB's Faktur Penjualan print layout (survives faint print)
   qr       a decoded SOR QR code: only a Faktur Penjualan carries one
 
@@ -10,6 +12,7 @@ A decided type is safe to group on. "unsure" breaks the chain in grouping (hold 
 to a person with the best guess.
 """
 import json
+import math
 import os
 import re
 import time
@@ -20,14 +23,6 @@ from common import config, settings
 from worker import layout
 
 CLASSIFY_VERSION = 2      # 2: Jev leads; FP needs a second witness; title words fixed (2026-09-24)
-JEV_URL = config.TYPESAFE_URL
-JEV_MODEL = config.JEV_MODEL
-
-
-@settings.on_change
-def _model_changed():
-    global JEV_MODEL
-    JEV_MODEL = config.JEV_MODEL
 LAYOUT_FP = 0.70          # calibrated on sample pages 1-32 (FP 0.74-0.85, others <= 0.63); a vote, never decisive alone
 JEV_ALONE = 0.85          # Jev decides alone at this confidence if no printed title contradicts it (simulated on all 288 pages)
 JEV_MIN = 0.50            # below this the docs say route to a human
@@ -129,19 +124,77 @@ def jev_vote(words, height, text, footer):
 
 
 def jev_ask(state, questions=None):
-    key = settings.key("JEV_MODEL")
-    if not key:
-        return {"skipped": "no TYPESAFE_API_KEY"}
-    body = {"model": JEV_MODEL, "state": state, "questions": questions or JEV_QUESTION}   # vlm-first passes its own
+    """The page-type question (Jev's Choice question, vlm-first passes its own) to the classification model set on
+    Teknis → Model & kunci API: {choice, confidence, probabilities, model}, {skipped} when it isn't set, {error}."""
+    row = settings.row("classify")
+    if not row["ident"]:
+        return {"skipped": "the classification model isn't set on Teknis → Model & kunci API"}
+    out = llm_ask(state, questions, row["url"], row["key"], row["model"])
+    return {**out, "model": row["ident"]} if "choice" in out else out
+
+
+def ledger_meta(answer, ms):
+    """(provider, meta) for the call log (vf.ledger) of one classification call."""
+    u = answer.get("tokens") or {}
+    return (settings.row("classify")["ident"].partition(":")[0] or "classify",
+            {"model": answer.get("model"), "ms": ms, "tokens_in": u.get("prompt_tokens"),
+             "tokens_out": u.get("completion_tokens")})
+
+
+def llm_prompt(state, questions):
+    """Jev's Choice question as a prompt for an instruct (non-thinking) text model: the instructions, each option
+    numbered with its criteria, the page's state, and "answer with the number only". (prompt, option keys in order)."""
+    q = (questions or JEV_QUESTION)["doc_type"]
+    keys = list(q["criteria"])
+    lines = [q["instructions"], "", "The kinds of document (answer with ONE number):"]
+    for i, k in enumerate(keys, 1):
+        c = q["criteria"][k]
+        if isinstance(c, str):
+            lines.append(f"{i}. {k}: {c}")
+            continue
+        parts = [f"{i}. {k}: {c.get('what', '')}"]
+        for label, key in (("printed titles", "titles"), ("always has", "always_has"), ("usually has", "usually_has"),
+                           ("sometimes has", "sometimes_has"), ("never has", "never_has"), ("not for", "not_for")):
+            if c.get(key):
+                v = c[key]
+                parts.append(f"   {label}: " + ("; ".join(v) if isinstance(v, list) else str(v)))
+        lines.append("\n".join(parts))
+    lines += ["", "THE PAGE:", json.dumps(state, ensure_ascii=False), "",
+              f"Answer with the number of the kind of document (1-{len(keys)}) only."]
+    return "\n".join(lines), keys
+
+
+def llm_ask(state, questions, url, key, model):
+    """Jev's question to an instruct (non-thinking) text model at an OpenAI-compatible endpoint, with Jev's answer
+    shape. The model answers one number (one token, no reasoning); the probability of each option is read from the
+    endpoint's token log-probabilities, never from a number the model writes (that one is always ~0.95)."""
+    prompt, keys = llm_prompt(state, questions)
+    body = {"model": model, "temperature": 0, "max_tokens": 1, "logprobs": True, "top_logprobs": 5,
+            "messages": [{"role": "user", "content": prompt}]}
+    headers = {"Authorization": f"Bearer {key}"} if key else {}
+    t0 = time.time()
     for attempt in range(5):
-        r = httpx.post(JEV_URL, headers={"Authorization": f"Bearer {key}"}, json=body, timeout=60)
-        if r.status_code in (429, 529, 502, 503):
-            time.sleep(2 ** attempt); continue          # docs: throttling, back off
-        r.raise_for_status()
-        a = r.json()["answers"]["doc_type"]
-        return {"choice": JEV_TYPES[a["choice"]], "confidence": round(a["confidence"], 3),
-                "probabilities": {JEV_TYPES[k]: round(v, 3) for k, v in a["probabilities"].items()},
-                "model": r.json().get("model"), "tokens": r.json().get("usage")}
+        r = httpx.post(f"{url}/chat/completions", headers=headers, json=body, timeout=60)
+        if r.status_code in (429, 502, 503):
+            time.sleep(2 ** attempt); continue
+        if r.status_code >= 400:
+            return {"error": f"HTTP {r.status_code}: {r.text[:200]}"}
+        j = r.json()
+        content = ((j.get("choices") or [{}])[0].get("logprobs") or {}).get("content") or []
+        if not content:
+            return {"error": f"{model} gave no token probabilities: choose an endpoint and model that return logprobs"}
+        p = {}
+        for t in content[0].get("top_logprobs") or []:
+            tok = t["token"].strip()
+            if tok.isdigit() and 1 <= int(tok) <= len(keys):
+                p[keys[int(tok) - 1]] = p.get(keys[int(tok) - 1], 0.0) + math.exp(t["logprob"])
+        total = sum(p.values())
+        if not total:
+            return {"error": f"{model} answered {content[0]['token']!r}, not an option number"}
+        probs = {JEV_TYPES[k]: round(v / total, 3) for k, v in p.items()}
+        choice = max(probs, key=probs.get)
+        return {"choice": choice, "confidence": probs[choice], "probabilities": probs, "model": model,
+                "tokens": j.get("usage"), "ms": int((time.time() - t0) * 1000)}
     return {"error": f"HTTP {r.status_code} after retries"}
 
 

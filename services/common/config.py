@@ -74,50 +74,39 @@ SWEEP_EVERY_MINUTES = _int("SWEEP_EVERY_MINUTES", 180)    # pages still waiting 
 LINT_EVERY_MINUTES = _int("LINT_EVERY_MINUTES", 360)      # knowledge a later correction contradicts: taken out
 
 # ================================================================= models
-# Jev (TypeSafe System One) classifies each page
-TYPESAFE_API_KEY = _str("TYPESAFE_API_KEY")
-TYPESAFE_URL = _url("TYPESAFE_URL", "https://api.typesafe.ai/v1/systemone")
-JEV_MODEL = _str("JEV_MODEL", "jev-latest")
-JEV_AT_ONCE = _int("JEV_AT_ONCE", 6)                 # replay calls asked at once when the teacher tests a change
+# The vision model, the text model and the classification model are set ONLY on the Teknis screen "Model & kunci
+# API" (common/settings.py, the table staging.setting), never here or in .env (the user, 2026-10-07). settings.py lays
+# them into these names, which the rest of the code reads: empty until it has read the table, and a page waits while
+# one isn't set (worker/vf.py NotSet).
+VF_AI_OCR = VF_AI_MAP = ""                           # provider:model of the vision model and of the text model
+TEACHER_MODEL = WIKI_TEACHER_MODEL = MATCH_MODEL = ""   # the page-type teacher: vision; knowledge teacher, matcher: text
+CLASSIFY_MODEL = ""                                  # provider:model of the classification model (replaced Jev)
+JEV_AT_ONCE = _int("JEV_AT_ONCE", 6)                 # replay calls asked at once when the page-type teacher tests a change
 
-# The AI OCR: "gemini", or provider:model for an OpenAI-compatible vision model
-VF_AI_OCR = _str("VF_AI_OCR", "gemini")
-VF_AI_MAP = _str("VF_AI_MAP") or VF_AI_OCR          # the text model that maps a transcript
 VF_READER = _str("VF_READER", "one_step")            # two_step: transcribe everything, then map
 VF_MAP_TWICE = _bool("VF_MAP_TWICE", True)           # map each transcript twice and merge
-VF_AI_OCR_DAILY_CAP = _int("VF_AI_OCR_DAILY_CAP", 40 if VF_AI_OCR == "gemini" else 150)
+VF_AI_OCR_DAILY_CAP = _int("VF_AI_OCR_DAILY_CAP", 150)   # calls a day this system allows itself, per model
 VF_AI_MAP_DAILY_CAP = _int("VF_AI_MAP_DAILY_CAP", 300)
 VF_WAIT_MINUTES = _float("VF_WAIT_MINUTES", 15)      # a page the daily limit refused waits this long
 VF_QUOTA_TZ = _str("VF_QUOTA_TZ", "America/Los_Angeles")   # the day the providers' daily quotas count in
 
-# API keys of the model providers (empty: that provider isn't used)
-API_KEYS = {name: _str(name) for name in ("GROQ_API_KEY", "OPENROUTER_API_KEY", "ZAI_API_KEY", "MISTRAL_API_KEY",
-                                          "DASHSCOPE_API_KEY", "GEMINI_API_KEY", "TYPESAFE_API_KEY")}
-# A model's own key (2026-10-06): used instead of its provider's key above when set (the Teknis screen "Model &
-# kunci API" can set them too). Empty: the provider's key.
-MODEL_KEYS = {name: _str(name) for name in ("VF_AI_OCR_API_KEY", "VF_AI_MAP_API_KEY", "WIKI_TEACHER_API_KEY",
-                                            "TEACHER_API_KEY", "MATCH_API_KEY")}
-GEMINI_API_KEY = API_KEYS["GEMINI_API_KEY"]
-ZAI_API_KEY = API_KEYS["ZAI_API_KEY"]
-
-# Where each provider answers: <PROVIDER>_BASE_URL for another region or a proxy
+# Known providers' addresses: a model at one of them is named provider:model (dashscope:qwen3-vl-plus), as readings
+# made before the screen's two rows were, so they are never read again for it (settings.ident). Names only: where a
+# model is called is the address saved on the screen.
 PROVIDER_URLS = {
-    "groq": _url("GROQ_BASE_URL", "https://api.groq.com/openai/v1"),
-    "openrouter": _url("OPENROUTER_BASE_URL", "https://openrouter.ai/api/v1"),
-    "zai": _url("ZAI_BASE_URL", "https://api.z.ai/api/paas/v4"),
-    "mistral": _url("MISTRAL_BASE_URL", "https://api.mistral.ai/v1"),
-    "dashscope": _url("DASHSCOPE_BASE_URL", "https://dashscope-intl.aliyuncs.com/compatible-mode/v1"),
+    "groq": "https://api.groq.com/openai/v1",
+    "openrouter": "https://openrouter.ai/api/v1",
+    "zai": "https://api.z.ai/api/paas/v4",
+    "mistral": "https://api.mistral.ai/v1",
+    "dashscope": "https://dashscope-intl.aliyuncs.com/compatible-mode/v1",
     "ollama": OLLAMA_URL + "/v1",
 }
 
-# Gemini, when VF_AI_OCR=gemini
+# The older Gemini adapter (models/vlm.py), unused since the two rows: Gemini is reached through its
+# OpenAI-compatible endpoint (https://generativelanguage.googleapis.com/v1beta/openai) like any other.
 GEMINI_BASE_URL = _url("GEMINI_BASE_URL", "https://generativelanguage.googleapis.com/v1beta")
 GEMINI_MODEL = _str("GEMINI_MODEL", "gemini-3.8-flash")
 GEMINI_FALLBACK_MODELS = [m.strip() for m in _str("GEMINI_FALLBACK_MODELS", "gemini-3.7-flash,gemini-3.5-flash").split(",")
                           if m.strip()]               # tried in order when the pinned model is overloaded
 
-# The teacher and the product matcher (Z.ai)
-TEACHER_MODEL = _str("TEACHER_MODEL", "glm-4.6v-flash")
-WIKI_TEACHER_MODEL = _str("WIKI_TEACHER_MODEL", "glm-4.7-flash")
-MATCH_MODEL = _str("MATCH_MODEL", "glm-4.7-flash")
-MATCH_PAUSE = _int("MATCH_PAUSE", 30)                # seconds between the matcher's calls
+MATCH_PAUSE = _int("MATCH_PAUSE", 30)                # seconds between the matcher's calls when the text model is Z.ai's

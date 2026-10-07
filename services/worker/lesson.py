@@ -143,12 +143,13 @@ WHAT THE AI OCR READ (all Jev saw): {json.dumps(state, ensure_ascii=False)}
 
 
 def _decide(fields_all, ctx, qr_text, layout_score, bid, n, purpose, title=None):
-    """(type or None, whether Jev answered). Jev failing is not Jev being unsure: a replay can't use it."""
+    """(type or None, whether the classification model answered). It failing is not it being unsure: a replay can't
+    use it."""
     state = vf.jev_state(fields_all, ctx)
     t0 = time.time()
     jev = classify.jev_ask(state, context.jev_question(ctx))
-    vf.ledger("jev", purpose, bid, n, bool(jev.get("choice")), {"model": jev.get("model"),
-              "ms": int((time.time() - t0) * 1000)}, jev.get("error"))
+    provider, meta = classify.ledger_meta(jev, int((time.time() - t0) * 1000))
+    vf.ledger(provider, purpose, bid, n, bool(jev.get("choice")), meta, jev.get("error") or jev.get("skipped"))
     qr_sor = bool(qr_text and classify.SOR_RE.match(qr_text))
     status, doc_type, _, _ = vf.decide(jev, qr_sor, layout_score, title)
     return (doc_type if status == "decided" else None), bool(jev.get("choice"))

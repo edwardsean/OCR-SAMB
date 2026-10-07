@@ -1,8 +1,9 @@
-"""The AI OCR through any OpenAI-compatible vision model (vlm-first): Groq, OpenRouter, Z.ai, Mistral, Model Studio,
-Ollama. Same two calls as vlm.py (extract_all, second_look) and the same result shape, so worker/vf.py doesn't care
-which model reads.
+"""The AI OCR and the text model through any OpenAI-compatible endpoint (Model Studio, Z.ai, Groq, OpenRouter,
+Mistral, Ollama, or another). Same calls as vlm.py (extract_all, second_look) and the same result shape, so
+worker/vf.py doesn't care which model reads.
 
-  VF_AI_OCR=groq:qwen/qwen3.8-27b        provider:model  (gemini = the Gemini adapter in vlm.py)
+A model is named provider:model (dashscope:qwen3-vl-plus); where it is called, and with which key, is the vision or
+text row on the Teknis screen "Model & kunci API" (common/settings.py endpoint).
 
 JSON mode only guarantees JSON, not its shape, so the field list travels in the prompt and the answer is normalised
 here: every field comes back as {value, source_text, box}, with box converted to Gemini's convention
@@ -20,15 +21,8 @@ from PIL import Image
 from common import config, settings
 from common.models import vlm
 
-_URL = config.PROVIDER_URLS     # where each provider answers (common/config.py: <PROVIDER>_BASE_URL)
-PROVIDERS = {   # name -> (base URL, key variable, max images per request)
-    "groq": (_URL["groq"], "GROQ_API_KEY", 3),
-    "openrouter": (_URL["openrouter"], "OPENROUTER_API_KEY", 8),
-    "zai": (_URL["zai"], "ZAI_API_KEY", 8),
-    "mistral": (_URL["mistral"], "MISTRAL_API_KEY", 8),
-    "dashscope": (_URL["dashscope"], "DASHSCOPE_API_KEY", 8),
-    "ollama": (_URL["ollama"], None, 8),
-}
+MAX_IMAGES = 8                  # images one request may carry (the page and its crops)
+MAX_IMAGES_AT = {"groq": 3}     # a provider that takes fewer
 MAX_IMAGE_BYTES = 3_500_000
 
 
@@ -37,9 +31,10 @@ class DailyLimit(Exception):
 
 
 def spec_parts(spec):
-    provider, _, model = spec.partition(":")
-    if provider not in PROVIDERS or not model:
-        raise ValueError(f"VF_AI_OCR must be provider:model with provider in {sorted(PROVIDERS)}, not {spec!r}")
+    provider, _, model = (spec or "").partition(":")
+    if not provider or not model:
+        raise ValueError(f"a model is named provider:model, not {spec!r}: set the vision and text models on Teknis → "
+                         "Model & kunci API")
     return provider, model
 
 
@@ -66,16 +61,13 @@ def _wait_seconds(r):
     return 10.0
 
 
-def _post(spec, content, max_tokens=4096, role="VF_AI_OCR"):
-    """role: the model setting this call is for (VF_AI_OCR, VF_AI_MAP): its own API key, else its provider's."""
-    provider, model = spec_parts(spec)
-    base, key_var, _ = PROVIDERS[provider]
-    headers = {}
-    if key_var:
-        key = settings.key(role, spec)
-        if not key:
-            raise RuntimeError(f"no API key for {role}: set it on Teknis → Model & kunci API, or {key_var} in .env")
-        headers["Authorization"] = f"Bearer {key}"
+def _post(spec, content, max_tokens=4096):
+    """One chat call to the model `spec`, at its row's endpoint with its row's key (common/settings.py endpoint)."""
+    spec_parts(spec)
+    base, key, model = settings.endpoint(spec)
+    if not key and settings.needs_key(base):
+        raise RuntimeError(f"no API key for {spec}: set it on Teknis → Model & kunci API")
+    headers = {"Authorization": f"Bearer {key}"} if key else {}
     body = {"model": model, "temperature": 0, "max_tokens": max_tokens, "response_format": {"type": "json_object"},
             "messages": [{"role": "user", "content": content}]}
     t0 = time.time()
@@ -94,6 +86,9 @@ def _post(spec, content, max_tokens=4096, role="VF_AI_OCR"):
                              "the model's Free Quota Only switch is turned off (then they are billed)")
         if r.status_code >= 500:
             time.sleep(5 * (attempt + 1)); continue
+        if r.status_code in (401, 403):
+            raise RuntimeError(f"{spec}: the endpoint refused the API key (HTTP {r.status_code}): check it on Teknis → "
+                               f"Model & kunci API. {r.text[:200]}")
         if r.status_code >= 400:
             raise RuntimeError(f"{spec}: HTTP {r.status_code}: {r.text[:300]}")
         j = r.json()
@@ -227,14 +222,14 @@ def salvage_blocks(text):
 def map_text(prompt, spec):
     """Step 2 of read-then-map: a text-only call (the transcript and the field list are in the prompt). Returns
     (the answer's JSON object, meta)."""
-    text, meta = _post(spec, [{"type": "text", "text": prompt}], max_tokens=4096, role="VF_AI_MAP")
+    text, meta = _post(spec, [{"type": "text", "text": prompt}], max_tokens=4096)
     raw = _json(text)
     return (raw if isinstance(raw, dict) else {}), meta
 
 
 def second_look(png_bytes, asks, crops, spec):
     """Blind second look: field names, meanings and crops only (never the other reader's text or the first answer)."""
-    _, _, max_images = PROVIDERS[spec_parts(spec)[0]]
+    max_images = MAX_IMAGES_AT.get(spec_parts(spec)[0], MAX_IMAGES)
     url, w, h = _image(png_bytes)
     crops = crops[:max_images - 1]
     prompt = (vlm.RULES + vlm.SECOND_LOOK + "\n".join(f"- {name}: {meaning}" for name, meaning in asks) +

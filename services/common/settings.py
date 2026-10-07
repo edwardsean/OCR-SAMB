@@ -1,46 +1,72 @@
-"""Models and their API keys, set from the UI (2026-10-06; the mentor: each model the system uses, and the API key it
-calls with, set on a Teknis screen, so the system's environment comes from there).
+"""The models and their API keys, set ONLY on the Teknis screen "Model & kunci API" (staging.setting, schema/027).
 
-Each model has its own row: the model (provider:model) and its own API key. A model without a key of its own calls
-with its provider's key from .env (DASHSCOPE_API_KEY …), as before. A row in staging.setting (schema/027) overrides
-the same name in .env; without one, the .env value stays. common/config.py still reads .env (the only module that
-reads the environment); refresh() lays the saved values over it, and every service calls refresh() as it works (a
-page ticket, a teacher round, an API request): the table is read again at most every REFRESH_SECONDS, and modules
-that keep a copy of a model (vf.AI_OCR …) are told through on_change.
+Three rows, one endpoint and one API key each (the user, 2026-10-07: "one for the vision model, one for the text
+model", then a classification model in place of TypeSafe's Jev):
+  vision    every call that sends a page image: the AI OCR's copy of the page, the look-again, the store question, a
+            handwriting tip's region, and the page-type teacher (Jev's context, worker/lesson.py);
+  text      every call that sends only text: filling in the fields from the copy, applying learned tips (pass B), the
+            knowledge teacher (worker/learn.py) and the product matcher (grouper/matching.py);
+  classify  each page's type: an instruct (non-thinking) model answers one option number, and the probability of
+            each option comes from the endpoint's token log-probabilities (worker/classify.py llm_ask). It replaced
+            Jev after matching it on b-c80bbbde4d (15 right, 0 wrong, the same 1 unsure; qwen-flash and
+            qwen3-235b-a22b-instruct-2507 alike).
+A row is an OpenAI-compatible endpoint (base URL), its API key, and a model from that endpoint's model list: the
+screen lists them and suggests one it knows (RECOMMENDED), a person confirms.
 
-Keys are kept as typed, like .env keeps them; a screen only ever shows their last 4 characters (masked)."""
+Nothing falls back to .env (the user, 2026-10-07: "there should not be any env fallback, it just errors if there is
+no env inputted in the env tab"). A row not set is missing(): no call is made, and a page waits in the waiting room
+saying what to set (worker/vf.py NotSet), then goes on by itself once it is set.
+
+The rest of the system names a model provider:model (dashscope:qwen3-vl-plus): a reading is versioned by it, the
+daily budget counts by it, the call log records it (worker/vf.py). A row on a known provider's address
+(config.PROVIDER_URLS) keeps that provider's short name, so pages read before keep their versions; another endpoint
+is named by its host.
+
+_apply() lays the rows into config (VF_AI_OCR, VF_AI_MAP, TEACHER_MODEL, WIKI_TEACHER_MODEL, MATCH_MODEL,
+CLASSIFY_MODEL); every service calls refresh() as it works (a page ticket, a teacher round, an API request): the table
+is read again at most every REFRESH_SECONDS, and modules that keep a copy of a model (vf.AI_OCR …) are told through
+on_change. Keys are kept as typed; a screen only ever shows their last 4 characters (masked)."""
 import time
+from urllib.parse import urlparse
 
 from common import config
 
 REFRESH_SECONDS = 10
+WHERE = "Teknis → Model & kunci API"
 
-# one row per model: (model setting, its own key setting, what it is, what it does)
-MODELS = [
-    ("VF_AI_OCR", "VF_AI_OCR_API_KEY", "Image OCR", "copies every line of the page image"),
-    ("VF_AI_MAP", "VF_AI_MAP_API_KEY", "Text model", "picks each field's value from that copy"),
-    ("JEV_MODEL", "TYPESAFE_API_KEY", "Page-type classifier (Jev)", "decides what kind of document a page is"),
-    ("WIKI_TEACHER_MODEL", "WIKI_TEACHER_API_KEY", "Knowledge teacher", "turns corrections into tips (Pengetahuan AI)"),
-    ("TEACHER_MODEL", "TEACHER_API_KEY", "Page-type teacher", "improves how Jev tells page types apart (Konteks Jev)"),
-    ("MATCH_MODEL", "MATCH_API_KEY", "Product matcher",
-     "proposes which SAMB line a customer's row is (run by hand: python -m grouper.matching propose)"),
-]
-KEY_OF = {m: k for m, k, _, _ in MODELS}
-NAMES = set(KEY_OF) | set(KEY_OF.values())
-DEFAULT_PROVIDER = {"WIKI_TEACHER_MODEL": "zai", "TEACHER_MODEL": "zai", "MATCH_MODEL": "zai"}   # a bare model name
-FIXED = {"JEV_MODEL": "TypeSafe"}                     # a model only one provider serves (no provider:model)
+# kind -> (title, what it does, the jobs that use it)
+ROWS = {
+    "vision": ("Vision model", "reads the page image", [
+        "copies every page (the AI OCR)",
+        "looks again at a value nothing printed backs",
+        "asks which store the goods go to",
+        "reads the region a handwriting or stamp tip points to",
+        "page-type teacher: improves the page-type descriptions the classification model reads (Konteks Jev)"]),
+    "text": ("Text model", "works on the copy of the page, as text", [
+        "fills in the fields from the copy, twice",
+        "applies learned tips to a page",
+        "knowledge teacher: turns corrections into tips (Pengetahuan AI)",
+        "product matcher: proposes which SAMB line a customer's row is"]),
+    "classify": ("Classification model", "decides what kind of document a page is", [
+        "decides each page's type (FP, PO, TTG …) from its reading: an instruct, non-thinking model that answers one "
+        "number; how sure it is comes from the endpoint, not from the model's words",
+        "the page-type teacher's test: asks it again about the labelled pages before a better description is kept"]),
+}
+FIELDS = {k: (f"{k.upper()}_BASE_URL", f"{k.upper()}_API_KEY", f"{k.upper()}_MODEL") for k in ROWS}
+NAMES = {n for f in FIELDS.values() for n in f}
 
+# models the system has been measured with, best first: the screen pre-selects the first one an endpoint lists
+RECOMMENDED = {
+    "vision": ["qwen3-vl-plus", "qwen3-vl-flash", "qwen-vl-max", "glm-4.6v", "glm-4.6v-flash", "gemini-3.8-flash",
+               "qwen/qwen3.8-27b"],
+    "text": ["qwen3-235b-a22b-instruct-2507", "qwen-plus", "qwen-flash", "glm-4.7", "glm-4.7-flash",
+             "gemini-3.8-flash", "qwen/qwen3.8-27b"],
+    "classify": ["qwen-flash", "qwen-turbo", "qwen-plus", "qwen3-235b-a22b-instruct-2507"],   # instruct only
+}
+LOCAL = ("localhost", "127.0.0.1", "host.docker.internal", "ollama")      # endpoints that may need no key
 
-def _base(name):
-    if name in config.MODEL_KEYS:
-        return config.MODEL_KEYS[name]
-    if name in config.API_KEYS:
-        return config.API_KEYS[name]
-    return getattr(config, name)
-
-
-BASE = {n: _base(n) for n in NAMES}
-_state = {"checked": 0.0, "applied": {}}
+EFFECTIVE = {}                                      # kind -> the row in effect (_resolve)
+_state = {"checked": 0.0, "effective": None, "saved": {}}
 _hooks = []
 
 
@@ -50,15 +76,64 @@ def on_change(fn):
     return fn
 
 
+def norm(url):
+    """An endpoint as stored: no spaces, no trailing slash, no /chat/completions (people paste either)."""
+    u = (url or "").strip().rstrip("/")
+    return u.removesuffix("/chat/completions").rstrip("/")
+
+
+def provider_at(url):
+    """The known provider serving this address, or None."""
+    u = norm(url)
+    return next((p for p, base in config.PROVIDER_URLS.items() if u and u == norm(base)), None)
+
+
+def ident(url, model):
+    """The model as the rest of the system names it: provider:model, the host for an endpoint no provider is known
+    at ("" when the row has no endpoint or no model)."""
+    if not model or not norm(url):
+        return ""
+    p = provider_at(url) or (urlparse(norm(url)).netloc or norm(url)).replace(":", "-")
+    return f"{p}:{model}"
+
+
+def needs_key(url):
+    host = (urlparse(norm(url)).hostname or "").lower()
+    return bool(host) and host not in LOCAL and "." in host
+
+
+def _resolve(kind, got):
+    """The row in effect, from the saved settings `got` only: {kind, url, key, model, ident}."""
+    url_n, key_n, model_n = FIELDS[kind]
+    url, key, model = norm(got.get(url_n)), (got.get(key_n) or "").strip(), (got.get(model_n) or "").strip()
+    return {"kind": kind, "url": url, "key": key, "model": model, "ident": ident(url, model)}
+
+
+def _apply(got):
+    """Lay the saved settings (`got`: name -> value) into config. True when what is in effect changed."""
+    rows = {k: _resolve(k, got) for k in ROWS}
+    vision, text = rows["vision"]["ident"], rows["text"]["ident"]
+    config.VF_AI_OCR = config.TEACHER_MODEL = vision         # every call that sends a page image
+    config.VF_AI_MAP = config.WIKI_TEACHER_MODEL = config.MATCH_MODEL = text   # every call that sends only text
+    config.CLASSIFY_MODEL = rows["classify"]["ident"]        # each page's type
+    EFFECTIVE.clear()
+    EFFECTIVE.update(rows)
+    _state["saved"] = dict(got)
+    now = sorted((k, r["url"], r["key"], r["model"]) for k, r in rows.items())
+    changed = now != _state["effective"]
+    _state["effective"] = now
+    return changed
+
+
 def saved(c):
     """{name: row} of the settings saved from the UI."""
     return {r["name"]: dict(r) for r in c.execute("SELECT * FROM staging.setting") if r["name"] in NAMES}
 
 
 def refresh(force=False):
-    """Lay the saved settings over .env's (config). Reads the table at most every REFRESH_SECONDS; runs the
-    on_change hooks only when what is in effect changes. Before migration 027, or with the database down, what is in
-    effect stays. Returns True when something changed."""
+    """Read the saved settings into config. Reads the table at most every REFRESH_SECONDS; runs the on_change hooks
+    only when what is in effect changes. Before migration 027, or with the database down, what is in effect stays.
+    Returns True when something changed."""
     now = time.time()
     if not force and now - _state["checked"] < REFRESH_SECONDS:
         return False
@@ -69,66 +144,46 @@ def refresh(force=False):
             got = {k: r["value"] for k, r in saved(c).items()}
     except Exception:
         return False
-    if got == _state["applied"]:
+    return _lay(got)
+
+
+def _lay(got):
+    """_apply, then tell the modules that keep a copy of a model (on_change) when what is in effect changed."""
+    if not _apply(got):
         return False
-    for name in NAMES:
-        value = got.get(name) or BASE[name]
-        if name in config.MODEL_KEYS:
-            config.MODEL_KEYS[name] = value
-        elif name in config.API_KEYS:
-            config.API_KEYS[name] = value
-        if hasattr(config, name):
-            setattr(config, name, value)
-    _state["applied"] = got
     for fn in _hooks:
         fn()
     return True
 
 
-def spec_of(name, value):
-    """A model setting as provider:model (a teacher's or the matcher's bare model name is Z.ai's)."""
-    v = (value or "").strip()
-    if ":" not in v and name in DEFAULT_PROVIDER and v:
-        return f"{DEFAULT_PROVIDER[name]}:{v}"
-    return v
+_apply({})                                          # nothing set until the table is read
+refresh(force=True)                                 # read it now when the database answers: modules copy config next
 
 
-def check_model(name, value):
-    """Why a model setting can't be saved, or None. provider:model with a known provider; the image OCR may also be
-    "gemini"; a teacher's or the matcher's may be a bare Z.ai model name; Jev's is TypeSafe's model name."""
-    from common.models.openai_vlm import PROVIDERS
-    v = (value or "").strip()
-    if not v or name in FIXED or (name == "VF_AI_OCR" and v == "gemini"):
-        return None
-    provider, _, model = spec_of(name, v).partition(":")
-    if provider not in PROVIDERS or not model.strip():
-        return f"write it as provider:model, with provider one of {', '.join(sorted(PROVIDERS))}"
-    return None
+def missing():
+    """What isn't set, for people ([] when everything is): no call is made without it."""
+    return [f"the {ROWS[k][0].lower()}" for k, r in EFFECTIVE.items()
+            if not r["ident"] or (not r["key"] and needs_key(r["url"]))]
 
 
-def provider_key(name, value):
-    """The provider's key setting in .env a model falls back to (None: none, e.g. Jev or a local Ollama model)."""
-    from common.models.openai_vlm import PROVIDERS
-    if name in FIXED:
-        return None
-    v = spec_of(name, value)
-    if v == "gemini":
-        return "GEMINI_API_KEY"
-    return (PROVIDERS.get(v.partition(":")[0]) or (None, None))[1]
+def row(kind):
+    """The row in effect for "vision", "text" or "classify" (its url, key, model, ident)."""
+    return EFFECTIVE.get(kind) or {"kind": kind, "url": "", "key": "", "model": "", "ident": ""}
 
 
-def _own(name):
-    k = KEY_OF[name]
-    return config.MODEL_KEYS.get(k) if k in config.MODEL_KEYS else config.API_KEYS.get(k, "")
+def endpoint(spec):
+    """(base URL, API key, model) to call for a model as the system names it: the vision, text or classification
+    row (the first whose model it is)."""
+    for row in EFFECTIVE.values():
+        if row["ident"] and row["ident"] == spec:
+            return row["url"], row["key"], row["model"]
+    raise RuntimeError(f"no model {spec!r}: set the vision and text models on {WHERE}" if spec else
+                       f"the model isn't set: set the vision and text models on {WHERE}")
 
 
-def key(name, spec=None):
-    """The API key the model `name` calls with: its own, else its provider's (.env). "" when there is none."""
-    own = _own(name)
-    if own:
-        return own
-    var = provider_key(name, spec if spec is not None else getattr(config, name))
-    return config.API_KEYS.get(var, "") if var else ""
+def key(name):
+    """The API key a row calls with ("vision", "text", "classify"). "" when there is none."""
+    return EFFECTIVE[name]["key"] if name in EFFECTIVE else ""
 
 
 def masked(value):
@@ -136,81 +191,152 @@ def masked(value):
     return "" if not v else ("•" * 6 + v[-4:] if len(v) > 8 else "•" * len(v))
 
 
+# ---------------------------------------------------------------------------------------------------- the screen
+
 def view(c):
-    """One row per model, for the screen: the model in effect and where it comes from (UI or .env); its own key
-    (masked) and where it comes from, else the provider key it falls back to."""
+    """The screen: the three rows, each with who saved it; keys only masked."""
     rows = saved(c)
+    got = {k: r["value"] for k, r in rows.items()}
     out = []
-    for name, key_name, what, does in MODELS:
-        m, k = rows.get(name), rows.get(key_name)
-        value = m["value"] if m else BASE[name]
-        own = k["value"] if k else BASE[key_name]
-        shared = provider_key(name, value) if value else None
-        shared_val = config.API_KEYS.get(shared, "") if shared else ""
-        out.append({
-            "name": name, "what": what, "does": does, "value": value, "fixed": FIXED.get(name),
-            "from": "UI" if m else (".env" if BASE[name] else None), "by": m and m["updated_by"],
-            "at": m and m["updated_at"], "env": BASE[name] or None,
-            "key_name": key_name, "key": masked(own),
-            "key_from": "UI" if k else (".env" if BASE[key_name] else None),
-            "key_by": k and k["updated_by"], "key_at": k and k["updated_at"],
-            "shared": shared, "shared_key": masked(shared_val),
-            "needs_key": name in FIXED or bool(shared),
-            "has_key": bool(own or shared_val),
-        })
-    return out
+    for kind, (title, does, jobs) in ROWS.items():
+        r = _resolve(kind, got)
+        url_n, key_n, model_n = FIELDS[kind]
+        who = rows.get(model_n) or rows.get(url_n)
+        out.append({"kind": kind, "title": title, "does": does, "jobs": jobs, "url": r["url"], "model": r["model"],
+                    "ident": r["ident"], "key": masked(r["key"]), "has_key": bool(r["key"]),
+                    "needs_key": needs_key(r["url"]), "set": bool(r["ident"]) and (bool(r["key"]) or not needs_key(r["url"])),
+                    "by": who and who["updated_by"], "at": who and who["updated_at"],
+                    "key_by": rows.get(key_n) and rows[key_n]["updated_by"]})
+    return {"rows": out}
 
 
-def save(c, name, value, by):
-    """Save one setting (empty: remove it, back to .env). Raises ValueError with a reason for people."""
-    if name not in NAMES:
-        raise ValueError(f"{name} can't be set here")
+def _put(c, name, value, by):
+    c.execute("""INSERT INTO staging.setting (name, value, updated_by) VALUES (%s, %s, %s)
+                 ON CONFLICT (name) DO UPDATE SET value=EXCLUDED.value, updated_by=EXCLUDED.updated_by,
+                   updated_at=now()""", (name, value, by))
+
+
+def save_row(c, kind, url, model, api_key, by):
+    """Save a row: its endpoint, its model and (when typed) its key. An empty key keeps the saved one, but only on
+    the same endpoint: a new endpoint needs its own (a local one may have none). Raises ValueError for people."""
+    if kind not in ROWS:
+        raise ValueError(f"{kind} isn't a model row")
     if not (by or "").strip():
         raise ValueError("say who you are")
-    value = (value or "").strip()
-    if name in KEY_OF:
-        why = check_model(name, value)
-        if why:
-            raise ValueError(why)
-    if not value:
-        c.execute("DELETE FROM staging.setting WHERE name=%s", (name,))
-    else:
-        c.execute("""INSERT INTO staging.setting (name, value, updated_by) VALUES (%s, %s, %s)
-                     ON CONFLICT (name) DO UPDATE SET value=EXCLUDED.value, updated_by=EXCLUDED.updated_by,
-                       updated_at=now()""", (name, value, by.strip()))
-    _state["checked"] = 0.0                           # this process sees it at once; the others within seconds
+    url, model, api_key = norm(url), (model or "").strip(), (api_key or "").strip()
+    if not url.startswith(("https://", "http://")):
+        raise ValueError("the endpoint must start with https:// (or http:// for a model on this network)")
+    if not model:
+        raise ValueError("choose a model from the endpoint's list")
+    current = _resolve(kind, {k: r["value"] for k, r in saved(c).items()})
+    if not api_key and needs_key(url) and (url != current["url"] or not current["key"]):
+        raise ValueError("a new endpoint needs its API key")
+    url_n, key_n, model_n = FIELDS[kind]
+    _put(c, url_n, url, by.strip())
+    _put(c, model_n, model, by.strip())
+    if api_key:
+        _put(c, key_n, api_key, by.strip())
+    elif url != current["url"]:                              # a keyless local endpoint: no older key goes along
+        c.execute("DELETE FROM staging.setting WHERE name=%s", (key_n,))
+    _state["checked"] = 0.0                                  # this process sees it at once; the others within seconds
 
 
-def check_key(name):
-    """Does the model's provider accept the key it calls with, and does that account have the model? Asks the
-    provider's model list (GET /models: no tokens). (True / False / None when it can't tell, what it says)."""
+def list_models(url, api_key):
+    """The endpoint's model list (GET /models: no tokens). (ids, None), or ([], why)."""
     import httpx
-    from common.models.openai_vlm import PROVIDERS
-    refresh(force=True)
-    if name in FIXED:
-        return None, f"{FIXED[name]} can't be checked from here"
-    spec = spec_of(name, getattr(config, name))
-    k = key(name, spec)
-    if not k:
-        return False, "no API key for this model"
-    if spec == "gemini":
-        url, headers, model = f"{config.GEMINI_BASE_URL}/models?key={k}", {}, config.GEMINI_MODEL
-    elif spec.partition(":")[0] in PROVIDERS:
-        provider, _, model = spec.partition(":")
-        url, headers = f"{PROVIDERS[provider][0]}/models", {"Authorization": f"Bearer {k}"}
-    else:
-        return None, "this model's provider can't be checked from here"
+    u = norm(url)
+    if not u.startswith(("https://", "http://")):
+        return [], "the endpoint must start with https:// (or http:// for a model on this network)"
     try:
-        r = httpx.get(url, headers=headers, timeout=20)
+        r = httpx.get(f"{u}/models", headers={"Authorization": f"Bearer {api_key}"} if api_key else {}, timeout=20)
     except Exception as e:
-        return False, f"can't reach the provider ({type(e).__name__})"
+        return [], f"can't reach the endpoint ({type(e).__name__})"
     if r.status_code in (401, 403):
-        return False, "the provider refused this key"
+        return [], "the endpoint refused this key" if api_key else "the endpoint needs an API key"
     if r.status_code >= 400:
-        return None, f"the provider answered {r.status_code}: can't tell from here"
-    body = r.json() or {}
-    ids = {str(m.get("id") or m.get("name") or "").split("/")[-1]
-           for m in (body.get("data") or body.get("models") or []) if isinstance(m, dict)}
-    if ids and model.split("/")[-1] not in ids:
-        return False, f"the key works, but {model} isn't in this account's model list"
-    return True, f"the key works and {model} is available" if ids else "the key works"
+        return [], f"the endpoint answered {r.status_code} to GET /models: is this its base URL (ending /v1 or similar)?"
+    try:
+        body = r.json() or {}
+    except ValueError:
+        return [], "the endpoint's model list isn't JSON: is this its base URL?"
+    items = (body.get("data") or body.get("models") or []) if isinstance(body, dict) else body
+    ids = {str(m.get("id") or m.get("name") or "").removeprefix("models/") for m in items if isinstance(m, dict)}
+    return sorted(i for i in ids if i), None
+
+
+def recommend(kind, ids):
+    """The model to pre-select: the first of RECOMMENDED[kind] the endpoint lists (also as org/model), else None."""
+    by_tail = {i.split("/")[-1].lower(): i for i in ids}
+    for want in RECOMMENDED.get(kind, []):
+        if want in ids:
+            return want
+        if want.split("/")[-1].lower() in by_tail:
+            return by_tail[want.split("/")[-1].lower()]
+    return None
+
+
+def _probe_png():
+    """A small image with a number printed on it, to see that a model really reads images."""
+    import io
+    from PIL import Image, ImageDraw
+    im = Image.new("L", (60, 16), 255)
+    ImageDraw.Draw(im).text((4, 2), "SAMB 4821", fill=0)
+    im = im.resize((360, 96), Image.NEAREST)
+    b = io.BytesIO()
+    im.save(b, "PNG")
+    return b.getvalue()
+
+
+def test_row(kind):
+    """Does the row work? Its model list (the key and the model), then one tiny call: the vision model reads a number
+    from an image, the text model adds two numbers. (True / False, what it says)."""
+    import base64
+    import httpx
+    refresh(force=True)
+    row = EFFECTIVE.get(kind)
+    if not row or not row["ident"]:
+        return False, "not set: enter its endpoint and choose a model"
+    if not row["key"] and needs_key(row["url"]):
+        return False, "no API key"
+    ids, why = list_models(row["url"], row["key"])
+    if why:
+        return False, why
+    tails = {i.split("/")[-1] for i in ids}
+    if ids and row["model"] not in ids and row["model"].split("/")[-1] not in tails:
+        return False, f"the key works, but {row['model']} isn't in this endpoint's model list"
+    extra = {}
+    if kind == "vision":
+        url = "data:image/png;base64," + base64.b64encode(_probe_png()).decode()
+        content = [{"type": "text", "text": "Which number is printed in this image? Answer with the number only."},
+                   {"type": "image_url", "image_url": {"url": url}}]
+        want = "4821"
+    elif kind == "classify":                 # one option number, with the endpoint's probability of each option
+        content = ("Which kind of document is a page titled GOODS RECEIVE NOTE, listing the quantities received?\n"
+                   "1. a sales invoice\n2. a goods receipt\n3. a purchase order\nAnswer with the number only.")
+        want, extra = "2", {"max_tokens": 1, "logprobs": True, "top_logprobs": 5}
+    else:
+        content, want = "What is 17 + 25? Answer with the number only.", "42"
+    headers = {"Authorization": f"Bearer {row['key']}"} if row["key"] else {}
+    t0 = time.time()
+    try:
+        r = httpx.post(f"{row['url']}/chat/completions", headers=headers, timeout=120,
+                       json={"model": row["model"], "max_tokens": 200, "temperature": 0,
+                             "messages": [{"role": "user", "content": content}], **extra})
+    except Exception as e:
+        return False, f"the call failed ({type(e).__name__})"
+    if r.status_code >= 400:
+        return False, f"the call failed: HTTP {r.status_code} {r.text[:160]}"
+    choice = (r.json().get("choices") or [{}])[0]
+    answer = (choice.get("message") or {}).get("content") or ""
+    if want not in str(answer):
+        return False, (f"{row['model']} answered {str(answer)[:60]!r}: "
+                       + {"vision": "it doesn't seem to read images", "classify": "not the expected 2"}.get(kind,
+                                                                                                    "not the expected 42"))
+    if kind == "vision":
+        return True, f"{row['model']} works and reads images"
+    if kind == "classify":
+        if not ((choice.get("logprobs") or {}).get("content")):
+            return False, (f"{row['model']} answers, but this endpoint gives no token probabilities (logprobs): "
+                           "the classification needs them to know when it isn't sure")
+        return True, f"{row['model']} works, gives probabilities, and answered in {time.time() - t0:.1f} s"
+    return True, f"{row['model']} works"

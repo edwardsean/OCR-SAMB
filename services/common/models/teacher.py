@@ -1,15 +1,16 @@
-"""The teacher: a second vision model, from a different company than the AI OCR (Z.ai GLM-4.6V-Flash, free).
+"""The teacher: the vision model, asked to teach Jev (the user, 2026-10-07: the teachers use the vision and text models).
 
 It looks at a page a person labelled, together with the label, what the AI OCR read, what Jev answered and Jev's
 whole context, explains the label, and proposes ONE change to Jev's context (worker/lesson.py). It is never shown
 an exam-pile label; lesson.py refuses those before calling it.
 
-Z.ai: POST https://api.z.ai/api/paas/v4/chat/completions, Bearer ZAI_API_KEY. Images up to 5 MB and 6000 px, sent
-as a base64 data URL. Vision models have no JSON mode, so the answer is parsed strictly (and asked once more if it
-isn't JSON). Rate limits aren't published: one call at a time, backing off on 429 and 5xx.
+Any OpenAI-compatible endpoint: POST <endpoint>/chat/completions with the row's key, the image as a base64 data URL.
+The answer is parsed strictly (and asked once more if it isn't JSON); one call at a time, backing off on 429 and 5xx.
+ask_text is the same for a text-only task (the knowledge teacher, the product matcher: the text model).
 
-A model is a Z.ai model name, or provider:model for another OpenAI-compatible provider (2026-10-06: the teachers'
-models are set on the Teknis screen "Model & kunci API", common/settings.py).
+A model is provider:model; its endpoint and key are the vision or text row on the Teknis screen "Model & kunci API"
+(common/settings.py endpoint). Until 2026-10-07 the teachers were Z.ai's free GLM models, from a different company
+than the AI OCR; a bare model name is still read as Z.ai's.
 """
 import base64
 import json
@@ -36,23 +37,17 @@ def provider_of(spec):
 
 
 def _where(spec):
-    """(chat URL, API key setting, model name) for a model setting."""
-    from common.models.openai_vlm import PROVIDERS
-    provider = provider_of(spec)
-    name = spec.partition(":")[2] if ":" in spec else spec
-    if provider not in PROVIDERS:
-        raise RuntimeError(f"{spec!r}: unknown provider (one of {', '.join(sorted(PROVIDERS))})")
-    base, key_var, _ = PROVIDERS[provider]
-    return base + "/chat/completions", key_var, name
+    """(chat URL, API key, model name) for a model (common/settings.py endpoint: its row's, else its provider's)."""
+    base, key, name = settings.endpoint(spec)
+    return base + "/chat/completions", key, name
 
 
 def _post(messages, model=None, role="TEACHER_MODEL"):
-    """model: another model for a text-only task (the knowledge teacher, the product matching); role: the model
-    setting it is for, whose own API key it calls with (else its provider's)."""
-    url, key_var, name = _where(model or MODEL)
-    key = settings.key(role, model or MODEL) if key_var else ""
-    if key_var and not key:
-        raise RuntimeError(f"no API key for {role}: set it on Teknis → Model & kunci API, or {key_var} in .env")
+    """model: another model for a text-only task (the knowledge teacher, the product matching: the text model);
+    role: which job asks, for the error message."""
+    url, key, name = _where(model or MODEL)
+    if not key and settings.needs_key(url):
+        raise RuntimeError(f"no API key for {role} ({model or MODEL}): set it on Teknis → Model & kunci API")
     headers = {"Authorization": f"Bearer {key}"} if key else {}
     t0 = time.time()
     for attempt in range(5):
