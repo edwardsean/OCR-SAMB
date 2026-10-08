@@ -55,11 +55,11 @@ import psycopg
 from psycopg.rows import dict_row
 from psycopg.types.json import Json
 
-from common import config, context, db, gates, satellite, settings, transcript, verify, wiki
+from common import config, context, db, gates, satellite, settings, trace, transcript, verify, wiki
 from common import keys as keymod
 from common.fields import DECIDES, DOCS, TYPE_MAP, decides, lift, project
 from common.models import openai_vlm, vlm
-from worker import boxes as pickboxes, classify, enhance, layout, zoom
+from worker import boxes as pickboxes, classify, enhance, layout, trace_io, zoom
 from worker import main as v1
 
 PREP_VERSION = 1
@@ -115,10 +115,13 @@ def pacific_day():
 def ledger(provider, purpose, bid, n, ok, meta=None, error=None):
     meta = meta or {}
     with db.connect(autocommit=True) as c:
-        c.execute("""INSERT INTO staging.model_call (pacific_day, provider, model, purpose, batch_id, page_no, ok, ms,
-                                                     tokens, error) VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)""",
-                  (pacific_day(), provider, meta.get("model"), purpose, bid, n, ok, meta.get("ms"),
-                   Json({k: meta.get(k) for k in ("tokens_in", "tokens_out", "tokens_thinking")}), error))
+        call_id = c.execute("""INSERT INTO staging.model_call (pacific_day, provider, model, purpose, batch_id, page_no,
+                                                               ok, ms, tokens, error)
+                               VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s) RETURNING id""",
+                            (pacific_day(), provider, meta.get("model"), purpose, bid, n, ok, meta.get("ms"),
+                             Json({k: meta.get(k) for k in ("tokens_in", "tokens_out", "tokens_thinking")}),
+                             error)).fetchone()["id"]
+    trace.save_payload(call_id)                      # its exact request and response (Jejak)
 
 
 def spec_for(purpose):
@@ -173,6 +176,7 @@ def settle_call(call_id, ok, meta=None, error=None):
         c.execute("UPDATE staging.model_call SET ok=%s, ms=%s, tokens=%s, error=%s WHERE id=%s",
                   (ok, meta.get("ms"), Json({k: meta.get(k) for k in ("tokens_in", "tokens_out", "tokens_thinking")}),
                    error, call_id))
+    trace.save_payload(call_id)                      # its exact request and response (Jejak)
 
 
 def refused_for(spec=None):
@@ -663,14 +667,20 @@ def handle(ticket, v1_reading=None, second_look=True):
     bid, n = ticket["batch_id"], ticket["page_no"]
     run = ticket.get("run", 1)
     if run != v1.current_run(bid):
+        trace.event("page", "skip", batch=bid, page=n, why="a ticket from an earlier run")
         return "stale"
     with db.connect(autocommit=True) as lock:
         lock.execute("SELECT pg_advisory_lock(hashtext(%s), %s)", (f"page:{bid}", n))
         try:
             p = lock.execute("SELECT status FROM staging.page WHERE batch_id=%s AND page_no=%s", (bid, n)).fetchone()
             if p and p["status"] == "read":
+                trace.event("page", "skip", batch=bid, page=n, why="read meanwhile by another ticket")
                 return "done"                         # another ticket's worker finished it meanwhile
-            return _handle(ticket, bid, n, run, v1_reading, second_look)
+            trace.cut_off(bid, n)                     # spans a stopped worker left 'running'
+            with trace.span("page", batch=bid, page=n, run=run, tries=ticket.get("tries"),
+                            back_from_waiting=bool(ticket.get("parked")) or None,
+                            **{"in": {"message taken off the queue (q.pages)": ticket}}):
+                return _handle(ticket, bid, n, run, v1_reading, second_look)
         finally:
             lock.execute("SELECT pg_advisory_unlock(hashtext(%s), %s)", (f"page:{bid}", n))
 
@@ -684,19 +694,23 @@ def _handle(ticket, bid, n, run, v1_reading, second_look):
         fv = two_step_versions(ctx)[2]
     fv_saved = fv if v1_reading is None else "dry-run"   # a dry-run reading is never reused as if Gemini made it
 
+    trace.stage("prepare")
     up, prep, up_key, thumb_key, prep_flags = prepare(ticket, prev, bid, n)                        # 1
+    trace.stage_note(**trace_io.prepare(ticket, prep, prep_flags, up_key))
 
     title = (prev or {}).get("fp_title")             # the printed-title witness, looked for at most once per page
     x = {"fields_all": None, "extract_status": None, "extract_error": None, "vlm_meta": {}}      # 2
     earlier = None                                   # this reading's earlier look-again, if the reading is reused
     two = {"notes": (prev or {}).get("notes"), "mapping": (prev or {}).get("mapping"),
            "blocks": (prev or {}).get("transcript"), "tv": (prev or {}).get("transcript_version")}
+    trace.stage("read")
     unset = None if v1_reading is not None else not_set()
     if unset:                                        # a model isn't set on the Teknis screen: no call, the page waits
         x.update(extract_status="failed", extract_error=unset)
     elif prev and prev["fields_all"] and prev["fields_version"] == fv:
         x.update(fields_all=prev["fields_all"], extract_status="done", vlm_meta=prev["vlm_meta"] or {})
         earlier = prev["second_look"]
+        trace.stage_note(reused="the page's own reading")
     elif v1_reading is not None:
         x.update(fields_all=v1_reading, extract_status="done", vlm_meta={"read": {"model": "v1 reading (dry run)"}})
     elif READER == "two_step":
@@ -714,6 +728,12 @@ def _handle(ticket, bid, n, run, v1_reading, second_look):
         except Exception as e:
             x.update(extract_status="failed", extract_error=f"{type(e).__name__}: {e}"[:500])
 
+    if x["fields_all"] is not None:
+        trace.stage_note(**trace_io.read(two["blocks"], two["mapping"], x["fields_all"], two["notes"],
+                                         len(ctx.get("fields") or {})))
+    elif x["extract_error"]:
+        trace.stage_note(**{"out": {"error": x["extract_error"]}})
+    trace.stage("classify")
     if x["fields_all"] is not None:
         normalise_amounts(x["fields_all"], ctx)
     cls = {"type_status": None, "doc_type": None, "type_guess": None, "doc_type_conf": None,       # 3 + 4
@@ -742,14 +762,17 @@ def _handle(ticket, bid, n, run, v1_reading, second_look):
             votes["reason"] = reason
         cls = {"type_status": status, "doc_type": doc_type, "type_guess": guess or doc_type,
                "doc_type_conf": jev.get("confidence"), "type_votes": votes}
+        trace.stage_note(**trace_io.classify(state, jev, votes["machine"], label, qr_sor, prep["layout_score"], title))
 
     kwait = None                                     # 4b: pass B, the text model again with what people taught
     if (READER == "two_step" and x["fields_all"] is not None and cls["type_status"] in ("decided", "labelled")
             and cls["doc_type"] in DOCS):
         from worker import learn
+        trace.stage("knowledge")
         try:
             fa_k, map_k, _ = learn.step(bid, n, cls["doc_type"], x["fields_all"], two["mapping"], prep["qr_text"],
                                         ctx, up)
+            trace.stage_note(**trace_io.knowledge((map_k or {}).get("pass_b"), x["fields_all"], fa_k))
             earlier = wiki.forget(earlier, wiki.changed(x["fields_all"], fa_k, sorted((set(fa_k) | set(x["fields_all"])) - {"lines"})))
             x["fields_all"], two["mapping"] = fa_k, map_k
         except Exception as e:                       # pass A's reading stands meanwhile; the page waits for the call
@@ -759,29 +782,41 @@ def _handle(ticket, bid, n, run, v1_reading, second_look):
     rd, res, zev, sl, looked, pick = {}, None, None, None, True, None                            # 5, 6, 7
     ship_to = (prev or {}).get("ship_to")            # the store question's answer (S4), kept across re-runs
     fields_all = x["fields_all"]
+    if fields_all is not None and cls["doc_type"] in DOCS:
+        trace.stage("project")                       # code, not AI: the combined list → the type's own fields
     fields = project(fields_all, cls["doc_type"]) if fields_all is not None and cls["doc_type"] in DOCS else {}
+    if fields:
+        trace.stage_note(**trace_io.project(cls["doc_type"], fields))
     if cls["type_status"] in ("decided", "labelled"):
         dt = cls["doc_type"]
+        trace.stage("tesseract")
         work = enhance.mask_bands(up, *enhance.measure(up)[2:])
         _, rd = enhance.read(work)
+        trace.stage_note(**trace_io.tesseract(rd))
         if READER == "two_step" and two["mapping"] and fields_all:   # boxes on Tesseract's own words, now it has read
             transcript.snap_boxes(fields_all, two["mapping"], rd.get("ocr_words"), up.shape)
         if two["blocks"] and two["tv"]:              # what a person can click on the page viewer (worker/boxes.py)
             pick = pick_boxes(up, two["blocks"], two["tv"], rd.get("ocr_words"))
         with db.connect() as c:
             sos, confirmed, day = satellite.load(c), satellite.confirmations(c, bid, n), scan_day_of(c, bid)
+        trace.stage("check")
         fields, res, zev = page_verdicts(dt, fields_all, rd, prep["qr_text"], up, ctx, sos, confirmed,
                                          second=earlier, scan_day=day, ship_to=ship_to)   # never ask again what a person or Satellite settles
+        trace.stage_note(**trace_io.check(res))
         skip = ("dry run: no AI OCR to ask" if v1_reading is not None else
                 None if second_look else "skipped in this run to save tokens (--no-second-look)")
+        trace.stage("look_again")
         out, res2, zev2, sl, looked = look_again_step(dt, fields_all, res, rd, prep["qr_text"], up, ctx, bid, n,
                                                       skip, earlier)
+        trace.stage_note(**trace_io.look(sl))
         if res2 is not res:                          # it looked again: the verdicts once more, with its answers
             fields_all = out
             fields, res, zev = page_verdicts(dt, fields_all, rd, prep["qr_text"], up, ctx, sos, confirmed,
                                              second=sl, zoom_cache=zev2, scan_day=day, ship_to=ship_to)
         if looked and store_pending(dt, res, ship_to):   # 7b (S4): a key the store printed on the page can decide
+            trace.stage("store")
             ship_to, wait = store_step(bid, n, up, skip)
+            trace.stage_note(**{"out": {"store printed on the page": ship_to, "waiting": wait}})
             if ship_to is not None:
                 fields, res, zev = page_verdicts(dt, fields_all, rd, prep["qr_text"], up, ctx, sos, confirmed,
                                                  second=sl, zoom_cache=zev, scan_day=day, ship_to=ship_to)
@@ -789,9 +824,12 @@ def _handle(ticket, bid, n, run, v1_reading, second_look):
                 sl, looked = {**(sl or {}), "waiting": wait}, False
     if kwait:
         sl, looked = {**(sl or {}), "waiting": kwait}, False
+    trace.stage("save")
     oc = outcome(cls["type_status"], cls["doc_type"], res, looked)                               # 8
+    trace_outcome(oc, cls, x, sl)
     keys = keymod.derive(cls["doc_type"], fields, rd.get("classical_text"), prep["qr_text"],
                          (res or {}).get("header") if res else None) if fields else {}
+    trace.stage_note(**trace_io.save(oc, keys, cls))
 
     with db.connect() as c:
         saved = c.execute("""
@@ -1276,6 +1314,18 @@ def retry_kind(extract_status, extract_error, waits):
     return ("limit" if any(w in why for w in LIMITS) else "failed"), why
 
 
+def trace_outcome(oc, cls, x, sl):
+    """The page's span says how it ended: wait (a limit or a model not set stopped a call: it goes on by itself),
+    fail (a call failed), or ok (read; a look-again a bundle asked for may still wait, by plan)."""
+    err = x["extract_error"] if x["extract_status"] == "failed" else None
+    why = err or (sl or {}).get("waiting")
+    trace.note(outcome=oc, doc_type=cls["doc_type"], type_status=cls["type_status"], waiting=(sl or {}).get("waiting"))
+    if why and any(k in why for k in LIMITS):
+        trace.set_status("wait", why)
+    elif err or (why and "the call failed" in why):
+        trace.set_status("fail", why)
+
+
 def park(ticket, why):
     """Put a page in the waiting room (q.pages.wait): it comes back to q.pages by itself after queue.WAIT_MS. The page
     stays 'queued' while it has a ticket, so nothing else sends it (vf-grouper sends only pages that are 'read')."""
@@ -1284,6 +1334,8 @@ def park(ticket, why):
         c.execute("UPDATE staging.page SET status='queued' WHERE batch_id=%s AND page_no=%s",
                   (ticket["batch_id"], ticket["page_no"]))
     queue.send(queue.Q_WAIT, [{**ticket, "parked": why[:200]}])
+    trace.event("page.parked", "wait", batch=ticket["batch_id"], page=ticket["page_no"], why=why[:300],
+                back_in_minutes=round(queue.WAIT_MS / 60000, 1) if getattr(queue, "WAIT_MS", None) else None)
 
 
 def after(ticket):
@@ -1295,12 +1347,14 @@ def after(ticket):
     kind, why = r
     tries = ticket.get("tries", 0) + (kind == "failed")
     if tries >= MAX_TRIES:
+        trace.event("page.gave_up", "fail", batch=ticket["batch_id"], page=ticket["page_no"], tries=tries,
+                    error=why[:300])
         return f"gave up after {tries} failed calls: {why[:120]}"
     park({**ticket, "tries": tries}, why)
     return f"parked ({kind}): {why[:120]}"
 
 
-def enqueue(bid, pages, waits=None, tries=0):
+def enqueue(bid, pages, waits=None, tries=0, why=None):
     """Send pages to q.pages: each set 'queued' first (only those that are 'read': a page with a ticket keeps its one),
     and tickets published after the commit. waits = only pages whose look-again waits for this reason (its start).
     Returns the pages sent."""
@@ -1314,6 +1368,7 @@ def enqueue(bid, pages, waits=None, tries=0):
     queue.send(queue.Q_PAGES, [{"batch_id": bid, "page_no": r["page_no"], "run": r["run"], "image_key": r["key"],
                                 **({"tries": tries} if tries else {})}
                                for r in sorted(rows, key=lambda r: r["page_no"])])
+    trace.events("page.queued", [{"batch": bid, "page": r["page_no"]} for r in rows], why=why or waits)
     return sorted(r["page_no"] for r in rows)
 
 
@@ -1334,7 +1389,7 @@ def sweep():
     sent = {}
     for bid in batches:
         todo = waiting(bid)
-        pages = enqueue(bid, todo, tries=MAX_TRIES - 1) if todo else []
+        pages = enqueue(bid, todo, tries=MAX_TRIES - 1, why="the sweep: still waiting for the AI") if todo else []
         if pages:
             sent[bid] = pages
     for bid in grouping:
@@ -1346,7 +1401,7 @@ def again(bid, pages=None):
     """What waits for the AI OCR goes back on the queue, for the page workers (they wait out a daily limit by
     themselves). Returns the pages sent."""
     todo = waiting(bid, pages)
-    sent = enqueue(bid, todo) if todo else []
+    sent = enqueue(bid, todo, why="tried again") if todo else []
     print(f"waiting for the AI OCR: {todo or 'nothing'} · sent to {len(sent)} page worker tickets: {sent}", flush=True)
     return sent
 

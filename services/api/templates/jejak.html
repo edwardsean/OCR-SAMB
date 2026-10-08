@@ -1,0 +1,52 @@
+{% extends "base.html" %}
+{% import "_trace_log.html" as tl %}
+{% block title %}Jejak{% endblock %}
+{% block main %}
+  <section class="head">
+    <h1>Jejak</h1>
+    <p class="lede">What the system and people did, newest first. Search a batch, file, SOR or name to follow it, or pick a
+      moment to see what happened then. Open a batch's name for its whole story, step by step.</p>
+  </section>
+  {% if missing %}<div class="alert bad">{{ missing }}</div>{% endif %}
+
+  <details class="jj-flow"><summary>How a batch flows (the steps you see here)</summary>
+    <ol>{% for key, name, about in steps %}<li><b>{{ name }}</b> · {{ about }}</li>{% endfor %}</ol>
+  </details>
+
+  <form class="jj-filter" method="get">
+    <input name="q" value="{{ f.q }}" placeholder="Batch, file, scan id, SOR, or a person's name" size="34">
+    <select name="step" aria-label="Step">
+      <option value="">Every step</option>
+      {% for key, name, about in steps %}<option value="{{ key }}"{{ ' selected' if f.step == key }}>{{ name }}</option>{% endfor %}
+      <option value="ai"{{ ' selected' if f.step == 'ai' }}>AI calls only</option>
+    </select>
+    <select name="status" aria-label="How it ended">
+      <option value="">Any result</option>
+      {% for s in ['fail', 'wait', 'running', 'ok', 'skip'] %}<option value="{{ s }}"{{ ' selected' if f.status == s }}>{{ words[s] }}</option>{% endfor %}
+    </select>
+    <label>Around <input type="datetime-local" name="around" value="{{ f.around }}" step="60"></label>
+    <select name="hours" aria-label="Or the last">
+      {% for h, label in [(1, 'last hour'), (6, 'last 6 hours'), (24, 'last day'), (72, 'last 3 days'), (168, 'last week')] %}
+      <option value="{{ h }}"{{ ' selected' if f.hours == h }}>{{ label }}</option>{% endfor %}
+    </select>
+    <button type="submit">Show</button> <a href="/teknis/jejak">Reset</a>
+  </form>
+  <p class="small muted">{{ rows|length }} lines · {{ f.since|jam(true) }} – {{ f.until|jam(true) }} WIB
+    {%- if f.step != 'jobs' %} · scheduled jobs that found nothing to do are hidden (choose Scheduled jobs){% endif %}
+    {%- if rows|length >= limit %} · only the newest {{ limit }}{% endif %}
+    {%- if f.around %} · 15 minutes either side of {{ f.around|replace('T', ' ') }}{% endif %}</p>
+
+  <ol class="tlog jj-feed">
+  {% for r in rows %}{% set sc = scans.get(r.batch_id) %}
+    {% call tl.line(r, words, 'tl-ai' if r.kind.startswith('ai.') else '') %}
+      {% if sc %}<div class="tl-where small">
+        <a href="/teknis/jejak/batch/{{ sc.upload_id }}">{{ sc.code or 'batch' }}</a> ·
+        <a href="/teknis/jejak/batch/{{ sc.upload_id }}" title="{{ r.batch_id }}">{{ sc.file_name }}</a>
+        {%- if r.page_no %} · <a href="/teknis/jejak/halaman/{{ r.batch_id }}/{{ r.page_no }}">page {{ r.page_no }}</a>{% endif %}</div>
+      {% elif r.batch_id %}<div class="tl-where small mono">{{ r.batch_id }}</div>{% endif %}
+    {% endcall %}
+  {% else %}
+    <li class="tl tl-gap">Nothing in this window. Widen it, or clear the search.</li>
+  {% endfor %}
+  </ol>
+{% endblock %}

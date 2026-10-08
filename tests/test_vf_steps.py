@@ -43,34 +43,49 @@ def test_an_order_by_status():
 
 def test_the_steps_from_counts():
     from api.steps import build
-    w = build({"pages": 33}, {"read": 32, "failed": 1, "unsure": 3, "answered": 1}, {"block": 3, "later": 6},
-              {"need": 6, "depends": 1})
+    w = build({"pages": 33}, {"done": 32, "failed": 1, "unsure": 3, "classified": 29, "answered": 1},
+              {"block": 3, "later": 6}, {"need": 6, "depends": 1})
     states = {s["key"]: s["state"] for s in w["steps"]}
     assert states == {"baca": "need", "jenis": "need", "cocokkan": "need", "periksa": "need", "kirim": "none"}
     assert w["next"] == "baca" and w["blockers"] == ["baca", "jenis", "cocokkan"] and not w["finished"]
+    assert w["steps"][4]["after"] == "baca"
 
-    w = build({"pages": 16}, {"read": 16, "answered": 3}, {"later": 2}, {"ready": 1, "published": 3})
+    w = build({"pages": 16}, {"done": 16, "classified": 16, "answered": 3}, {"later": 2}, {"ready": 1, "published": 3})
     states = {s["key"]: s["state"] for s in w["steps"]}
-    assert states == {"baca": "done", "jenis": "done", "cocokkan": "later", "periksa": "done", "kirim": "need"}
+    assert states == {"baca": "done", "jenis": "done", "cocokkan": "done", "periksa": "done", "kirim": "need"}
+    assert w["steps"][2]["later"] == 2                       # a Faktur Pajak waiting for SAP: said, never blocking
     assert w["next"] == "kirim" and w["blockers"] == []
 
-    w = build({"pages": 16}, {"read": 16}, {}, {"published": 4})
+    w = build({"pages": 16}, {"done": 16, "classified": 16}, {}, {"published": 4})
     assert w["next"] is None and w["finished"]
+
+
+def test_no_step_is_done_while_an_earlier_one_is_still_working():
+    """The mentor's batch (2026-10-08): 4 pages; page 1 read, page 2 read and sent back by its order for a look-again,
+    pages 3–4 waiting for a worker. It said "1 dari 4 halaman dibaca" with two files "Selesai dibaca", and ✓ Selesai
+    on Jenis halaman. Now step 1 counts what its list shows, and the later steps wait for it."""
+    from api.steps import build
+    w = build({"pages": 4}, {"done": 1, "busy": 3, "again": 1, "classified": 2}, {"later": 1}, {})
+    s = {x["key"]: x for x in w["steps"]}
+    assert (s["baca"]["state"], s["baca"]["done"], s["baca"]["busy"], s["baca"]["again"]) == ("sys", 1, 3, 1)
+    assert s["jenis"]["state"] == "none" and s["jenis"]["after"] == "baca" and s["jenis"]["pending"] == 2
+    assert all(s[k]["state"] == "none" and s[k]["after"] == "baca" for k in ("cocokkan", "periksa", "kirim"))
+    assert not w["finished"] and w["next"] is None
 
 
 def test_pages_never_scheduled_hold_no_order_back():
     """A big scan read only in part (the sample: 31 of 288): the system's step stays amber, but nothing would ever
-    finish those pages, so they never make an order wait."""
+    finish those pages, so they never make an order wait, and a person can still act on what is there."""
     from api.steps import build
-    w = build({"pages": 288}, {"read": 31}, {}, {"need": 4, "published": 7})
+    w = build({"pages": 288}, {"done": 31, "unscheduled": 257, "classified": 31}, {}, {"need": 4, "published": 7})
     baca = w["steps"][0]
     assert baca["state"] == "sys" and baca["unscheduled"] == 257 and w["blockers"] == []
-    assert w["next"] == "periksa"
+    assert w["steps"][3]["state"] == "need" and w["next"] == "periksa"
 
 
 def test_a_batch_still_being_read():
     from api.steps import build
-    w = build({"pages": 10, "splitting": 0}, {"read": 4, "busy": 6}, {}, {})
+    w = build({"pages": 10, "splitting": 0}, {"done": 4, "busy": 6, "classified": 4}, {}, {})
     assert w["steps"][0]["state"] == "sys" and w["steps"][0]["unscheduled"] == 0
     assert w["blockers"] == ["baca"] and w["next"] is None
 

@@ -1,0 +1,70 @@
+{# A stage's input or output (worker/trace_io.py) as a readable table: names on the left, values on the right; a long
+   text (the AI's copy, Tesseract's text) as text; a list as a list. #}
+{% macro kv(obj) %}{% if obj is mapping %}<table class="io-kv">{% for k, v in obj.items() if v is not none %}
+  <tr><th>{{ k }}</th><td>{{ kv(v) }}</td></tr>{% endfor %}</table>
+{%- elif obj is string %}{% if '\n' in obj or obj|length > 160 %}<pre class="io-text">{{ obj }}</pre>{% else %}{{ obj }}{% endif %}
+{%- elif obj is sequence %}<ul class="io-list">{% for x in obj %}<li>{{ kv(x) }}</li>{% endfor %}</ul>
+{%- else %}{{ obj }}{% endif %}{% endmacro %}
+
+{# One line of the trace in plain words (api/trace_words.py): when, what happened (hover: what that step does), the
+   sentence its detail makes, how it ended, how long; the code's name, the service and the raw row folded under it. #}
+{% macro line(r, words, cls='') %}
+<li class="tl {{ cls }} tl-{{ r.status }}">
+  <div class="tl-row">
+    <span class="tl-time mono">{{ r.at|jam }}</span>
+    <span class="tl-what"><b title="{{ r|explain }}">{{ r|title }}</b>{% set d = r|describe %}{% if d %}<span class="tl-d"> · {{ d }}</span>{% endif %}
+      {%- if r.who %}<span class="tl-who"> · by {{ r.who }}</span>{% endif %}
+      {%- if r.sor_no %}<span class="tl-who"> · <a class="mono" href="/review/{{ r.sor_no }}">{{ r.sor_no }}</a></span>{% endif %}</span>
+    <span class="tl-res">{% if words[r.status] %}<span class="jj-st {{ r.status }}">{{ words[r.status] }}</span>{% endif %}</span>
+    <span class="tl-ms">{% if r.ms is not none %}{{ r.ms|dur }}{% elif r.status == 'running' %}…{% endif %}</span>
+  </div>
+  {% if r.error %}<div class="jj-err tl-err">{{ r.error }}</div>{% endif %}
+  {% set io = r.detail or {} %}
+  {% if io.get('in') or io.get('out') %}
+  <details class="tl-io"><summary>Input and output</summary>
+    <div class="io-grid">
+      {% if io.get('in') %}<div><h4>In</h4>{{ kv(io['in']) }}</div>{% endif %}
+      {% if io.get('out') %}<div><h4>Out</h4>{{ kv(io['out']) }}</div>{% endif %}
+    </div></details>
+  {% endif %}
+  {% if r.src == 'ai' %}
+  <details class="tl-pay"><summary hx-get="/teknis/jejak/ai/{{ r.id }}" hx-trigger="click once" hx-target="next .pay-body">Request and response</summary>
+    <div class="pay-body small muted">Loading…</div></details>
+  {% endif %}
+  <details class="tl-raw"><summary>{{ r.kind }}{% if r.service %} · {{ r.service }}{% endif %}</summary><pre>{{ r|raw }}</pre></details>
+  {% if caller is defined %}{{ caller() }}{% endif %}
+</li>
+{% endmacro %}
+
+{# A page's log (observe.page_log): each attempt with the queue wait before it, its stages, and the AI calls that ran
+   inside each stage; events and AI calls outside an attempt on their own lines. #}
+{% macro page_log(pl, words) %}
+<ol class="tlog">
+{% if pl.loose %}
+  <li class="tl tl-gap"><details><summary>{{ pl.loose|length }} AI call{{ 's' if pl.loose|length != 1 }} not part of a traced read
+    (made before the trace existed, or by a teacher testing a change on this page)</summary>
+    <ol class="tlog tl-in">{% for c in pl.loose %}{{ line(c, words, 'tl-ai') }}{% endfor %}</ol></details></li>
+{% endif %}
+{% for r in pl.log %}
+  {% if r.kind == 'page' and r.stages is defined %}
+    {% if r.waited is not none %}<li class="tl tl-gap">waited {{ r.waited|dur }} in the queue for a free page worker</li>{% endif %}
+    {% call line(r, words, 'tl-attempt') %}
+      {% if r.stages or r.calls %}
+      <ol class="tlog tl-in">
+        {% for c in r.calls %}{{ line(c, words, 'tl-ai') }}{% endfor %}
+        {% for st in r.stages %}
+          {% call line(st, words, 'tl-stage') %}
+            {% if st.calls %}<ol class="tlog tl-in">{% for c in st.calls %}{{ line(c, words, 'tl-ai') }}{% endfor %}</ol>{% endif %}
+          {% endcall %}
+        {% endfor %}
+      </ol>
+      {% endif %}
+    {% endcall %}
+  {% else %}
+    {{ line(r, words, 'tl-ai' if r.kind.startswith('ai.') else '') }}
+  {% endif %}
+{% else %}
+  <li class="tl tl-gap">No read of this page was traced: it was read before the trace existed.</li>
+{% endfor %}
+</ol>
+{% endmacro %}

@@ -72,6 +72,8 @@ INTAKE_RETRY_MINUTES = _int("INTAKE_RETRY_MINUTES", 10)   # a scan received but 
 NOTIFY_EVERY_MINUTES = _int("NOTIFY_EVERY_MINUTES", 5)    # orders that newly need a person become a notice
 SWEEP_EVERY_MINUTES = _int("SWEEP_EVERY_MINUTES", 180)    # pages still waiting for the AI go back on the queue
 LINT_EVERY_MINUTES = _int("LINT_EVERY_MINUTES", 360)      # knowledge a later correction contradicts: taken out
+TRACE_KEEP_DAYS = _int("TRACE_KEEP_DAYS", 90)             # the trace (Jejak, Metrik) keeps this many days
+PAYLOAD_KEEP_DAYS = _int("PAYLOAD_KEEP_DAYS", 14)         # each AI call's exact request and response (~100 KB a page)
 
 # ================================================================= models
 # The vision model, the text model and the classification model are set ONLY on the Teknis screen "Model & kunci

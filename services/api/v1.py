@@ -5,6 +5,7 @@ actions.py. Documented for people in docs/api.md, and live at /docs (generated f
 Reads are GET, a person's decisions are POST with a JSON body (an upload is multipart). A refused action answers
 with its status and {"error", ...}. Values are as stored (amounts are numbers, dates ISO strings); the wording for
 people (bahasa.py) comes from /words, and sentences other modules produce are translated here."""
+import inspect
 import threading
 from datetime import datetime, timezone
 
@@ -13,7 +14,7 @@ from fastapi.encoders import jsonable_encoder
 from fastapi.responses import JSONResponse, Response
 from pydantic import BaseModel, Field
 
-from common import db, verify
+from common import db, trace, verify
 from api import actions, bahasa
 
 router = APIRouter(prefix="/api/v1")
@@ -137,12 +138,37 @@ def _ok(data):
     return JSONResponse(jsonable_encoder(data))
 
 
-def _run(fn, *args, **kw):
-    """An action: its result as JSON, or its refusal with its own status."""
+HIDDEN = {"data"}                          # never in the trace: an upload's bytes
+WHERE = {"batch", "page", "sor"}
+WHO = ("by", "labelled_by")
+
+
+def _person(fn, args, kw, status, error=None):
+    """The trace (common/trace.py): what a person did, or tried and was refused (status skip, with why), with who and
+    where. The action's own arguments are its detail."""
     try:
-        return _ok({"ok": True, "result": fn(*args, **kw)})
+        a = inspect.signature(fn).bind_partial(*args, **kw).arguments
+    except (TypeError, ValueError):
+        a = {}
+    who = next((str(a[k]).strip() for k in WHO if a.get(k)), None)
+    detail = {k: v if isinstance(v, (int, float, bool)) else str(v)[:200] for k, v in a.items()
+              if k not in HIDDEN | WHERE | set(WHO) and v not in (None, "")}
+    trace.event(f"person.{fn.__name__}", status, batch=a.get("batch"), page=a.get("page"), sor=a.get("sor"),
+                who=who or None, error=error, **detail)
+
+
+def _run(fn, *args, **kw):
+    """An action: its result as JSON, or its refusal with its own status. Either way it goes in the trace."""
+    try:
+        out = fn(*args, **kw)
     except actions.ActionError as e:
+        _person(fn, args, kw, "skip", e.error)
         return JSONResponse(jsonable_encoder(e.body()), status_code=e.status)
+    except Exception as e:
+        _person(fn, args, kw, "fail", f"{type(e).__name__}: {e}")
+        raise
+    _person(fn, args, kw, "ok")
+    return _ok({"ok": True, "result": out})
 
 
 def _missing(what="not found"):
@@ -218,6 +244,7 @@ def new_upload(body: NewUpload):
         out = actions.new_upload(body.by, body.date, body.note)
     except actions.ActionError as e:
         return JSONResponse(jsonable_encoder(e.body()), status_code=e.status)
+    trace.event("person.new_upload", "ok", who=body.by, upload=out.get("id"), code=out.get("code"))
     return JSONResponse(jsonable_encoder(out), status_code=201)
 
 
@@ -503,10 +530,12 @@ def approve(sor: str, body: Approve):
     try:
         actions.approve(body.batch, sor, body.by)
     except actions.ActionError as e:
+        _person(actions.approve, (body.batch, sor, body.by), {}, "skip", e.error)
         out = e.body()
         if "left" in out:
             out["left"] = bahasa.left(out["left"])
         return JSONResponse(jsonable_encoder(out), status_code=e.status)
+    _person(actions.approve, (body.batch, sor, body.by), {}, "ok")
     return _ok({"ok": True})
 
 

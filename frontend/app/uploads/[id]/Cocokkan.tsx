@@ -27,8 +27,11 @@ export default async function Cocokkan({ d }: { d: UploadDetail }) {
   return (
     <section className="ws-panel">
       <h2>Cocokkan ke order</h2>
-      <p className="lede">Dokumen yang belum tahu ordernya, karena nomor SOR atau PO-nya belum pasti. Pastikan nomornya
-        seperti tercetak; dokumen itu langsung masuk ke ordernya.</p>
+      <p className={`ws-now ${block.length ? "need" : wait.length ? "sys" : s.state === "done" ? "ok" : "wait"}`}>
+        {block.length ? `${block.length} dokumen belum tahu ordernya. Pastikan nomornya seperti tercetak; dokumen itu langsung masuk ke ordernya.`
+          : wait.length ? `${wait.length} dokumen menunggu sistem (AI atau SAP). Tidak perlu tindakan.`
+          : s.state === "done" ? "Semua dokumen sudah masuk ordernya."
+          : "Menunggu langkah sebelumnya: dokumen muncul di sini setelah halamannya dibaca dan jenisnya pasti."}</p>
       {earlier > 0 && (
         <p className="ws-dep">
           {s.loose_unsure > 0 && <>{s.loose_unsure} halaman lain menunggu <Link href={`/uploads/${id}?step=jenis`}>langkah 2</Link> (jenisnya belum pasti)</>}
@@ -38,10 +41,9 @@ export default async function Cocokkan({ d }: { d: UploadDetail }) {
         </p>
       )}
 
-      {block.length ? <Group title="Menghalangi order" note="pastikan nomornya" list={block} />
-        : <p className="kosong">✓ Tidak ada dokumen yang menghalangi order.</p>}
+      {block.length > 0 && <Group title="Menghalangi order" note="pastikan nomornya" list={block} />}
       {wait.length > 0 && <Group title="Menunggu sistem" note="AI atau SAP; tidak perlu tindakan" list={wait} />}
-      {later.length > 0 && <Group title="Tidak mendesak" note="tidak menghalangi pengiriman order; boleh nanti" list={later} />}
+      {later.length > 0 && <Group title="Faktur Pajak menunggu SAP" note="nomornya datang dari SAP; tidak menghalangi order" list={later} />}
 
       {s.loose_other > 0 && v && (
         <details className="small">

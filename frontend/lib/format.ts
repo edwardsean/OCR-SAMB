@@ -73,3 +73,29 @@ export function pct(done: number, total: number): number {
 export function cx(...names: (string | false | null | undefined)[]): string {
   return names.filter(Boolean).join(" ");
 }
+
+/** A duration as people say it: "45 dtk", "1 mnt 32 dtk", "2 jam 5 mnt". */
+export function lama(ms: number | null | undefined): string {
+  if (ms === null || ms === undefined || !Number.isFinite(ms)) return "—";
+  const s = Math.max(0, Math.round(ms / 1000));
+  if (s < 60) return `${s} dtk`;
+  const m = Math.floor(s / 60), r = s % 60;
+  if (m < 60) return r ? `${m} mnt ${r} dtk` : `${m} mnt`;
+  const h = Math.floor(m / 60), rm = m % 60;
+  return rm ? `${h} jam ${rm} mnt` : `${h} jam`;
+}
+
+/** How long ago a moment was, from `now` (ms since the epoch): for "since" times the API sends. */
+export function sejak(v: string | null | undefined, now: number): number | null {
+  if (!v) return null;
+  const t = Date.parse(v);
+  return Number.isFinite(t) ? Math.max(0, now - t) : null;
+}
+
+/** "±3 menit" / "kurang dari 1 menit": an estimate, never more exact than it is. */
+export function kira(s: number | null | undefined): string | null {
+  if (s === null || s === undefined) return null;
+  if (s < 60) return "kurang dari 1 menit";
+  const m = Math.round(s / 60);
+  return m < 90 ? `±${m} menit` : `±${Math.round(m / 60)} jam`;
+}

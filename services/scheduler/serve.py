@@ -5,6 +5,9 @@
   notify   every NOTIFY_EVERY_MINUTES   orders that newly need a person become one notice (common/notice.py)
   sweep    every SWEEP_EVERY_MINUTES    pages still waiting for the AI go back on q.pages (worker/vf.py sweep)
   lint     every LINT_EVERY_MINUTES     knowledge a person's later correction contradicts is taken out (worker/learn.py)
+  trace    every hour                   the trace older than TRACE_KEEP_DAYS is deleted (the AI calls' payloads older
+                                        than PAYLOAD_KEEP_DAYS), and a span still 'running' after two hours is closed
+                                        as cut off (common/trace.py)
 
   A job runs once per interval however many schedulers run: it takes its turn in staging.job_run with one UPDATE
   (last started longer ago than its interval), so two never both run it, and a restart doesn't run it again early.
@@ -20,7 +23,7 @@ import traceback
 
 from psycopg.types.json import Json
 
-from common import config, db, health, settings
+from common import config, db, health, settings, trace
 
 TICK_S = 30                                            # how often it looks for a job that is due
 
@@ -49,10 +52,23 @@ def job_lint():
     return learn.lint(show=lambda *a: None)
 
 
+def job_trace():
+    with db.connect() as c:
+        old = c.execute("DELETE FROM staging.trace WHERE at < now() - make_interval(days => %s)",
+                        (config.TRACE_KEEP_DAYS,)).rowcount
+        payloads = c.execute("DELETE FROM staging.ai_payload WHERE at < now() - make_interval(days => %s)",
+                             (config.PAYLOAD_KEEP_DAYS,)).rowcount
+        cut = c.execute("""UPDATE staging.trace SET status='fail', ended_at=now(),
+                                  error='cut off: still running after two hours (its service stopped)'
+                            WHERE status='running' AND at < now() - interval '2 hours'""").rowcount
+    return {"deleted": old, "payloads_deleted": payloads, "cut_off": cut}
+
+
 JOBS = {"intake": (lambda: config.INTAKE_RETRY_MINUTES, job_intake, False),     # name: (interval, run, vlm-first only)
         "notify": (lambda: config.NOTIFY_EVERY_MINUTES, job_notify, True),
         "sweep": (lambda: config.SWEEP_EVERY_MINUTES, job_sweep, True),
-        "lint": (lambda: config.LINT_EVERY_MINUTES, job_lint, True)}
+        "lint": (lambda: config.LINT_EVERY_MINUTES, job_lint, True),
+        "trace": (lambda: 60, job_trace, False)}
 
 
 def claim(name, minutes):
@@ -85,7 +101,10 @@ def tick():
             continue
         t0 = time.time()
         try:
-            result = job()
+            with trace.span(f"job.{name}") as sp:
+                result = job()
+                sp.note(result=json.loads(json.dumps(result, default=str))
+                        if len(json.dumps(result, default=str)) < 2000 else "(long)")
             finish(name, result)
             ran[name] = result
             print(f"{name}: {json.dumps(result, default=str)[:300]} in {time.time() - t0:.1f} s", flush=True)

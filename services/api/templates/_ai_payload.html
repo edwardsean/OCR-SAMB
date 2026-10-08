@@ -1,0 +1,40 @@
+{# One AI call's exact request and response (staging.ai_payload, common/trace.py), loaded into its Jejak line. #}
+{% if not p %}
+  <p class="muted small">Not kept: this call was made before payloads were recorded, or more than {{ keep }} days ago
+    (PAYLOAD_KEEP_DAYS).</p>
+{% else %}{% set q = p.request or {} %}{% set a = p.response %}
+<div class="pay">
+  <div>
+    <h4>Request: what was sent{% if m %} to {{ m.model }}{% endif %}</h4>
+    <table class="io-kv">{% for k, v in q.items() if k not in ('messages', 'contents') %}
+      <tr><th>{{ k }}</th><td class="mono">{{ v|pretty }}</td></tr>{% endfor %}</table>
+    {% for msg in q.messages or [] %}
+      <p class="pay-role">{{ msg.role }} message</p>
+      {% if msg.content is string %}<pre class="io-text">{{ msg.content|pretty }}</pre>
+      {% else %}{% for part in msg.content %}
+        {% if part.type == 'text' %}<pre class="io-text">{{ part.text|pretty }}</pre>
+        {% elif part.image_url %}<p class="pay-img">{{ part.image_url.url }}</p>
+        {% else %}<pre class="io-text">{{ part|pretty }}</pre>{% endif %}
+      {% endfor %}{% endif %}
+    {% endfor %}
+    {% for ct in q.contents or [] %}{% for part in ct.parts or [] %}
+      {% if part.text %}<pre class="io-text">{{ part.text|pretty }}</pre>{% else %}<p class="pay-img">{{ (part.inline_data or {}).data }}</p>{% endif %}
+    {% endfor %}{% endfor %}
+  </div>
+  <div>
+    <h4>Response: what came back{% if p.http %} (HTTP {{ p.http }}){% endif %}</h4>
+    {% if a is mapping and a.choices %}{% set ch = a.choices[0] %}
+      <pre class="io-text">{{ (ch.message or {}).content|pretty }}</pre>
+      <table class="io-kv">
+        <tr><th>finish reason</th><td>{{ ch.finish_reason }}</td></tr>
+        {% if a.usage %}<tr><th>usage</th><td class="mono">{{ a.usage|pretty }}</td></tr>{% endif %}
+        {% if ch.logprobs and ch.logprobs.content %}<tr><th>the answer token's options</th><td>
+          {% for t in ch.logprobs.content[0].top_logprobs or [] %}<span class="mono">{{ t.token }}</span> {{ t.logprob|prob }}{{ ' · ' if not loop.last }}{% endfor %}</td></tr>{% endif %}
+      </table>
+    {% elif a is mapping and a.candidates %}
+      <pre class="io-text">{{ ((a.candidates[0].content or {}).parts or [{}])[-1].text|pretty }}</pre>
+    {% else %}<pre class="io-text">{{ a|pretty }}</pre>{% endif %}
+    <details><summary class="small">The whole response</summary><pre class="io-text">{{ a|pretty }}</pre></details>
+  </div>
+</div>
+{% endif %}

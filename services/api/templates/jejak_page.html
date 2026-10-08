@@ -1,0 +1,15 @@
+{% extends "base.html" %}
+{% import "_trace_log.html" as tl %}
+{% block title %}Jejak page {{ page_no }}{% endblock %}
+{% block main %}
+  <section class="head">
+    <p class="crumbs"><a href="/teknis/jejak">Jejak</a>
+      {% if scan %} / <a href="/teknis/jejak/batch/{{ scan.upload_id }}">{{ scan.code or scan.id }}</a>{% endif %} / page {{ page_no }}</p>
+    <h1>{{ scan.file_name if scan else batch_id }} · page {{ page_no }}</h1>
+    <p class="lede">Everything that happened to this page, oldest first. Each time a page worker read it is one try: what it
+      waited for, each stage it went through, and the AI calls made inside each stage. ·
+      <a href="/batches/{{ batch_id }}/pages/{{ page_no }}">the page</a> ·
+      <a href="/teknis/halaman/{{ batch_id }}/{{ page_no }}">its technical detail</a></p>
+  </section>
+  {% if not scan %}<div class="alert bad">No such scan.</div>{% else %}{{ tl.page_log(log, words) }}{% endif %}
+{% endblock %}

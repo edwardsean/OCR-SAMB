@@ -26,7 +26,7 @@ from decimal import Decimal
 from PIL import Image
 from psycopg.types.json import Json
 
-from common import config, db, storage, verify
+from common import config, db, storage, trace, verify
 from common.fields import DOCS, column, project
 
 PREFIX = config.STORAGE_PREFIX
@@ -192,7 +192,16 @@ def publish(bid, sors=None):
     group.run(bid)
     with db.connect() as c:
         todo = ready(c, bid, sors)
-    return [r for r in (publish_one(bid, s) for s in todo) if r]
+    out = []
+    for s in todo:
+        with trace.span("publish", batch=bid, sor=s) as sp:
+            r = publish_one(bid, s)
+            if r:
+                sp.note(pages=r["pages"], kb=r["bytes"] // 1024, documents=len(r["documents"]))
+                out.append(r)
+            else:
+                sp.set("skip", "it changed since: not finished any more")
+    return out
 
 
 def undo(sor):
@@ -210,6 +219,7 @@ def undo(sor):
             storage.client().remove_object(storage.bucket(), r["pdf_path"])
         except Exception:
             pass
+        trace.event("unpublish", sor=sor)
     return bool(r)
 
 

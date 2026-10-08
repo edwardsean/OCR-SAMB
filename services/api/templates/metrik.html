@@ -1,0 +1,94 @@
+{% extends "base.html" %}
+{% block title %}Metrik{% endblock %}
+{% block main %}
+  <section class="head">
+    <h1>Metrik</h1>
+    <p class="lede">How long the work takes and what it costs, from the trace and the AI calls.
+      {% for d, label in [(1, 'Last day'), (7, 'Last week'), (30, 'Last 30 days')] %}
+        {% if d == days %}<b>{{ label }}</b>{% else %}<a href="?days={{ d }}">{{ label }}</a>{% endif %}{{ ' · ' if not loop.last }}
+      {% endfor %}</p>
+  </section>
+  {% if missing %}<div class="alert bad">{{ missing }}</div>{% endif %}
+  {% if m %}{% set p = m.pages %}
+  <dl class="jj-sum">
+    <div><dt>Pages read</dt><dd>{{ p.ok }}{% if p.fail %} · <a class="jj-err" href="/teknis/jejak?step=read&status=fail&hours={{ days * 24 }}">{{ p.fail }} failed</a>{% endif %}{% if p.wait %} · {{ p.wait }} waited{% endif %}</dd></div>
+    <div><dt>A page (median · 90%)</dt><dd>{{ p.p50|dur }} · {{ p.p90|dur }}</dd></div>
+    <div><dt>Queue wait (median · 90%)</dt><dd>{{ p.queue_p50|dur }} · {{ p.queue_p90|dur }}</dd></div>
+    <div><dt>Page workers seen</dt><dd>{{ p.workers }}</dd></div>
+    <div><dt>Files split (median · 90%)</dt><dd>{{ m.files.n }} · {{ m.files.split_p50|dur }} · {{ m.files.split_p90|dur }}</dd></div>
+    <div><dt>Grouping rounds (median)</dt><dd>{{ m.groups.n }} · {{ m.groups.p50|dur }}</dd></div>
+    <div><dt>AI tokens in · out</dt><dd>{{ '{:,}'.format(m.ai_tokens[0]) }} · {{ '{:,}'.format(m.ai_tokens[1]) }}</dd></div>
+    <div><dt>AI cost (priced models)</dt><dd>${{ '%.4f'|format(m.ai_usd) }}</dd></div>
+  </dl>
+
+  {% if m.running %}
+  <h2>Running now</h2>
+  <table class="reg jj"><tbody>{% for r in m.running %}
+    <tr><td class="mono">{{ r.at|jam(true) }}</td><td><b title="{{ r.kind }}">{{ r|title }}</b></td><td class="small">{{ r.service }}</td>
+      <td>{% if r.batch_id and r.page_no %}<a href="/teknis/jejak/halaman/{{ r.batch_id }}/{{ r.page_no }}">{{ r.batch_id }} · page {{ r.page_no }}</a>{% elif r.batch_id %}{{ r.batch_id }}{% endif %}</td></tr>
+  {% endfor %}</tbody></table>
+  {% endif %}
+
+  <h2>A page's stages</h2>
+  <table class="reg">
+    <thead><tr><th>Stage</th><th class="num">Times</th><th class="num">Median</th><th class="num">90%</th><th class="num">All together</th></tr></thead>
+    <tbody>{% for s in m.stages if s.n %}
+      <tr><td title="{{ ('page.' ~ s.stage)|explain }}">{{ ('page.' ~ s.stage)|title }}</td>
+        <td class="num">{{ s.n }}</td><td class="num">{{ s.p50|dur }}</td><td class="num">{{ s.p90|dur }}</td><td class="num">{{ s.total|dur }}</td></tr>
+    {% else %}<tr><td colspan="5" class="muted">No page read in this window.</td></tr>{% endfor %}</tbody>
+  </table>
+
+  <h2>AI calls</h2>
+  <table class="reg">
+    <thead><tr><th>What for</th><th>Model</th><th class="num">Calls</th><th class="num">Failed</th><th class="num">Stopped by a limit</th>
+      <th class="num">Median</th><th class="num">90%</th><th class="num">Tokens in</th><th class="num">Tokens out</th><th class="num">USD</th></tr></thead>
+    <tbody>{% for a in m.ai %}
+      <tr><td title="{{ ('ai.' ~ a.purpose)|explain }}">{{ ('ai.' ~ a.purpose)|title|replace('AI call: ', '') }}</td><td class="mono small">{{ a.model or '' }}</td><td class="num">{{ a.n }}</td>
+        <td class="num">{% if a.fail %}<a class="jj-err" href="/teknis/jejak?step=ai&status=fail&hours={{ days * 24 }}">{{ a.fail }}</a>{% else %}0{% endif %}</td>
+        <td class="num">{{ a.wait }}</td><td class="num">{{ a.p50|dur }}</td><td class="num">{{ a.p90|dur }}</td>
+        <td class="num">{{ '{:,}'.format(a.tokens_in) }}</td><td class="num">{{ '{:,}'.format(a.tokens_out) }}</td>
+        <td class="num">{{ '%.4f'|format(a.usd) if a.priced else '—' }}</td></tr>
+    {% else %}<tr><td colspan="10" class="muted">No AI call in this window.</td></tr>{% endfor %}</tbody>
+  </table>
+  <p class="small muted">USD from Model Studio's list prices (api/observe.py PRICES); a model not listed shows —.</p>
+
+  <h2>Failures</h2>
+  <table class="reg">
+    <thead><tr><th>What</th><th>Cause</th><th class="num">Times</th></tr></thead>
+    <tbody>{% for (kind, cause), n in m.errors %}
+      <tr><td><a href="/teknis/jejak?step={{ 'ai' if kind.startswith('ai.') else kind|step }}&status=fail&hours={{ days * 24 }}" title="{{ kind }}">{{ kind|title }}</a></td>
+        <td class="mono small">{{ cause }}</td><td class="num">{{ n }}</td></tr>
+    {% else %}<tr><td colspan="3" class="muted">No failure in this window.</td></tr>{% endfor %}</tbody>
+  </table>
+
+  <div class="jj-two">
+    <div>
+      <h2>The teachers</h2>
+      <table class="reg"><thead><tr><th>Lesson</th><th>Result</th><th class="num">Times</th></tr></thead>
+        <tbody>{% for (kind, result), n in m.lessons %}<tr><td>{{ 'Classifier' if kind == 'lesson.type' else 'Knowledge tip' }}</td>
+          <td>{{ result }}</td><td class="num">{{ n }}</td></tr>
+        {% else %}<tr><td colspan="3" class="muted">No lesson in this window.</td></tr>{% endfor %}</tbody></table>
+    </div>
+    <div>
+      <h2>People's actions</h2>
+      <table class="reg"><thead><tr><th>Action</th><th>Result</th><th class="num">Times</th></tr></thead>
+        <tbody>{% for (kind, status), n in m.people %}<tr><td>{{ ('person.' ~ kind)|title|replace('A person ', '') }}</td>
+          <td>{{ 'refused' if status == 'skip' else words[status] }}</td><td class="num">{{ n }}</td></tr>
+        {% else %}<tr><td colspan="3" class="muted">No action in this window.</td></tr>{% endfor %}</tbody></table>
+    </div>
+    <div>
+      <h2>Orders became</h2>
+      <table class="reg"><tbody>{% for now, n in m.orders.most_common() %}<tr><td>{{ now }}</td><td class="num">{{ n }}</td></tr>
+        {% else %}<tr><td class="muted">No order changed status.</td></tr>{% endfor %}</tbody></table>
+    </div>
+  </div>
+
+  {% if m.hours %}
+  <h2>Pages read per hour</h2>
+  {% set top = m.hours|map(attribute=1)|max %}
+  <div class="jj-hours">{% for h, n in m.hours %}
+    <div title="{{ h }}: {{ n }} pages"><i style="height:{{ (100 * n / top)|round|int }}%"></i><span>{{ h[-5:-3] }}</span></div>
+  {% endfor %}</div>
+  {% endif %}
+  {% endif %}
+{% endblock %}

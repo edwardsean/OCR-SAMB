@@ -19,7 +19,7 @@ import time
 
 import httpx
 
-from common import config, settings
+from common import config, settings, trace
 from worker import layout
 
 CLASSIFY_VERSION = 2      # 2: Jev leads; FP needs a second witness; title words fixed (2026-09-24)
@@ -173,8 +173,10 @@ def llm_ask(state, questions, url, key, model):
             "messages": [{"role": "user", "content": prompt}]}
     headers = {"Authorization": f"Bearer {key}"} if key else {}
     t0 = time.time()
+    trace.ai_request(body)                           # the exact payload, for Jejak (common/trace.py)
     for attempt in range(5):
         r = httpx.post(f"{url}/chat/completions", headers=headers, json=body, timeout=60)
+        trace.ai_http(r)
         if r.status_code in (429, 502, 503):
             time.sleep(2 ** attempt); continue
         if r.status_code >= 400:

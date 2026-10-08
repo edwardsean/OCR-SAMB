@@ -162,6 +162,54 @@ Consoles:
 - RabbitMQ: <http://localhost:15672> (the queues, in vhost `rtm`)
 - MinIO: <http://localhost:9001> (the files)
 
+### When something fails, or is slow
+
+Everything the services and people do is written to the trace (`staging.trace`, [schema/028-trace.sql](schema/028-trace.sql),
+[services/common/trace.py](services/common/trace.py)):
+- a page's attempts and each of their stages (prepare, read, classify, knowledge, tesseract, check, look again, save);
+- each time a page is sent to the queue or waits for a limit, and each split file;
+- every grouping round, and every order whose status changes, with why;
+- what people did (and what was refused, with why);
+- the teachers' lessons and changes, and the scheduled jobs.
+
+The AI calls stay in `staging.model_call`. Everything is said in plain words (each step's name and what it does:
+[services/api/trace_words.py](services/api/trace_words.py)); the code's own name is kept small under each line, with
+the raw row folded under it. Look under **Teknis**:
+- **Jejak** (`/teknis/jejak`): what happened at a moment (±15 minutes), or everything about a batch, file, SOR or
+  person, newest first, filtered by the workflow's step and the result (failed, waiting, running). Scheduled jobs that
+  found nothing to do are hidden unless you choose them.
+- **Jejak for one batch** (a batch's link in Jejak): its story in the workflow's order: 1 upload, 2 split into pages,
+  3 read each page (each page's own log: every try, the queue wait before it, each stage, and the AI calls made inside
+  each stage), 4 group into orders, 5 what people did, 6 what the teachers learned, 7 sent to Satellite. A summary on
+  top (when it started, when every page was read, the time a page takes, AI calls, tokens, cost), a timeline under it.
+- **Jejak for one page**: that page's log alone.
+
+Every stage of a page also keeps what went in and what came out ([services/worker/trace_io.py](services/worker/trace_io.py)),
+under "Input and output" on its line, for example:
+- the AI OCR's copy of the page, the text model's mapping (the JSON fields) and which fields its two answers
+  disagreed on;
+- what the classifier saw and its probabilities;
+- the type's own fields after the code's projection;
+- Tesseract's text, word count, confidence and variant;
+- each value's verdict, the look-again's questions and answers, the outcome and the linking numbers.
+
+Long texts are cut at 1,500 characters, about 5 KB per read; the full text stays on the page.
+
+Every AI call keeps its exact payload too, under "Request and response" on its line (`staging.ai_payload`), filled in
+by the model adapters:
+- the body sent: the model, its settings and the whole prompt (an image only as a placeholder: the page image is in
+  storage; the API key never);
+- the raw response that came back: its HTTP status, the model's answer, the finish reason and the usage; for the
+  classifier, each option's probability.
+
+Payloads are about 100 KB a page, so they are kept `PAYLOAD_KEEP_DAYS` (14), while the rest of the trace is kept 90.
+- **Metrik** (`/teknis/metrik`): the last day, week or 30 days. How long a page and each stage take (median, 90%), the
+  queue wait, the AI calls per purpose and model (latency, failures, tokens, USD), failures by cause, what the
+  teachers and people did, pages read per hour, and what is running now.
+
+The trace is kept `TRACE_KEEP_DAYS` (90). A database without `028-trace.sql` keeps working, but nothing is traced
+until the migration is applied (see above). The tests never write to it.
+
 ## Configuration
 
 Every setting comes from `.env`, and [.env.example](.env.example) lists them all with their defaults: ports, server

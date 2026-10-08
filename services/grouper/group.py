@@ -33,7 +33,7 @@ import sys
 from minio.commonconfig import CopySource
 from psycopg.types.json import Json
 
-from common import config, db, satellite, storage
+from common import config, db, satellite, storage, trace
 
 PREFIX = config.STORAGE_PREFIX
 LINKABLE = ("FP", "TTG", "PO")
@@ -364,6 +364,8 @@ def _order_holds(c, bid, sors, out, was=None):
             status = "needs_review" if hold else ("grouping" if b["status"] == "needs_review" else b["status"])
             c.execute("UPDATE staging.bundle SET hold_reason=%s, status=%s, folder=%s WHERE id=%s",
                       (hold, status, folder(s, hold), b["id"]))
+            if status != b["status"]:
+                trace.event("order.status", batch=bid, sor=s, was=b["status"], now=status, why=[hold] if hold else None)
         if hold != was.get(s, hold):
             wake |= {r["batch_id"] for r in rows} - {bid}
         if s in out["bundles"]:

@@ -18,7 +18,7 @@ import json
 import time
 import traceback
 
-from common import health, queue, settings
+from common import health, queue, settings, trace
 
 POLL_S = 1.0
 
@@ -27,7 +27,7 @@ def dispatch(bid):
     """Send back to the page workers the pages of this batch that a bundle asked to look again."""
     from grouper.crosscheck import ASK_WAIT
     from worker import vf
-    return vf.enqueue(bid, vf.waiting(bid), waits=ASK_WAIT)
+    return vf.enqueue(bid, vf.waiting(bid), waits=ASK_WAIT, why="an order asked the AI to look again")
 
 
 def round_(batches):
@@ -39,16 +39,21 @@ def round_(batches):
     for bid in batches:
         try:
             t0 = time.time()
-            group.run(bid)
-            try:                                       # read-then-map 2c: knowledge chosen for another customer
-                from worker import learn
-                redone = learn.after_grouping(bid, show=lambda *a: None)
-                if redone:
-                    print(f"{bid}: knowledge done again for its order's customer on {sorted(redone)}", flush=True)
-                    group.run(bid)
-            except Exception:
-                traceback.print_exc()
-            sent = dispatch(bid)
+            with trace.span("group", batch=bid) as sp:
+                res = group.run(bid) or {}
+                sp.note(orders=sorted(res.get("bundles") or {}) or None,
+                        waiting=sum(1 for d in res.get("documents") or [] if d.get("hold")) or None)
+                try:                                       # read-then-map 2c: knowledge chosen for another customer
+                    from worker import learn
+                    redone = learn.after_grouping(bid, show=lambda *a: None)
+                    if redone:
+                        print(f"{bid}: knowledge done again for its order's customer on {sorted(redone)}", flush=True)
+                        sp.note(knowledge_redone=sorted(redone))
+                        group.run(bid)
+                except Exception:
+                    traceback.print_exc()
+                sent = dispatch(bid)
+                sp.note(look_again_sent=sent or None)
             done[bid] = sent
             print(f"{bid}: grouped in {time.time() - t0:.1f} s" + (f" · look again sent for pages {sent}" if sent else ""),
                   flush=True)
