@@ -35,7 +35,9 @@ function State({ p }: { p: PageNow }) {
 function Action({ p, notNow }: { p: PageNow; notNow: string | null }) {
   if (p.state !== "failed") return null;
   if (p.published) return <span className="small muted">Ordernya sudah dikirim ke Satellite.</span>;
-  if (notNow) return null;
+  // the AI is refused right now (a limit, a used-up quota, no model): shown, greyed, with why (the user, 2026-10-08:
+  // "where is the coba lagi button?")
+  if (notNow) return <button className="btn tiny" disabled title={notNow}>Coba lagi</button>;
   return (
     <>
       {p.cause === "setting" && <p className="small"><a href="/settings">Buka Model &amp; kunci API</a></p>}
@@ -60,10 +62,13 @@ export default async function Baca({ d }: { d: UploadDetail }) {
   const retryable = failed.filter((p) => p.can_retry).length + d.failed_files.length;
   const eta = kira(a.eta_s);
 
+  const quota = !!d.not_now?.startsWith("Kuota gratis");
   let line: [string, string];
-  if (failed.length || d.failed_files.length)
+  if (d.not_now)                       // what stops everything comes first: nothing can be tried until it is solved
+    line = [quota ? "need" : "wait", (quota ? "" : "Menunggu: ") + d.not_now
+      + (failed.length ? ` ${failed.length} halaman gagal: Coba lagi bisa setelah itu.` : "")];
+  else if (failed.length || d.failed_files.length)
     line = ["need", `${failed.length + d.failed_files.length} ${failed.length ? "halaman" : "file"} gagal dibaca. Coba lagi di bawah; sisanya lanjut sendiri.`];
-  else if (d.not_now) line = ["wait", `Menunggu: ${d.not_now}`];
   else if (a.splitting.length && !pages.length) line = ["sys", "File sedang dipecah menjadi halaman."];
   else if (reading || queued.length)
     line = ["sys", (reading ? `AI sedang membaca ${reading} halaman${queued.length ? `; ${queued.length} lagi antre` : ""}.`
@@ -78,7 +83,7 @@ export default async function Baca({ d }: { d: UploadDetail }) {
     <section className="ws-panel">
       <h2>Dibaca AI</h2>
       <p className={`ws-now ${line[0]}`}>{line[1]}
-        {d.not_now?.startsWith("Model belum diatur") && <> <a href="/settings">Atur sekarang</a></>}</p>
+        {(d.not_now?.startsWith("Model belum diatur") || quota) && <> <a href="/settings">Buka Model &amp; kunci API</a></>}</p>
       {s.pages > 0 && (
         <div className="prog" style={{ maxWidth: 520 }}>
           <span>{s.done} dari {s.pages} halaman selesai</span>
@@ -129,9 +134,9 @@ export default async function Baca({ d }: { d: UploadDetail }) {
           </tbody>
         </table>
       )}
-      {retryable > 1 && !d.not_now && (
-        <Retry path={`/uploads/${d.upload.id}/retries`} label={`Coba lagi semua (${retryable})`} />
-      )}
+      {retryable > 1 && (d.not_now
+        ? <button className="btn tiny" disabled title={d.not_now}>Coba lagi semua ({retryable})</button>
+        : <Retry path={`/uploads/${d.upload.id}/retries`} label={`Coba lagi semua (${retryable})`} />)}
 
       {done.length > 0 && (
         <details className="ws-files" open={!open.length && done.length <= 10}>

@@ -3,8 +3,23 @@ has an input and output, can you put it there too? like … the text model outpu
 
 Pure: each function turns a stage's own data into {"in": …, "out": …}, kept small (texts cut at PREVIEW characters,
 values only for the fields that were found), so 90 days of trace stay a few GB at most. The whole page (the full
-transcript, every Tesseract word) stays on the page and its technical detail; this is the record of each try."""
+transcript, every Tesseract word) stays on the page and its technical detail; this is the record of each try.
+
+Never fails a page: every function is wrapped (safe), so a shape it didn't expect (a model answering a field as a bare
+string, 2026-10-08's load test) is written as a note in the trace instead of raised."""
+import functools
+
 PREVIEW = 1500
+
+
+def safe(fn):
+    @functools.wraps(fn)
+    def run(*a, **k):
+        try:
+            return fn(*a, **k)
+        except Exception as e:
+            return {"out": {"not recorded": f"{fn.__name__}: {type(e).__name__}: {e}"[:300]}}
+    return run
 
 
 def _cut(text, n=PREVIEW):
@@ -16,6 +31,13 @@ def _value(f):
     return f.get("value") if isinstance(f, dict) else f
 
 
+def _fields(raw):
+    """A mapping answer's fields, {name: value}, whatever shape each came in (an object, or a bare value)."""
+    f = (raw or {}).get("fields") if isinstance(raw, dict) else None
+    return {k: _value(v) for k, v in f.items()} if isinstance(f, dict) else {}
+
+
+@safe
 def prepare(ticket, prep, flags, up_key):
     return {"in": {"image": ticket.get("image_key")},
             "out": {"upright image": up_key, "turned (degrees)": prep.get("rotation"),
@@ -27,15 +49,15 @@ def prepare(ticket, prep, flags, up_key):
                     "quality": ", ".join(flags) if flags else None}}
 
 
+@safe
 def read(blocks, mapping, fields_all, notes, schema_size):
     """The AI OCR's copy (vision model) and the text model's mapping onto the combined field list, twice; a field the
     two mappings disagree on is left empty."""
     blocks = blocks or []
     text = "\n".join(f"[{b.get('id')}] {b.get('text')}" for b in blocks if b.get("text"))
     mapping = mapping or {}
-    raw, raw2 = (mapping.get("raw") or {}).get("fields") or {}, (mapping.get("raw2") or {}).get("fields") or {}
-    disagreed = sorted(k for k in set(raw) | set(raw2) if mapping.get("raw2") is not None
-                       and (raw.get(k) or {}).get("value") != (raw2.get(k) or {}).get("value"))
+    raw, raw2 = _fields(mapping.get("raw")), _fields(mapping.get("raw2"))
+    disagreed = sorted(k for k in set(raw) | set(raw2) if mapping.get("raw2") is not None and raw.get(k) != raw2.get(k))
     found = {k: _value(v) for k, v in (fields_all or {}).items() if k != "lines" and _value(v) not in (None, "")}
     lines = (fields_all or {}).get("lines") or []
     return {"in": {"page image": "the upright image (vision model)", "field list": f"{schema_size} fields"},
@@ -47,6 +69,7 @@ def read(blocks, mapping, fields_all, notes, schema_size):
                                                    for x in notes or []][:8] or None}}
 
 
+@safe
 def classify(state, jev, machine, label, qr_sor, layout, title):
     """What the classification model saw (the fields found, never the image) and what it and the rules decided."""
     state = state or {}
@@ -62,6 +85,7 @@ def classify(state, jev, machine, label, qr_sor, layout, title):
                     "a person said": label}}
 
 
+@safe
 def knowledge(info, before, after):
     """Pass B: the text model again, with the tips learned for this customer and type; only the fields they name."""
     if not info:
@@ -72,6 +96,7 @@ def knowledge(info, before, after):
             "out": {"changed": changed or "nothing changed", "values the tips flipped": info.get("flips") or None}}
 
 
+@safe
 def project(doc_type, fields):
     """Code, not AI: the combined field list onto this document type's own fields."""
     return {"in": {"document type": doc_type},
@@ -80,6 +105,7 @@ def project(doc_type, fields):
                     "table rows": len((fields or {}).get("lines") or []) or None}}
 
 
+@safe
 def tesseract(rd):
     words = rd.get("ocr_words") or []
     return {"in": {"image": "the upright page, dark bands masked"},
@@ -89,6 +115,7 @@ def tesseract(rd):
                     "text": _cut(rd.get("classical_text"))}}
 
 
+@safe
 def check(res):
     """Each value's verdict: ✓ and what backs it, or ⚠ and why not."""
     head = (res or {}).get("header") or {}
@@ -101,6 +128,7 @@ def check(res):
                     "summary": (res or {}).get("summary")}}
 
 
+@safe
 def look(sl):
     """The look-again (vision model, blind): the fields asked, and each first and second answer."""
     sl = sl or {}
@@ -113,6 +141,7 @@ def look(sl):
                        + (" (kept)" if r.get("kept_second") else " (not kept)") for k, r in res.items()} or None}
 
 
+@safe
 def save(oc, keys, cls):
     return {"out": {"outcome": oc, "type": cls.get("doc_type"), "how the type was decided": cls.get("type_status"),
                     "linking numbers": {k: (v.get("value") if isinstance(v, dict) else v)

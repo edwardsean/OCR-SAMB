@@ -488,6 +488,21 @@ def page_settings(request: Request, msg: str | None = None, bad: int = 0):
     return templates.TemplateResponse("settings.html", ctx(request, v=v, msg=msg, bad=bad, missing=settings.missing()))
 
 
+@app.post("/settings/number", include_in_schema=False)
+def save_number_setting(name: str = Form(...), value: str = Form(""), by: str = Form("")):
+    """A number on the screen (settings.NUMBERS): pages per worker. Running workers take it within seconds."""
+    try:
+        with db.connect() as c:
+            n = settings.save_number(c, name, value, by)
+    except ValueError as e:
+        return _s_back(str(e), name, bad=True)
+    settings.refresh(force=True)
+    trace.event("person.settings", "ok", who=by.strip() or None, setting=name, value=n)
+    title = settings.NUMBERS[name][0]
+    return _s_back(f"{title}: {n}. Every page worker takes it within seconds (pages already being read finish first).",
+                   name)
+
+
 def _row_title(kind):
     return settings.ROWS.get(kind, (kind,))[0]
 

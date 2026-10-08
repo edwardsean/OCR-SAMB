@@ -39,6 +39,9 @@ services:
     image: ${IMAGE_PREFIX:-samb-ocr}-worker:latest
     command: python -m worker.main
     deploy: { replicas: "${WORKER_REPLICAS:-3}" }
+    # each worker reads WORKER_CONCURRENCY pages at once (~1 GB at 4): replicas × concurrency pages are in progress.
+    # A stop or restart lets the pages in hand finish (worker/main.py _stop): an AI answer is ~1–3 minutes
+    stop_grace_period: 3m
     environment:
       <<: *pyenv
       OMP_THREAD_LIMIT: "1"

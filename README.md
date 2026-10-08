@@ -96,7 +96,7 @@ thousands of records and several workers.
 You need Docker (give it at least 4 GB of memory) and git.
 
 ```bash
-git clone git@github.com:edwardsean/OCR-SAMB.git && cd OCR-SAMB && git checkout read-then-map
+git clone git@github.com:edwardsean/OCR-SAMB.git && cd OCR-SAMB      # main
 cp .env.example .env                                   # servers and passwords (the AI models come later, in the web app)
 docker compose -f docker-compose.servers.yml up -d     # Postgres, RabbitMQ, MinIO
 ./scripts/setup.sh                                     # the database (every migration) and the RabbitMQ vhost
@@ -147,6 +147,38 @@ network (`DOCKER_NETWORK`) and keeps its own database, vhost and storage prefix 
 docker exec -i <postgres container> sh -c 'psql -U "$POSTGRES_USER" -d <PIPELINE_DB> -v ON_ERROR_STOP=1' < schema/0NN-….sql
 ```
 
+### Updating a running server (for the mentor)
+
+For a server set up with the steps above, updating to the version with many pages at once (2026-10-08):
+
+1. **Wait until no page is being read.** RabbitMQ console → Queues (vhost `rtm`): `q.pages` shows **0 Unacked**.
+   Pages still waiting there (Ready) are fine. Why: the workers running now stop at once, and the AI answers they
+   were waiting for (already paid) are lost. From this version on a worker finishes its pages before it stops, so
+   later updates don't need this wait.
+2. **Get the code:** `git pull` on `main`.
+3. **Size it for the server's memory** in `.env`: `WORKER_REPLICAS` (the number of page workers), from the table in
+   [How many pages at once](#how-many-pages-at-once). A worker needs about 1 GB.
+4. **Apply the two new migrations.** Both are safe to run twice. The container is `samb-ocr-servers-postgres-1` when
+   the servers came from `docker-compose.servers.yml`:
+   ```bash
+   for f in schema/028-trace.sql schema/029-throughput.sql; do
+     docker exec -i samb-ocr-servers-postgres-1 sh -c 'psql -U "$POSTGRES_USER" -d ocr_rtm -v ON_ERROR_STOP=1' < $f
+   done
+   ```
+5. **Restart everything on the new code:** `docker compose up -d --build --force-recreate`. This touches only this
+   stack's services; Postgres, RabbitMQ and MinIO are another project and keep running.
+6. **Pages per worker:** Teknis → Model & kunci API → Pages per worker (default 4). Changing it later needs no restart.
+7. **Check:**
+   - Teknis → Status sistem: every service green;
+   - `docker compose logs rtm-worker | grep "pages at a time"`: each worker says how many pages it reads at once;
+   - the tests: `docker compose exec -e PYTHONPATH=/app rtm-api pytest -q tests/` (they make no AI calls).
+
+**The AI's cost.** A page uses about 8K tokens of the vision model, 13K of the text model and 2K of the
+classification model (an 11-page run on 2026-10-08). Alibaba's free quota is 1M tokens per model, so the text model's
+runs out first, after roughly 75 pages; real volume needs billing on in Model Studio. With **Free Quota Only** switched on, nothing is billed: when a quota ends the pages wait,
+and the batch page says which model's quota is used up. The system also stops itself at `VF_AI_OCR_DAILY_CAP` vision
+calls and `VF_AI_MAP_DAILY_CAP` text calls a day (20,000 and 40,000, in `.env`).
+
 ## Everyday commands
 
 ```bash
@@ -161,6 +193,30 @@ docker compose exec -e PYTHONPATH=/app rtm-api pytest -q tests/    # the tests
 Consoles:
 - RabbitMQ: <http://localhost:15672> (the queues, in vhost `rtm`)
 - MinIO: <http://localhost:9001> (the files)
+
+### How many pages at once
+
+A page spends most of its time waiting for the AI (on 2026-10-08: the AI OCR's copy ~55 s with qwen3-vl-flash, the two
+mappings ~26 s side by side, Tesseract ~11 s beside them). So each page worker reads several pages at once:
+`WORKER_REPLICAS` × `WORKER_CONCURRENCY` pages are in progress.
+
+**Pages per worker** is set on **Teknis → Model & kunci API** (default 4, from 1 to 16). Running workers take a new
+value within ten seconds, with no restart; a lower value lets the pages already being read finish first. The number
+of workers is `WORKER_REPLICAS` in `.env` (`docker compose up -d` after changing it).
+
+| Docker memory | Workers (`WORKER_REPLICAS`) | Pages per worker (Teknis) | Pages in progress |
+|---|---|---|---|
+| 4 GB (this laptop) | 3 | 2 | 6 |
+| 8 GB | 4 | 4 | 16 |
+| 16 GB | 8 | 4 | 32 |
+
+- **Memory:** a worker needs about 1 GB at 4 pages. Run out and the machine kills a worker; its pages are read again
+  (nothing is lost, but the AI is paid twice). Watch `docker stats` on the first big batch.
+- **The provider:** more pages at once also means more requests per minute at the AI provider; its rate limits (per
+  model, in Model Studio) are the next ceiling. The text model answered in ~26 s instead of ~13 s with 22 requests at
+  once.
+- **Stopping:** a worker stopped or restarted finishes the pages it has first (up to 3 minutes,
+  `stop_grace_period`), so answers already paid for are never thrown away.
 
 ### When something fails, or is slow
 

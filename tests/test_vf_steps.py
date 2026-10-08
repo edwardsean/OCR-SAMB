@@ -162,6 +162,7 @@ def test_a_failed_page_is_step_one_and_can_be_retried(failed_page, monkeypatch):
     up, sid = failed_page
     sent = []
     monkeypatch.setattr(actions.intake, "rerun", lambda b, pages=None: sent.append((b, pages)) or {"published": 1})
+    monkeypatch.setattr(actions, "_not_now", lambda: None)     # the live AI may be refused today (its quota): not this
     with TestClient(app) as tc:
         v = tc.get(f"/api/v1/uploads/{up}").json()
         assert v["next"] == "baca" and v["blockers"] == ["baca"]

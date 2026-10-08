@@ -41,8 +41,8 @@ NAMES = {
     "page": ("read", "A page worker read the page", "One attempt, from taking the page off the queue to saving it."),
     "page.prepare": ("read", "Prepare the image", "Turn it upright, straighten it, mask dark bands, read the QR code."),
     "page.read": ("read", "AI reads the page", "The vision model copies the page's text (it isn't told the type), then "
-                  "the text model maps that text onto the combined field list of every type, twice: a field the two "
-                  "answers disagree on is left empty. Both are kept, so a re-read costs nothing."),
+                  "the text model maps that text onto the combined field list of every type, twice at the same time: "
+                  "a field the two answers disagree on is left empty. Both are kept, so a re-read costs nothing."),
     "page.classify": ("read", "Decide the document type", "The classification model sees only the fields found (never "
                       "the image) and picks Faktur, PO, Tanda Terima…; a Faktur also needs a second witness (QR code, "
                       "layout or printed title)."),
@@ -51,7 +51,11 @@ NAMES = {
     "page.project": ("read", "Map onto the type's fields (code)", "Code, not AI: the combined field list becomes this "
                      "document type's own fields (e.g. po_number is a PO's purchase_order_no)."),
     "page.tesseract": ("read", "Tesseract reads the print", "The local OCR program reads the page: the independent "
-                       "witness every value is checked against."),
+                       "witness every value is checked against. It starts as soon as the image is prepared, beside "
+                       "the AI's reading."),
+    "page.wait_tesseract": ("read", "Wait for Tesseract to finish", "The AI was quicker than Tesseract this time."),
+    "page.boxes": ("read", "Place the clickable boxes", "Where each value sits on the paper, for the page viewer; and "
+                   "Satellite's orders loaded for the checks (once every ten minutes per worker)."),
     "page.check": ("read", "Check every value", "Each value against the print, the QR code and Satellite's record."),
     "page.look_again": ("read", "AI looks again", "The vision model is asked again, blind, about values nothing backed."),
     "page.store": ("read", "AI finds the store", "Asked only when the store printed on the page decides its order."),
