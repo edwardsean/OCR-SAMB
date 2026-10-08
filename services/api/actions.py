@@ -232,21 +232,17 @@ def accept(batch, sor, check, input_print, reason, by, note=""):
 
 
 def calibrate(chain, name, by, allowance="", receipt_shows=""):
-    """A customer's once-only calibration: how far its amounts may be from Satellite's, or what its receipts print
-    after a rejection. Every bundle of that customer, in every batch, is checked again. Returns those batches."""
+    """A customer's once-only calibration: what its receipts print after a rejection. Every bundle of that customer,
+    in every batch, is checked again. Returns those batches. Its allowance isn't set any more: every customer's is
+    Rp 1,000 (crosscheck.ROUNDING; the mentor, 2026-10-08)."""
     from grouper import crosscheck
     a = _app()
     _need(by)
-    allowance, receipt_shows = str(allowance or "").strip(), (receipt_shows or "")
-    try:
-        value = float(allowance.replace(",", ".")) if allowance else None
-    except ValueError:
-        raise ActionError(400, f"an allowance is a number of rupiah, not {allowance!r}")
-    if value is not None and not 0 <= value <= crosscheck.STEPS[-1]:
-        raise ActionError(400, f"an allowance is rounding: 0 to {crosscheck.STEPS[-1]} rupiah")
-    if value is None and receipt_shows not in ("received", "ordered"):
-        raise ActionError(400, "give an allowance, or say what the receipts print")
-    batches = list(crosscheck.calibrate(chain, name, by.strip(), value, receipt_shows or None))
+    if str(allowance or "").strip():
+        raise ActionError(400, f"every customer's allowance is Rp {crosscheck.ROUNDING:,.0f}: there is none to set")
+    if receipt_shows not in ("received", "ordered"):
+        raise ActionError(400, "say what the receipts print: 'received' or 'ordered'")
+    batches = list(crosscheck.calibrate(chain, name, by.strip(), receipt_shows))
     for bid in batches:
         a._regroup(bid)
     return batches

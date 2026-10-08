@@ -344,8 +344,8 @@ Everything one order's review needs. The parts that matter:
                                                         "suggest": [], "box": null}]},
    {"kind": "label", "page": 9, "title": "Halaman 9: jenis dokumennya belum pasti"},
    {"kind": "wait", "page": 4, "title": "Halaman 4 menunggu AI membaca ulang"}],
- "calibration": {"chain": "1100002424", "name": "…", "asks": [{"what": "allowance"}, {"what": "receipt"}],
-                 "suggest": null, "steps": [5, 10, 15, 20, 25, 30, 50, 100]},
+ "calibration": {"chain": "1100002424", "name": "…", "asks": [{"what": "receipt"}],
+                 "suggest": null, "steps": []},
  "accept_reasons": ["rounding", "tolakan confirmed", "the customer's own price", "the document comes later",
                     "other (say in the note)"],
  "none_reasons": ["not in SAMB's order", "a free (bonus) item", "another product (say in the note)"],
@@ -368,7 +368,7 @@ How to answer each open item:
 | `page` | a page whose key or amounts aren't sure | **confirmations**, one per entry in `fields[]` |
 | `label` | a page whose type isn't decided | POST /labels |
 | `wait` | the AI is still reading a page | nothing |
-| `calibration.asks[]` | the customer's first look | **calibrations**: `allowance` (one of `steps`) or `receipt_shows` |
+| `calibration.asks[]` | the customer's first look (only `receipt` now) | **calibrations**: `receipt_shows` |
 
 `404` when there is no such order.
 
@@ -412,10 +412,11 @@ A pair is remembered for the customer: the same product matches by itself next t
 | `chain` | string | required | `calibration.chain` |
 | `name` | string | | `calibration.name` |
 | `by` | string | required | |
-| `allowance` | string | one of these two | rupiah its amounts may differ from Satellite's (`"20"`) |
-| `receipt_shows` | string | | `"received"` or `"ordered"`: what its receipts print after a rejection |
+| `receipt_shows` | string | required | `"received"` or `"ordered"`: what its receipts print after a rejection |
+| `allowance` | string | | no longer accepted (400): every customer's allowance is Rp 1,000 per document |
 
-Asked once per customer; every order of that customer, in every scan, is checked again. `result` lists those scans.
+Asked once per customer, on its first order with a tolakan; every order of that customer, in every scan, is checked
+again. `result` lists those scans.
 
 ### `POST /api/v1/orders/{sor}/approval`
 `{"batch", "by"}`. `409 {"error": "not yet", "left": ["…"]}` while anything is left; then the order is `reviewed`.

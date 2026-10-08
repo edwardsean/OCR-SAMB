@@ -23,12 +23,11 @@ Finance uploads `scan.pdf`, 16 pages holding the paperwork of 4 orders, in no pa
    on them: the SOR on the invoice, the customer's PO number on the PO and the receipt.
 5. **Check.** Each order is compared with Satellite's record of that sale: totals, quantities received, dates, the
    store.
-   - 3 orders match. They're ready to send (`auto_ok`).
-   - 1 order's PO is Rp 9 off. It waits for a person (`needs_review`).
-6. **Decide.** In the web app, on Periksa order, a person sees that one difference beside the scanned page and
-   accepts it ("Pembulatan", rounding).
-   - It's the customer's first order, so the system also asks once how much rounding is normal for them (say Rp 10).
-   - From then on, that customer's differences up to Rp 10 pass by themselves.
+   - 3 orders match. They're ready to send (`auto_ok`). A difference of up to Rp 1,000 per document counts as a
+     match ("selisih wajar", the same for every customer; nobody is asked).
+   - 1 order's PO is Rp 36,414 more than SAMB's order. It waits for a person (`needs_review`).
+6. **Decide.** In the web app, on Periksa order, a person sees that difference beside the scanned page, with the row
+   that causes it (a product that isn't in SAMB's order), and accepts it with a reason or fixes a misread number.
 7. **Send.** "Kirim ke Satellite" writes the 4 orders' documents into Satellite's tables, with one PDF per SOR.
 
 Two more things run in the background:

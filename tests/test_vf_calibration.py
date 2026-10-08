@@ -1,7 +1,8 @@
-"""Verification redesign, S3 (the user, 2026-09-26/27, decisions 4, 5 and 8): each customer (chain) gets two looks from
-a person, once each. Its first bundle sets how far its amounts may be from Satellite's (its rounding: Rp 5 until
-then); its first bundle Satellite records a tolakan on says what its receipts print. A customer whose receipts print
-the whole order passes without a tolakan, and goes to a person with one."""
+"""Each customer's amounts may differ from Satellite's by up to Rp 1,000 per document, and nobody is asked for it (the
+mentor, 2026-10-08: "every customer's selisih wajar max is 1000 rupiah; if more than that, flag the anomaly"; before,
+S3 asked a person for each customer's own rounding, Rp 5 until then). What stays from S3: a customer's first bundle
+Satellite records a tolakan on asks once what its receipts print. A customer whose receipts print the whole order
+passes without a tolakan, and goes to a person with one."""
 import os
 from datetime import date
 
@@ -26,31 +27,34 @@ def checks(po_total, profile=None, ttg_qty=None, **kw):
     return crosscheck.check_bundle("SOR1", docs, pages, s, lines, m, ("FP",), date(2026, 9, 23), profile=profile)
 
 
-def test_a_new_customers_first_bundle_waits_for_its_allowance():
+def test_a_new_customer_is_never_asked_and_may_differ_by_up_to_rp_1000():
     s = so()
     c = checks(s["order_total"] + 9.36, HERO)                     # Hero's rounded carton prices: 9.36 off, printed
-    assert c["fp_po_total"]["status"] == "fail" and c["fp_po_total"]["gap"] == 9.36
-    cal = c["calibration"]
-    assert cal["status"] == "unknown" and cal["calibrate"][0]["what"] == "allowance"
-    assert cal["calibrate"][0]["suggest"] == 10 and "9.36" in cal["why"]
-    assert crosscheck.decide(c, {1: {"outcome": "clear"}})[0] == "needs_review"
-    # even a bundle within Rp 5 waits for that first look
-    assert checks(s["order_total"] + 1.0, HERO)["calibration"]["status"] == "unknown"
-
-
-def test_once_confirmed_the_customers_rounding_passes():
-    s = so()
-    c = checks(s["order_total"] + 9.36, {**HERO, "allowance": 20})
-    assert c["fp_po_total"]["status"] == "pass" and "up to Rp 20" in c["fp_po_total"]["why"]
-    assert c["calibration"]["status"] == "pass"
+    assert c["fp_po_total"]["status"] == "pass" and c["fp_po_total"]["gap"] == 9.36
+    assert c["calibration"]["status"] == "pass" and "Rp 1,000" in c["calibration"]["why"]
     assert crosscheck.decide(c, {1: {"outcome": "clear"}}) == ("auto_ok", [])
-    assert checks(s["order_total"] + 26, {**HERO, "allowance": 20})["fp_po_total"]["status"] == "fail"   # beyond
+    assert checks(s["order_total"] + 999.99, HERO)["fp_po_total"]["status"] == "pass"
 
 
-def test_the_suggestion_is_the_smallest_round_step_that_covers_the_gap():
-    assert [crosscheck.allowance_for(g) for g in (None, 0.25, 5.0, 9.36, 14.36, 19.79, 99.0)] == \
-        [5, 5, 5, 10, 15, 20, 100]
-    assert crosscheck.allowance_for(150.0) is None                     # not rounding: a person looks at it
+def test_more_than_rp_1000_is_flagged_for_a_person():
+    s = so()
+    c = checks(s["order_total"] + 1000.01, HERO)
+    assert c["fp_po_total"]["status"] == "fail" and c["fp_po_total"]["gap"] == 1000.01
+    assert crosscheck.decide(c, {1: {"outcome": "clear"}})[0] == "needs_review"
+
+
+def test_an_allowance_saved_before_no_longer_counts():
+    s = so()
+    assert checks(s["order_total"] + 26, {**HERO, "allowance": 20})["fp_po_total"]["status"] == "pass"   # was beyond 20
+    assert checks(s["order_total"] + 1500, {**HERO, "allowance": 5000})["fp_po_total"]["status"] == "fail"
+
+
+def test_an_allowance_can_no_longer_be_set():
+    from api import actions
+    with pytest.raises(actions.ActionError) as e:
+        actions.calibrate("1100002447", "Hero", "tester", allowance="20")
+    assert e.value.status == 400 and "Rp 1,000" in str(e.value)
+    assert not hasattr(crosscheck, "allowance_for") and not hasattr(crosscheck, "STEPS")
 
 
 def rejected():
@@ -94,13 +98,11 @@ def test_the_calibration_is_never_accepted_away():
 def test_calibrate_stores_the_answer_once_per_customer():
     chain = "TEST-CHAIN-S3"
     try:
-        assert crosscheck.calibrate(chain, "a test chain", "tester", allowance=15) == []   # no bundle of it anywhere
-        assert crosscheck.calibrate(chain, "a test chain", "tester", receipt_shows="received") == []
+        assert crosscheck.calibrate(chain, "a test chain", "tester", receipt_shows="received") == []   # no bundle of it
         with db.connect() as c:
-            r = c.execute("""SELECT rounding_allowance, allowance_by, receipt_shows, receipt_by
-                               FROM satellite.customer_profile WHERE customer_code=%s""", (chain,)).fetchone()
-        assert (float(r["rounding_allowance"]), r["allowance_by"], r["receipt_shows"], r["receipt_by"]) == \
-            (15.0, "tester", "received", "tester")
+            r = c.execute("""SELECT receipt_shows, receipt_by FROM satellite.customer_profile WHERE customer_code=%s""",
+                          (chain,)).fetchone()
+        assert (r["receipt_shows"], r["receipt_by"]) == ("received", "tester")
         with pytest.raises(ValueError):
             crosscheck.calibrate(chain, "a test chain", "tester", receipt_shows="sometimes")
     finally:

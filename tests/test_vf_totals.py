@@ -73,7 +73,7 @@ def test_a_po_total_before_tax_passes_on_the_orders_dpp():
 
 def test_the_ppn_is_compared_when_the_po_prints_one():
     s = so()
-    c = bundle(po=page("PO", {"total": amount(s["order_total"]), "ppn": amount(s["order_ppn"] + 20)}))["fp_po_total"]
+    c = bundle(po=page("PO", {"total": amount(s["order_total"]), "ppn": amount(s["order_ppn"] + 1200)}))["fp_po_total"]
     assert c["status"] == "fail" and "PPN" in c["why"]
     c = bundle(po=page("PO", {"total": amount(s["order_total"]), "ppn": amount(s["order_ppn"] - 0.68)}))["fp_po_total"]
     assert c["status"] == "pass"
@@ -81,7 +81,7 @@ def test_the_ppn_is_compared_when_the_po_prints_one():
 
 def test_item_11_on_the_orders_side():
     s = so()
-    off = s["order_total"] + 30
+    off = s["order_total"] + 1500                             # beyond every customer's Rp 1,000
     # print backs a reading that doesn't fit: a real difference, a person now, no look-again
     c = bundle(po=page("PO", {"total": amount(off)}))["fp_po_total"]
     assert c["status"] == "fail" and not c.get("ask")
@@ -221,7 +221,7 @@ def test_the_bundle_asks_and_the_page_looks_again():
 def test_asks_make_the_bundle_wait():
     s = so()
     x = {"sor": "SOR1", "docs": [(1, "FP"), (2, "PO")], "status": "needs_review", "fingerprint": None,
-         "pages": {1: page("FP"), 2: page("PO", {"total": amount(s["order_total"] + 30, printed=False)})},
+         "pages": {1: page("FP"), 2: page("PO", {"total": amount(s["order_total"] + 1500, printed=False)})},
          "so": s, "lines": [line()], "expected": ("FP", "PO"), "pmap": {}, "decisions": {}, "accepted": {},
          "scan_day": date(2026, 9, 23), "spans": {}}
     r = crosscheck.evaluate(copy.deepcopy(x))

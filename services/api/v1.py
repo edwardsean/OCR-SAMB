@@ -95,8 +95,8 @@ class Calibrate(BaseModel):
     chain: str = Field(description="the customer chain (`calibration.chain` of the order)", examples=["1100002424"])
     name: str = Field("", description="the chain's name, kept with the answer")
     by: str = _by()
-    allowance: str = Field("", description="how far its amounts may be from Satellite's, in rupiah (one of "
-                                           "`calibration.steps`)", examples=["20"])
+    allowance: str = Field("", description="no longer accepted: every customer's allowance is Rp 1,000 "
+                                           "(a value here is refused with 400)", examples=[""])
     receipt_shows: str = Field("", description='after a rejection its receipts print "received" or the whole "ordered"')
 
 

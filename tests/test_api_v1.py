@@ -95,8 +95,8 @@ def test_a_refused_action_says_why_and_writes_nothing():
     assert r.status_code == 400 and "who you are" in r.json()["error"]
     r = post("/labels", {"batch": "b-0", "page": 1, "label": "NOPE"})
     assert r.status_code == 400 and r.json()["error"] == "unknown label"
-    r = post("/orders/SOR0/calibrations", {"chain": "x", "by": "test", "allowance": "abc"})
-    assert r.status_code == 400 and "number of rupiah" in r.json()["error"]
+    r = post("/orders/SOR0/calibrations", {"chain": "x", "by": "test", "allowance": "20"})   # every customer: Rp 1,000
+    assert r.status_code == 400 and "Rp 1,000" in r.json()["error"]
     r = post("/orders/SOR0/acceptances", {"batch": "b-0", "check": "fp_po_total", "input_print": "", "reason": "",
                                           "by": "test"})
     assert r.status_code == 400

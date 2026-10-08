@@ -2526,7 +2526,7 @@ def _calibration_view(so, checks):
                     gaps.append({"sor": r["sor_no"], "check": bahasa.CHECK.get(k) or crosscheck.LABEL[k], "gap": g})
     worst = max((g["gap"] for g in gaps), default=None)
     return {"chain": chain, "name": sat.chain_name(so), "asks": asks, "gaps": sorted(gaps, key=lambda g: -g["gap"]),
-            "suggest": crosscheck.allowance_for(worst), "worst": worst, "steps": crosscheck.STEPS}
+            "suggest": None, "worst": worst, "steps": []}          # no allowance to choose: Rp 1,000 for everyone
 
 
 def review_scans(c):
@@ -3191,7 +3191,7 @@ def phase7_checks(batch_id):
                    + (f" · auto_ok with a wrong value: {bad_ok}" if bad_ok else "")))
     from grouper.crosscheck import ROUNDING
     differ, rounding, passed = [], [], []
-    for b in bundles:                 # each against its customer's allowance (S3; Rp 5 until a person confirms one)
+    for b in bundles:                 # each against the allowance, Rp 1,000 for every customer (the mentor, 2026-10-08)
         t = ((b["checks"] or {}).get("checks") or {}).get("fp_po_total") or {}
         allow = t.get("allow", ROUNDING)
         if t.get("fp") is not None and t.get("po") is not None and abs(t["fp"] - t["po"]) >= 0.005:
@@ -3201,7 +3201,7 @@ def phase7_checks(batch_id):
     tolak = [x for b in bundles for x in (((b["checks"] or {}).get("checks") or {}).get("received") or {})
              .get("tolakan") or []]
     checks.append((f"A PO's total equals the order's in Satellite (as ordered, what the FP printed) up to its customer's "
-                   f"allowance (Rp {ROUNDING:g} until a person confirms one), any larger difference to Review; a tolakan "
+                   f"allowance (Rp {ROUNDING:,.0f} for every customer), any larger difference to Review; a tolakan "
                    "Satellite records is named", not passed,
                    f"{len(rounding)} bundles within rounding · {len(differ)} further apart, all to Review"
                    + (f" · PASSED ANYWAY: {passed}" if passed else "")
