@@ -295,23 +295,28 @@ def _batches_need():
 
 def upload_view(upload_id):
     """One upload batch: its record, its files (each a scan, with its progress), its orders by status, its five
-    steps (api/steps.py), and the pages steps 1 and 2 list: those that failed to read, those whose type is unsure."""
+    steps (api/steps.py), and the pages steps 1 and 2 list: those stuck (api/stuck.py, each with why and whether a
+    person may try it again), those whose type is unsure; the files that couldn't be split; and why nothing can be
+    tried right now (a model not set, a limit), if so."""
+    from api import stuck
     from common import uploads
+    from worker import vf
     with db.connect() as c:
         u = uploads.get(c, upload_id)
         if not u:
             return None
         files = [dict(r) for r in c.execute(
-            """SELECT id, file_name, page_total, pages_rendered, page_done, status, received_at
+            """SELECT id, file_name, page_total, pages_rendered, page_done, status, received_at, error
                  FROM staging.scan_batch WHERE upload_id=%s ORDER BY file_name""", (upload_id,))]
         pages = [dict(r) for r in c.execute(
-            """SELECT p.batch_id, p.page_no, p.status::text AS status, p.type_status, p.error, s.file_name,
-                      p.thumb_upright_path, p.thumb_path, l.page_no IS NOT NULL AS labelled
-                 FROM staging.page p JOIN staging.scan_batch s ON s.id = p.batch_id
-                 LEFT JOIN staging.type_label l ON l.batch_id = p.batch_id AND l.page_no = p.page_no
-                WHERE s.upload_id = %s AND (p.status IN ('dead_letter', 'failed')
-                                            OR (p.type_status = 'unsure' AND l.page_no IS NULL))
-                ORDER BY s.file_name, p.page_no""", (upload_id,))]
+            f"""SELECT p.batch_id, p.page_no, p.status::text AS status, p.type_status, p.error, s.file_name,
+                       p.extract_status, p.extract_error, p.second_look->>'waiting' AS waits,
+                       p.thumb_upright_path, p.thumb_path, l.page_no IS NOT NULL AS labelled,
+                       {stuck.STUCK} AS stuck, {stuck.PUBLISHED} AS published
+                  FROM staging.page p JOIN staging.scan_batch s ON s.id = p.batch_id
+                  LEFT JOIN staging.type_label l ON l.batch_id = p.batch_id AND l.page_no = p.page_no
+                 WHERE s.upload_id = %s AND ({stuck.STUCK} OR (p.type_status = 'unsure' AND l.page_no IS NULL))
+                 ORDER BY s.file_name, p.page_no""", (upload_id,))]
         work = steps.of_uploads(c, [upload_id])[upload_id]
     summary = next(iter(uploads_view(10_000, only=upload_id)), {})
     page = lambda p: {"batch_id": p["batch_id"], "page_no": p["page_no"], "file_name": p["file_name"],
@@ -320,8 +325,12 @@ def upload_view(upload_id):
                                                              "ready", "published", "orders")}},
             "files": files, "steps": work["steps"], "next": work["next"], "blockers": work["blockers"],
             "finished": work["finished"], "orders": work["orders"],
-            "failed": [page(p) for p in pages if p["status"] in ("dead_letter", "failed")],
-            "unsure": [page(p) for p in pages if p["type_status"] == "unsure" and not p["labelled"]]}
+            "failed": [{**page(p), **stuck.view(p)} for p in pages if p["stuck"]],
+            "failed_files": [{"batch_id": f["id"], "file_name": f["file_name"], "error": f["error"]}
+                             for f in files if f["status"] == "failed"],
+            "not_now": stuck.blocked_text(vf.blocked()),
+            "unsure": [page(p) for p in pages if p["type_status"] == "unsure" and not p["labelled"]
+                       and not p["stuck"]]}
 
 
 def home_view():
@@ -2526,7 +2535,7 @@ def _calibration_view(so, checks):
                     gaps.append({"sor": r["sor_no"], "check": bahasa.CHECK.get(k) or crosscheck.LABEL[k], "gap": g})
     worst = max((g["gap"] for g in gaps), default=None)
     return {"chain": chain, "name": sat.chain_name(so), "asks": asks, "gaps": sorted(gaps, key=lambda g: -g["gap"]),
-            "suggest": crosscheck.allowance_for(worst), "worst": worst, "steps": crosscheck.STEPS}
+            "suggest": None, "worst": worst, "steps": []}          # no allowance to choose: Rp 1,000 for everyone
 
 
 def review_scans(c):
@@ -3191,7 +3200,7 @@ def phase7_checks(batch_id):
                    + (f" · auto_ok with a wrong value: {bad_ok}" if bad_ok else "")))
     from grouper.crosscheck import ROUNDING
     differ, rounding, passed = [], [], []
-    for b in bundles:                 # each against its customer's allowance (S3; Rp 5 until a person confirms one)
+    for b in bundles:                 # each against the allowance, Rp 1,000 for every customer (the mentor, 2026-10-08)
         t = ((b["checks"] or {}).get("checks") or {}).get("fp_po_total") or {}
         allow = t.get("allow", ROUNDING)
         if t.get("fp") is not None and t.get("po") is not None and abs(t["fp"] - t["po"]) >= 0.005:
@@ -3201,7 +3210,7 @@ def phase7_checks(batch_id):
     tolak = [x for b in bundles for x in (((b["checks"] or {}).get("checks") or {}).get("received") or {})
              .get("tolakan") or []]
     checks.append((f"A PO's total equals the order's in Satellite (as ordered, what the FP printed) up to its customer's "
-                   f"allowance (Rp {ROUNDING:g} until a person confirms one), any larger difference to Review; a tolakan "
+                   f"allowance (Rp {ROUNDING:,.0f} for every customer), any larger difference to Review; a tolakan "
                    "Satellite records is named", not passed,
                    f"{len(rounding)} bundles within rounding · {len(differ)} further apart, all to Review"
                    + (f" · PASSED ANYWAY: {passed}" if passed else "")

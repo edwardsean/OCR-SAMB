@@ -95,8 +95,8 @@ class Calibrate(BaseModel):
     chain: str = Field(description="the customer chain (`calibration.chain` of the order)", examples=["1100002424"])
     name: str = Field("", description="the chain's name, kept with the answer")
     by: str = _by()
-    allowance: str = Field("", description="how far its amounts may be from Satellite's, in rupiah (one of "
-                                           "`calibration.steps`)", examples=["20"])
+    allowance: str = Field("", description="no longer accepted: every customer's allowance is Rp 1,000 "
+                                           "(a value here is refused with 400)", examples=[""])
     receipt_shows: str = Field("", description='after a rejection its receipts print "received" or the whole "ordered"')
 
 
@@ -280,11 +280,27 @@ class Retry(BaseModel):
     by: str = _by()
 
 
-@router.post("/scans/{batch_id}/pages/{page_no}/retry", tags=[SCANS], summary="Read a failed page again")
+@router.post("/scans/{batch_id}/pages/{page_no}/retry", tags=[SCANS], summary="Try a stuck page again")
 def retry(batch_id: str, page_no: int, body: Retry):
-    """A page whose reading failed for a technical reason (dead-lettered) goes back on q.pages: it calls the AI again
-    (its quota). 409 when the page didn't fail, or while another page of its file is still being read."""
+    """A stuck page (its worker died, or a model call kept failing after the automatic tries) goes back on q.pages and
+    redoes only what failed: it calls the AI again (its quota). 409 when its order is already sent to Satellite, when
+    it is queued (being tried), when it isn't stuck, while a model isn't set or a limit holds every page, or (a dead
+    page) while another page of its file is still being read."""
     return _run(actions.retry_page, batch_id, page_no, body.by)
+
+
+@router.post("/scans/{batch_id}/retry", tags=[SCANS], summary="Split a failed file again")
+def retry_file(batch_id: str, body: Retry):
+    """A file that couldn't be split into pages is split again (status back to received, on q.intake). 409 when it
+    didn't fail."""
+    return _run(actions.retry_scan, batch_id, body.by)
+
+
+@router.post("/uploads/{upload_id}/retries", tags=[UPLOADS], summary="Try everything stuck in a batch again")
+def retry_all(upload_id: int, body: Retry):
+    """Every file of the batch that couldn't be split, and every stuck page, except pages of orders already sent to
+    Satellite (listed in `left` with why). 409 while a model isn't set or a limit holds every page."""
+    return _run(actions.retry_upload, upload_id, body.by)
 
 
 @router.post("/scans/{batch_id}/pages/{page_no}/fixes", tags=[SCANS], summary="Correct a value on a page")

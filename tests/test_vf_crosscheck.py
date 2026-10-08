@@ -40,11 +40,13 @@ def boots(po_ok=OK, po_total="1126006.00", grn_qty="4", cgr=4, rejected=0, reaso
     return crosscheck.check_bundle(SO["sor_no"], docs, pages, so, [line], m, ("FP", "TTG"), date(2026, 9, 23)), pages
 
 
-def test_the_po_and_the_order_agree_up_to_a_few_rupiah_of_rounding():
+def test_the_po_and_the_order_agree_up_to_rp_1000():
     c, _ = boots()                                   # Boots rounds per piece with PPN: 1,126,011.00 vs 1,126,006.00
     assert c["fp_po_total"]["status"] == "pass" and "5.00 apart, rounding" in c["fp_po_total"]["why"]
-    c, _ = boots(po_total="1126000.00")              # 11 rupiah, printed: a price-input error, not rounding
-    assert c["fp_po_total"]["status"] == "fail" and "11.00 from the order's total" in c["fp_po_total"]["why"]
+    c, _ = boots(po_total="1126000.00")              # 11 rupiah: within every customer's Rp 1,000 (2026-10-08)
+    assert c["fp_po_total"]["status"] == "pass"
+    c, _ = boots(po_total="1125000.00")              # 1,011 rupiah, printed: beyond it, a person looks
+    assert c["fp_po_total"]["status"] == "fail" and "1,011.00 from the order's total" in c["fp_po_total"]["why"]
     assert c["dates"]["status"] == c["docs_complete"]["status"] == "pass"
     assert c["vendor_is_samb"]["status"] == "info"      # information only: the PO joined SAMB's SO by its number
 
@@ -55,7 +57,7 @@ def test_an_ai_reading_counts_within_the_allowance():
     c, _ = boots(po_ok=CHECK)
     assert c["fp_po_total"]["status"] == c["received"]["status"] == "pass"
     assert c["fp_po_lines"]["status"] == "info"
-    c, _ = boots(po_ok=CHECK, po_total="1126100.00")  # beyond, only the AI read it: it looks again first
+    c, _ = boots(po_ok=CHECK, po_total="1127100.00")  # beyond Rp 1,000, only the AI read it: it looks again first
     assert c["fp_po_total"]["status"] == "unknown" and c["fp_po_total"]["ask"] == [(4, "total")]
 
 

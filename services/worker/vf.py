@@ -892,12 +892,19 @@ def once(bid, pages, use_v1_reading=False, second_look=True):
 
 
 def waiting(bid, pages=None):
-    """Pages waiting for the AI OCR: readings that failed first (nothing else can run on them), then look-agains."""
+    """Pages waiting for the AI OCR: readings that failed first (nothing else can run on them), then look-agains.
+    Never a page of an order already sent to Satellite: Satellite keeps its values, and reading it again would leave
+    two truths (the user, 2026-10-08; the same rule as a person's retry, api/stuck.py)."""
     with db.connect() as c:
         return [r["page_no"] for r in c.execute("""
-            SELECT page_no FROM staging.page WHERE batch_id=%s AND (second_look ? 'waiting' OR extract_status='failed')
-               AND (%s::int[] IS NULL OR page_no = ANY(%s::int[]))
-             ORDER BY extract_status = 'failed' DESC, page_no""", (bid, pages, pages))]
+            SELECT p.page_no FROM staging.page p
+             WHERE p.batch_id=%s AND (p.second_look ? 'waiting' OR p.extract_status='failed')
+               AND (%s::int[] IS NULL OR p.page_no = ANY(%s::int[]))
+               AND NOT EXISTS (SELECT 1 FROM staging.document d JOIN staging.bundle_document bd ON bd.document_id = d.id
+                                 JOIN staging.bundle b ON b.id = bd.bundle_id
+                                WHERE d.batch_id = p.batch_id AND p.page_no BETWEEN d.page_from AND d.page_to
+                                  AND b.status = 'published')
+             ORDER BY p.extract_status = 'failed' DESC, p.page_no""", (bid, pages, pages))]
 
 
 def seconds_until(text):

@@ -74,24 +74,103 @@ def upload(data, filename, upload_id=None):
 
 # ---------------------------------------------------------------------------------------------- a page
 
+def _not_now():
+    """Why no page can be tried right now (a model not set, a limit), for people, else None. Pages wait in the waiting
+    room and go on by themselves, so a retry would only park them again."""
+    from api import stuck
+    from worker import vf
+    return stuck.blocked_text(vf.blocked())
+
+
 def retry_page(batch, page, by):
-    """A page that failed to read for a technical reason (a dropped connection: dead-lettered) goes back on q.pages
-    under a new run (intake.rerun). Refused (409) when the page didn't fail, or while another page of the same file is
-    queued: the new run would make that page's ticket stale."""
+    """Try a stuck page again (api/stuck.py): a page whose worker died goes back on q.pages under a new run
+    (intake.rerun); a page whose model call kept failing goes back on q.pages as it is (vf.again), and redoes only what
+    failed. Refused (409): its order is already sent to Satellite; it is queued (being tried); it isn't stuck; a model
+    isn't set or a limit holds every page; for a dead page, while another page of its file is queued (the new run
+    would make that page's ticket stale)."""
+    from api import stuck
     _need(by)
     with db.connect() as c:
-        p = c.execute("SELECT status::text AS status FROM staging.page WHERE batch_id=%s AND page_no=%s",
-                      (batch, page)).fetchone()
+        p = c.execute(f"""SELECT p.status::text AS status, p.extract_status, p.second_look->>'waiting' AS waits,
+                                 {stuck.PUBLISHED} AS published
+                            FROM staging.page p WHERE p.batch_id=%s AND p.page_no=%s""", (batch, page)).fetchone()
         if not p:
             raise ActionError(404, "Halaman itu tidak ada.")
-        if p["status"] not in ("dead_letter", "failed"):
+        if p["published"]:
+            raise ActionError(409, "Order halaman ini sudah dikirim ke Satellite, jadi halamannya tidak dibaca ulang.")
+        if p["status"] == "queued":
+            raise ActionError(409, "Halaman ini sedang dibaca atau menunggu giliran: sistem sedang mencobanya.")
+        k = stuck.kind(p["status"], p["extract_status"], p["waits"])
+        if not k:
             raise ActionError(409, "Halaman ini tidak gagal dibaca, jadi tidak perlu dicoba lagi.")
         busy = c.execute("""SELECT count(*) AS n FROM staging.page WHERE batch_id=%s AND page_no <> %s
                               AND status = 'queued'""", (batch, page)).fetchone()["n"]
-        if busy:
-            raise ActionError(409, "Halaman lain di file ini masih dibaca. Coba lagi setelah selesai.")
-    print(f"retry {batch} p{page} by {by.strip()}", flush=True)
-    return intake.rerun(batch, [page])
+    why = _not_now()
+    if why:
+        raise ActionError(409, why)
+    if k == "crashed" and busy:
+        raise ActionError(409, "Halaman lain di file ini masih dibaca. Coba lagi setelah selesai.")
+    print(f"retry {batch} p{page} ({k}) by {by.strip()}", flush=True)
+    if k == "crashed":
+        intake.rerun(batch, [page])
+    else:
+        from worker import vf
+        vf.again(batch, [page])
+    return {"batch_id": batch, "page_no": page, "retried": k}
+
+
+def retry_scan(batch, by):
+    """A file that couldn't be split into pages: split again (nothing comes after it yet, so it is safe)."""
+    from common import queue
+    _need(by)
+    with db.connect() as c:
+        r = c.execute("""UPDATE staging.scan_batch SET status='received', error=NULL WHERE id=%s AND status='failed'
+                         RETURNING id""", (batch,)).fetchone()
+    if not r:
+        raise ActionError(409, "File ini tidak gagal diproses, jadi tidak perlu dicoba lagi.")
+    queue.send(queue.Q_INTAKE, [{"batch_id": batch}])
+    print(f"retry split {batch} by {by.strip()}", flush=True)
+    return {"batch_id": batch, "retried": "split"}
+
+
+def retry_upload(upload_id, by):
+    """Everything stuck in one upload batch, tried again at once: its files that couldn't be split, then its stuck
+    pages, except those of orders already sent to Satellite. Returns what was tried and what was left, and why."""
+    from api import stuck
+    _need(by)
+    why = _not_now()
+    if why:
+        raise ActionError(409, why)
+    with db.connect() as c:
+        files = [r["id"] for r in c.execute("SELECT id FROM staging.scan_batch WHERE upload_id=%s AND status='failed'",
+                                            (upload_id,))]
+        pages = [dict(r) for r in c.execute(
+            f"""SELECT p.batch_id, p.page_no, p.status::text AS status, p.extract_status,
+                       p.second_look->>'waiting' AS waits, {stuck.PUBLISHED} AS published,
+                       EXISTS (SELECT 1 FROM staging.page q WHERE q.batch_id = p.batch_id AND q.status = 'queued') AS busy
+                  FROM staging.page p JOIN staging.scan_batch s ON s.id = p.batch_id
+                 WHERE s.upload_id = %s AND {stuck.STUCK} ORDER BY p.batch_id, p.page_no""", (upload_id,))]
+    tried, left = {"files": 0, "pages": 0}, []
+    for b in files:
+        retry_scan(b, by)
+        tried["files"] += 1
+    crashed, failed = {}, {}
+    for p in pages:
+        k = stuck.kind(p["status"], p["extract_status"], p["waits"])
+        if p["published"]:
+            left.append({"batch_id": p["batch_id"], "page_no": p["page_no"], "why": "sudah dikirim ke Satellite"})
+        elif k == "crashed" and p["busy"]:
+            left.append({"batch_id": p["batch_id"], "page_no": p["page_no"], "why": "halaman lain di filenya masih dibaca"})
+        else:
+            (crashed if k == "crashed" else failed).setdefault(p["batch_id"], []).append(p["page_no"])
+    from worker import vf
+    for b, ns in crashed.items():
+        intake.rerun(b, ns)
+        tried["pages"] += len(ns)
+    for b, ns in failed.items():
+        tried["pages"] += len(vf.again(b, ns))
+    print(f"retry upload {upload_id} by {by.strip()}: {tried}, left {len(left)}", flush=True)
+    return {**tried, "left": left}
 
 
 def save_label(batch, page, label, customer="", note="", labelled_by=""):
@@ -232,21 +311,17 @@ def accept(batch, sor, check, input_print, reason, by, note=""):
 
 
 def calibrate(chain, name, by, allowance="", receipt_shows=""):
-    """A customer's once-only calibration: how far its amounts may be from Satellite's, or what its receipts print
-    after a rejection. Every bundle of that customer, in every batch, is checked again. Returns those batches."""
+    """A customer's once-only calibration: what its receipts print after a rejection. Every bundle of that customer,
+    in every batch, is checked again. Returns those batches. Its allowance isn't set any more: every customer's is
+    Rp 1,000 (crosscheck.ROUNDING; the mentor, 2026-10-08)."""
     from grouper import crosscheck
     a = _app()
     _need(by)
-    allowance, receipt_shows = str(allowance or "").strip(), (receipt_shows or "")
-    try:
-        value = float(allowance.replace(",", ".")) if allowance else None
-    except ValueError:
-        raise ActionError(400, f"an allowance is a number of rupiah, not {allowance!r}")
-    if value is not None and not 0 <= value <= crosscheck.STEPS[-1]:
-        raise ActionError(400, f"an allowance is rounding: 0 to {crosscheck.STEPS[-1]} rupiah")
-    if value is None and receipt_shows not in ("received", "ordered"):
-        raise ActionError(400, "give an allowance, or say what the receipts print")
-    batches = list(crosscheck.calibrate(chain, name, by.strip(), value, receipt_shows or None))
+    if str(allowance or "").strip():
+        raise ActionError(400, f"every customer's allowance is Rp {crosscheck.ROUNDING:,.0f}: there is none to set")
+    if receipt_shows not in ("received", "ordered"):
+        raise ActionError(400, "say what the receipts print: 'received' or 'ordered'")
+    batches = list(crosscheck.calibrate(chain, name, by.strip(), receipt_shows))
     for bid in batches:
         a._regroup(bid)
     return batches

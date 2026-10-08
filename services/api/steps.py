@@ -22,6 +22,8 @@ needing a person. Computed here once for the batch list, the batch's own page an
 """
 from collections import defaultdict
 
+from api import stuck
+
 KEYS = ("baca", "jenis", "cocokkan", "periksa", "kirim")
 CONFIRMABLE = {"FP", "TTG", "PO"}                  # a person can settle their key (app.CONFIRM_FIELD)
 SYSTEM_HOLDS = {"not_read", "type_unknown", "needs_sap_billing"}   # held until the AI, a label or SAP: not a person
@@ -62,14 +64,15 @@ def order_state(status, hold, checks, earlier_open):
 
 def build(scan, page, held, orders):
     """Pure: the five steps from one batch's counts. scan: {files, pages, splitting, failed}; page: {read, failed,
-    busy, waiting_ai, unsure, answered, loose_unread, loose_unsure, loose_other}; held: {block, wait, later};
+    call_failed, busy, waiting_ai, unsure, answered, loose_unread, loose_unsure, loose_other}; held: {block, wait, later};
     orders: {need, depends, outside, waiting, ready, published}. Returns {steps, next, finished, blockers: the open
     steps among 1–3}."""
     total = scan.get("pages") or 0
-    failed = page.get("failed", 0) + scan.get("failed", 0)
+    failed = page.get("failed", 0) + page.get("call_failed", 0) + scan.get("failed", 0)   # stuck (api/stuck.py)
     busy = page.get("busy", 0) + scan.get("splitting", 0)
     read = page.get("read", 0)
-    unscheduled = max(0, total - read - page.get("failed", 0) - page.get("busy", 0))
+    unscheduled = max(0, total - read - page.get("failed", 0) - page.get("busy", 0)
+                      - scan.get("failed_pages", 0))       # a file that couldn't be split has no pages to schedule
     baca = {"key": "baca", "pages": total, "read": read, "failed": failed, "busy": busy,
             "waiting_ai": page.get("waiting_ai", 0), "unscheduled": 0 if busy else unscheduled}
     baca["state"] = ("need" if failed else "sys" if busy or baca["waiting_ai"] or baca["unscheduled"]
@@ -116,14 +119,17 @@ def of_uploads(c, ids=None):
     scan = {r["upload_id"]: dict(r) for r in c.execute(
         """SELECT upload_id, count(*) AS files, coalesce(sum(page_total), 0) AS pages,
                   count(*) FILTER (WHERE status IN ('received', 'splitting')) AS splitting,
-                  count(*) FILTER (WHERE status = 'failed') AS failed
+                  count(*) FILTER (WHERE status = 'failed') AS failed,
+                  coalesce(sum(page_total) FILTER (WHERE status = 'failed'), 0) AS failed_pages
              FROM staging.scan_batch WHERE upload_id = ANY(%s) GROUP BY 1""", (ids,))}
     page = {r["upload_id"]: dict(r) for r in c.execute(
-        """SELECT s.upload_id,
+        f"""SELECT s.upload_id,
                   count(*) FILTER (WHERE p.status = 'read') AS read,
                   count(*) FILTER (WHERE p.status IN ('dead_letter', 'failed')) AS failed,
+                  count(*) FILTER (WHERE {stuck.CALL_FAILED}) AS call_failed,
                   count(*) FILTER (WHERE p.status = 'queued') AS busy,
-                  count(*) FILTER (WHERE p.status = 'read' AND p.outcome = 'waiting_ai') AS waiting_ai,
+                  count(*) FILTER (WHERE p.status = 'read' AND p.outcome = 'waiting_ai'
+                                     AND NOT {stuck.CALL_FAILED}) AS waiting_ai,
                   count(*) FILTER (WHERE p.type_status = 'unsure' AND l.page_no IS NULL) AS unsure,
                   count(l.page_no) AS answered,
                   count(*) FILTER (WHERE loose AND p.status <> 'read') AS loose_unread,

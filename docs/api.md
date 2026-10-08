@@ -89,7 +89,9 @@ approved it). Only finished orders are published.
 | GET | `/api/v1/scans/{batch_id}` | one scan: its pages, its orders by status, the queues |
 | GET | `/api/v1/scans/{batch_id}/pages/{page_no}` | one page: its fields, where each sits, its table rows |
 | POST | `/api/v1/scans/{batch_id}/pages/{page_no}/fixes` | correct a value on a page |
-| POST | `/api/v1/scans/{batch_id}/pages/{page_no}/retry` | read a page that failed again (calls the AI) |
+| POST | `/api/v1/scans/{batch_id}/pages/{page_no}/retry` | try a stuck page again (calls the AI) |
+| POST | `/api/v1/scans/{batch_id}/retry` | split a file that couldn't be split again |
+| POST | `/api/v1/uploads/{upload_id}/retries` | try everything stuck in a batch again |
 | GET | `/api/v1/scans/{batch_id}/pages/{page_no}/region` | what a region marked on the paper holds |
 | GET | `/api/v1/keycheck` | does Satellite know this SOR / PO number? |
 | GET | `/api/v1/lessons` | what a fix is doing now (kept as a lesson, the teacher writing a tip, …) |
@@ -251,9 +253,21 @@ The page is fixed at once (re-checked, regrouped) and the correction is kept as 
 `400` without `by` or `value`.
 
 ### `POST /api/v1/scans/{batch_id}/pages/{page_no}/retry`
-`{"by": "…"}`. A page whose reading failed for a technical reason (dead-lettered, e.g. a dropped connection) goes back
-on `q.pages` under a new run: the AI is called again (its quota). `400` without `by` · `404` no such page · `409` the
-page didn't fail, or another page of the same file is still queued.
+`{"by": "…"}`. A stuck page goes back on `q.pages` and redoes only what failed (the AI is called again: its quota).
+Stuck means: its worker died (`dead_letter`/`failed`, sent under a new run), or a model call kept failing after the
+automatic tries (the batch's `failed[]` lists both, each with `kind`, `cause`, `reason` and `can_retry`).
+`400` without `by` · `404` no such page · `409` its order is already sent to Satellite (never read again), it is queued
+(being tried), it isn't stuck, a model isn't set or a limit holds every page (`not_now` says which; pages go on by
+themselves), or (a dead page) another page of the same file is still queued.
+
+### `POST /api/v1/scans/{batch_id}/retry`
+`{"by": "…"}`. A file that couldn't be split into pages (listed in the batch's `failed_files[]`) is split again.
+`409` when it didn't fail.
+
+### `POST /api/v1/uploads/{upload_id}/retries`
+`{"by": "…"}`. Every file of the batch that couldn't be split and every stuck page, except pages of orders already
+sent to Satellite. `result`: `{"pages": n, "files": n, "left": [{"batch_id", "page_no", "why"}]}`. `409` while a model
+isn't set or a limit holds every page.
 
 ### `GET /api/v1/scans/{batch_id}/pages/{page_no}/region?box=ymin,xmin,ymax,xmax`
 `{"words": "…Tesseract's words there…", "blocks": [{"id", "kind", "text"}], "suggest": "…", "region": [y0, x0, y1, x1]}`.
@@ -344,8 +358,8 @@ Everything one order's review needs. The parts that matter:
                                                         "suggest": [], "box": null}]},
    {"kind": "label", "page": 9, "title": "Halaman 9: jenis dokumennya belum pasti"},
    {"kind": "wait", "page": 4, "title": "Halaman 4 menunggu AI membaca ulang"}],
- "calibration": {"chain": "1100002424", "name": "…", "asks": [{"what": "allowance"}, {"what": "receipt"}],
-                 "suggest": null, "steps": [5, 10, 15, 20, 25, 30, 50, 100]},
+ "calibration": {"chain": "1100002424", "name": "…", "asks": [{"what": "receipt"}],
+                 "suggest": null, "steps": []},
  "accept_reasons": ["rounding", "tolakan confirmed", "the customer's own price", "the document comes later",
                     "other (say in the note)"],
  "none_reasons": ["not in SAMB's order", "a free (bonus) item", "another product (say in the note)"],
@@ -368,7 +382,7 @@ How to answer each open item:
 | `page` | a page whose key or amounts aren't sure | **confirmations**, one per entry in `fields[]` |
 | `label` | a page whose type isn't decided | POST /labels |
 | `wait` | the AI is still reading a page | nothing |
-| `calibration.asks[]` | the customer's first look | **calibrations**: `allowance` (one of `steps`) or `receipt_shows` |
+| `calibration.asks[]` | the customer's first look (only `receipt` now) | **calibrations**: `receipt_shows` |
 
 `404` when there is no such order.
 
@@ -412,10 +426,11 @@ A pair is remembered for the customer: the same product matches by itself next t
 | `chain` | string | required | `calibration.chain` |
 | `name` | string | | `calibration.name` |
 | `by` | string | required | |
-| `allowance` | string | one of these two | rupiah its amounts may differ from Satellite's (`"20"`) |
-| `receipt_shows` | string | | `"received"` or `"ordered"`: what its receipts print after a rejection |
+| `receipt_shows` | string | required | `"received"` or `"ordered"`: what its receipts print after a rejection |
+| `allowance` | string | | no longer accepted (400): every customer's allowance is Rp 1,000 per document |
 
-Asked once per customer; every order of that customer, in every scan, is checked again. `result` lists those scans.
+Asked once per customer, on its first order with a tolakan; every order of that customer, in every scan, is checked
+again. `result` lists those scans.
 
 ### `POST /api/v1/orders/{sor}/approval`
 `{"batch", "by"}`. `409 {"error": "not yet", "left": ["…"]}` while anything is left; then the order is `reviewed`.

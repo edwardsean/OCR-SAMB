@@ -40,13 +40,14 @@ from common import db, satellite, verify
 from common.fields import TYPE_MAP
 from grouper import matching
 
-ROUNDING = 5.00    # rupiah: FP and PO totals this close are the same (the user, 2026-09-25: "accept differences under a
-                   # few rupiah"). Hero rounds per carton line (0.02–2.72 apart), Boots per piece with PPN (5.00 apart)
+ROUNDING = 1000.00   # rupiah, per document: the "selisih wajar" of EVERY customer (the mentor, 2026-10-08: "every
+                     # customer's selisih wajar max is 1000 rupiah; if more than that, flag the anomaly"). Nobody is
+                     # asked any more; a further difference goes to Review. Before: Rp 5, then each customer's own
+                     # allowance confirmed once (S3, satellite.customer_profile.rounding_allowance, no longer read).
 LABEL = {"sor_in_satellite": "SO in Satellite", "docs_complete": "Documents complete",
          "vendor_is_samb": "PO addressed to SAMB", "fp_po_total": "FP ↔ PO total", "fp_po_lines": "FP ↔ PO lines",
          "received": "Received vs Satellite's CGR", "dates": "Dates in order", "fpj": "FP ↔ Faktur Pajak",
          "calibration": "Customer calibration", "store_named": "The page's store is the order's"}
-STEPS = (5, 10, 15, 20, 25, 30, 50, 100)   # allowances to suggest (rupiah); beyond Rp 100 a gap isn't rounding
 SAMB = "SARANAABADIMAKMUR"
 
 
@@ -405,27 +406,14 @@ def _dates(pages, spans, so, scan_day):
     return result(worst, "; ".join(says), **({"used": used} if worst == "pass" else {}), **({"ask": asks} if asks else {}))
 
 
-def allowance_for(gap):
-    """The allowance to suggest for a customer whose amounts were up to `gap` rupiah from Satellite's: the smallest
-    round step that covers it. None beyond Rp 100: that isn't rounding (a person looks at the difference)."""
-    return next((s for s in STEPS if gap is None or gap <= s + 0.005), None)
-
-
 def _calibration(prof, so, so_lines, ttgs, out):
-    """The two looks a person gives each new customer (chain), once each (the user, decision 5): its allowance, on its
-    first bundle; what its receipt prints after a rejection, on its first bundle Satellite records a tolakan on. Until
-    then the bundle waits on Review; afterwards only anomalies reach a person."""
+    """The one look a person gives each new customer (chain), once: what its receipt prints after a rejection, on its
+    first bundle Satellite records a tolakan on. Until then that bundle waits on Review. Its allowance isn't asked any
+    more: every customer's is ROUNDING (the mentor, 2026-10-08)."""
     chain, name = prof.get("chain"), prof.get("name") or "this customer"
     if not chain:
         return result("n/a", "no customer in Satellite to calibrate")
-    gaps = [out[k]["gap"] for k in ("fp_po_total", "received") if (out.get(k) or {}).get("gap") is not None]
     asks = []
-    if prof.get("allowance") is None:
-        biggest = max(gaps, default=None)
-        asks.append({"what": "allowance", "gap": biggest, "suggest": allowance_for(biggest),
-                     "why": f"{name}'s first bundle: a person confirms how far its amounts may be from Satellite's "
-                            + (f"(here up to {_money(biggest)}; " if biggest is not None else "(")
-                            + f"Rp {ROUNDING:g} until then)"})
     rejected = sum(float(s.get("rejected_qty") or 0) for s in so_lines)
     if ttgs and rejected and not prof.get("receipt_shows"):
         rec, got = satellite.received(so, so_lines), out.get("received") or {}
@@ -434,7 +422,7 @@ def _calibration(prof, so, so_lines, ttgs, out):
                             f"was received ({_money(rec['total'] or 0)} with tax) or the whole order?"})
     if asks:
         return result("unknown", "; ".join(a["why"] for a in asks), calibrate=asks)
-    return result("pass", f"{name} is calibrated: amounts may differ by up to Rp {float(prof['allowance']):g}"
+    return result("pass", f"{name}: amounts may differ by up to Rp {ROUNDING:,.0f} (every customer)"
                           + (f"; its receipts print {'what was received' if prof['receipt_shows'] == 'received' else 'the whole order'}"
                              if prof.get("receipt_shows") else ""))
 
@@ -507,9 +495,9 @@ def check_bundle(sor, docs, pages, so, so_lines, matches, expected=("FP", "TTG")
                  profile=None, stores=None, df=None, where=None):
     """The checks of one bundle. docs: [(page_no, doc_type)] (first pages); pages: {page_no: {doc_type, fields,
     checks, outcome, fields_all, classical_text, second_look}}; matches: matching.match(); spans: {first page: every
-    page of that document} (default: the first page alone); profile: the customer's calibration {chain, name,
-    allowance, receipt_shows} (satellite.customer_profile; without one the checks run at Rp 5 and nothing is
-    calibrated). Pure.
+    page of that document} (default: the first page alone); profile: the customer {chain, name, receipt_shows}
+    (satellite.customer_profile). Amounts may differ from Satellite's by up to ROUNDING per document, for every
+    customer. Pure.
 
     Two sides, each with its own reference in Satellite (the user, 2026-09-26): the order side, PO ↔ the SO as
     ordered (what the FP printed); the delivery side, TTG ↔ the goods receipt (what was received). Documents are never
@@ -520,7 +508,7 @@ def check_bundle(sor, docs, pages, so, so_lines, matches, expected=("FP", "TTG")
         by_type.setdefault(t, []).append(n)
     pos, ttgs = by_type.get("PO") or [], by_type.get("TTG") or []
     spans, prof = spans or {}, profile or {}
-    allow = float(prof["allowance"]) if prof.get("allowance") is not None else ROUNDING
+    allow = ROUNDING                                   # every customer's (the mentor, 2026-10-08)
 
     out["sor_in_satellite"] = result("pass", f"{sor} is in Satellite") if so else \
         result("fail", f"{sor} isn't in Satellite's export (older than a month?)")
@@ -772,19 +760,16 @@ def evaluate(x):
             "asks": {n: sorted(v) for n, v in sorted(asks.items())}}
 
 
-def calibrate(chain, name, by, allowance=None, receipt_shows=None):
-    """A person's once-per-customer answer on Review (verification redesign S3, decision 5): how far the customer's
-    amounts may be from Satellite's (its rounding), and/or what its receipts print after a rejection. Stored on its
-    profile (satellite.customer_profile, by and when). Returns the batches holding any of its bundles: all of them
-    are checked again (the caller regroups them), so one answer settles every bundle of that customer."""
+def calibrate(chain, name, by, receipt_shows=None):
+    """A person's once-per-customer answer on Review (verification redesign S3, decision 5): what its receipts print
+    after a rejection. Stored on its profile (satellite.customer_profile, by and when). Returns the batches holding
+    any of its bundles: all of them are checked again (the caller regroups them), so one answer settles every bundle
+    of that customer. (Its rounding isn't asked any more: every customer's is ROUNDING.)"""
     if receipt_shows not in (None, "received", "ordered"):
         raise ValueError(f"receipt_shows is 'received' or 'ordered', not {receipt_shows!r}")
     with db.connect() as c:
         c.execute("""INSERT INTO satellite.customer_profile (customer_code, customer_name) VALUES (%s, %s)
                      ON CONFLICT (customer_code) DO NOTHING""", (chain, name or f"chain {chain}"))
-        if allowance is not None:
-            c.execute("""UPDATE satellite.customer_profile SET rounding_allowance=%s, allowance_by=%s, allowance_at=now()
-                         WHERE customer_code=%s""", (allowance, by, chain))
         if receipt_shows:
             c.execute("""UPDATE satellite.customer_profile SET receipt_shows=%s, receipt_by=%s, receipt_at=now()
                          WHERE customer_code=%s""", (receipt_shows, by, chain))
