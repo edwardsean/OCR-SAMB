@@ -1,5 +1,5 @@
 """The service the web app (frontend/) talks to: the REST API under /api/v1 (v1.py), what it serves the browser
-(page images, crops, the SOR PDFs), and the developers' Teknis screens (server-rendered: Status, Konteks Jev,
+(page images, crops, the SOR PDFs), and the developers' Teknis screens (server-rendered: Status, Konteks klasifikasi,
 Pengetahuan AI, the technical detail of a scan or a page). The background work runs elsewhere: the intake worker
 (intake/serve.py), the page workers, the grouper, the teacher, and the scheduler (scheduler/serve.py). The view functions
 here build what the API answers with; actions.py holds what a person can change."""
@@ -79,7 +79,7 @@ ALL_BATCHES = [("/review", "Periksa order"), ("/label", "Jenis halaman"), ("/bun
 TECH = [("/status", "Status sistem"), ("/settings", "Model & kunci API"), ("/product-codes", "Kode produk pelanggan"),
         ("/fields", "Daftar field"), ("/labels", "Semua label")]
 if VF:
-    TECH[2:2] = [("/context", "Konteks Jev"), ("/knowledge", "Pengetahuan AI")]
+    TECH[2:2] = [("/context", "Konteks klasifikasi"), ("/knowledge", "Pengetahuan AI")]
 
 EXPECTED_TABLES = 20      # 19 from the base schema + staging.type_label (006)
 if VF:
@@ -1687,6 +1687,22 @@ def approve_context(version: int, by: str = Form(...)):
     return RedirectResponse("/context", status_code=303)
 
 
+@app.post("/context/revert", include_in_schema=False)
+def revert_context(version: int = Form(...), by: str = Form(...)):
+    """A person takes the classifier's context back to an earlier version: the undo, now that a change that passes
+    the replay is used at once (worker/lesson.py adopt)."""
+    from common import context
+    if not by.strip():
+        return JSONResponse({"error": "say who takes it back"}, status_code=400)
+    try:
+        with db.connect() as c:
+            context.revert(c, version, by.strip())
+    except ValueError as e:
+        return JSONResponse({"error": str(e)}, status_code=409)
+    _wake_teacher(f"context taken back to #{version}")
+    return RedirectResponse("/context", status_code=303)
+
+
 @app.post("/context/{version}/reject", include_in_schema=False)
 def reject_context(version: int, by: str = Form("")):
     from common import context
@@ -1848,7 +1864,7 @@ def knowledge_propose(doc_type: str, markdown: str = Form(...), by: str = Form(.
         v = learn.propose(doc_type, markdown.replace("\r\n", "\n"), "person", by.strip(), note.strip() or None)
     except ValueError as e:
         return JSONResponse({"error": str(e)}, status_code=409)
-    return _k_back(doc_type, f"{doc_type} #{v} proposed: run its replay before it can be approved")
+    return _k_back(doc_type, f"{doc_type} #{v} proposed: run its replay; it is used at once if it passes")
 
 
 @app.post("/knowledge/{doc_type}/draft", include_in_schema=False)
@@ -1869,7 +1885,8 @@ def knowledge_gate(doc_type: str, version: int):
         return _k_back(doc_type, str(e))
     except Exception as e:                  # a limit or a failed call: nothing stored, try again later
         return _k_back(doc_type, f"the replay stopped: {type(e).__name__}: {e}")
-    return _k_back(doc_type, f"{doc_type} #{version}: {'passed' if g['passed'] else 'did not pass'}: {g['why']}")
+    return _k_back(doc_type, f"{doc_type} #{version}: {'passed, and in use' if g['passed'] else 'did not pass'}: "
+                             f"{g['why']}")
 
 
 @app.post("/knowledge/{doc_type}/{version}/approve", include_in_schema=False)

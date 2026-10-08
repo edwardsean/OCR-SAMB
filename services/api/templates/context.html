@@ -1,14 +1,21 @@
 {% extends "base.html" %}
-{% block title %}Konteks Jev{% endblock %}
+{% block title %}Konteks klasifikasi{% endblock %}
 {% block main %}
   <section class="head">
-    <h1>Konteks Jev</h1>
-    <p class="lede">How Jev tells page types apart. The teacher proposes changes from labels; a person approves them.</p>
+    <h1>Konteks klasifikasi</h1>
+    <p class="lede">How the classification model tells page types apart. From a person&#39;s label (a page the model was unsure of, or got wrong: Ubah jenis on the page) the teacher tries one change; it is replayed on every labelled page and, when it passes, used at once for new pages. No one approves it; take the context back below if a change turns out wrong.</p>
   </section>
 
   {% if active %}{% set c = active.content %}
   <section>
-    <h2>Active: context #{{ active.version }} <span class="muted">{{ active.created_by }}{% if active.approved_by %}, approved by {{ active.approved_by }}{% endif %}</span></h2>
+    <h2>Active: context #{{ active.version }} <span class="muted">{{ active.created_by }}{% if active.approved_by %}, made active by {{ active.approved_by }}{% endif %}</span></h2>
+    {% set back = versions|selectattr('status', 'equalto', 'retired')|list %}
+    {% if back %}
+    <form method="post" action="/context/revert" class="small">Take the context back to
+      <select name="version">{% for v in back %}<option value="{{ v.version }}">#{{ v.version }}: {{ v.note or v.created_by }}</option>{% endfor %}</select>
+      <input name="by" placeholder="your name" required size="12"> <button type="submit">Use it again</button>
+      <span class="muted">(a new version with its content; new pages are classified with it)</span></form>
+    {% endif %}
     <p>{% if active.union_ok and not active.problems %}✓ combined list ({{ c.fields|length }} fields) = union of the types' fields{% else %}⚠ {{ active.problems|join('; ') }}{% endif %}</p>
     <details open><summary>Document types</summary>
     <table class="grid small">
@@ -38,9 +45,9 @@
       <p><strong>context #{{ v.version }}</strong>, built on #{{ v.parent }} · <strong>{{ v.status }}</strong>{% if v.approved_by %} ({{ v.approved_by }}){% endif %} · {{ v.created_by }} · {{ v.note or '' }}</p>
       {% if v.diff %}<ul>{% for d in v.diff %}<li class="mono small">{{ d }}</li>{% endfor %}</ul>{% endif %}
       {% if v.lesson %}<p class="small">From page <a href="/batches/{{ v.lesson.batch_id }}/pages/{{ v.lesson.page_no }}">{{ v.lesson.page_no }}</a> labelled {{ v.lesson.label }} ·
-        teacher: {{ (v.lesson.answer or {}).get('evidence') }} · why Jev missed it: {{ (v.lesson.answer or {}).get('why_missed') }}</p>{% endif %}
+        teacher: {{ (v.lesson.answer or {}).get('evidence') }} · why the classifier missed it: {{ (v.lesson.answer or {}).get('why_missed') }}</p>{% endif %}
       {% if v.gate %}{% set g = v.gate %}
-      <p class="small">Replay on {{ g.practice_pages }} labelled practice pages, Jev with #{{ v.parent }} vs #{{ v.version }}:
+      <p class="small">Replay on {{ g.practice_pages }} labelled practice pages, the classifier with #{{ v.parent }} vs #{{ v.version }}:
         right <strong>{{ g.right_before }} → {{ g.right_after }}</strong> · unsure {{ g.unsure_before }} → {{ g.unsure_after }}
         · wrong {{ g.wrong_before }} → {{ g.wrong_after }}{% if g.new_wrong %} (newly wrong: {{ g.new_wrong }}){% endif %}
         · {{ g.anchor_pages }} FP anchors{% if g.anchor_flips %}, <strong>changed: {{ g.anchor_flips }}</strong>{% else %} unchanged{% endif %}

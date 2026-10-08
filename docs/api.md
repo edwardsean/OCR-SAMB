@@ -96,7 +96,8 @@ approved it). Only finished orders are published.
 | GET | `/api/v1/keycheck` | does Satellite know this SOR / PO number? |
 | GET | `/api/v1/lessons` | what a fix is doing now (kept as a lesson, the teacher writing a tip, …) |
 | GET | `/api/v1/labels` | the next page whose type is unsure |
-| POST | `/api/v1/labels` | say what a page is |
+| POST | `/api/v1/labels` | say what a page is (an unsure page, or one the classifier got wrong) |
+| GET | `/api/v1/scans/{batch_id}/pages/{page_no}/type-lesson` | what a person's type for a page is doing now |
 | GET | `/api/v1/orders` | a scan's orders, needs a person first |
 | POST | `/api/v1/notices/seen` | mark the "needs you" notices seen |
 | GET | `/api/v1/orders/{sor}` | one order's review |
@@ -312,8 +313,29 @@ bias the answer).
 | `note` | string | | |
 | `labelled_by` | string | | |
 
-The page resumes (it is read with its type), and a label the machine missed becomes a lesson for the teacher.
-`400 {"error": "unknown label"}`.
+The answer decides the page's type from then on, for an unsure page (Jenis halaman) or one the classifier decided
+wrong (Ubah jenis on the page view). The page is processed again as that type: nothing is read again, its type's
+fields, checks and grouping change. A label in the practice pile that the classifier answered otherwise becomes a
+lesson: the teacher says why it was missed and tries one change to the classifier's context, which is replayed on
+every labelled page. A change that gets more of them right and none wrong becomes the active context at once (no
+person approves it); a person can take the context back to an earlier version on Teknis → Konteks klasifikasi. One
+label in five, drawn once, is in the exam pile and never taught.
+`400 {"error": "unknown label"}` · `404` no such page · `409` its order is already sent to Satellite, or the page is
+queued (being processed: its worker would save the old type after the answer).
+
+### `GET /api/v1/scans/{batch_id}/pages/{page_no}/type-lesson`
+After a person's type for a page (the status bar):
+```json
+{"headline": "Perbaikannya lolos uji ulang, jadi konteks klasifikasi langsung diubah (konteks #5): …",
+ "steps": [{"label": "Jenis disimpan: Purchase Order (PO), oleh Edward", "state": "done"}, …],
+ "why": "the page has no title and its rows look like a receipt",
+ "tip": "Purchase Order (PO) juga bisa mencetak po_number (…).",
+ "detail": null, "final": true}
+```
+`why`: the teacher's reading of the miss; `tip`: its change, once one passed the replay; `detail`: an error, for IT.
+`final` is true when nothing more happens by itself (the change is in use, or none was kept). `404` when the
+page has no type from a person. The page itself (`GET …/pages/{page_no}`) carries `label` (a person's type),
+`machine` (`{status, doc_type}`, the classifier's) and `relabel_refused` (why its type can't be changed now, or null).
 
 ## Orders (Periksa order)
 

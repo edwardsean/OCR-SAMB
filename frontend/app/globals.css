@@ -5,6 +5,9 @@
   --kertas: #FFFFFF; --meja: #ECEEF1; --meja-muda: #F5F6F8; --tinta: #1A1D22; --pensil: #5C636D;
   --garis: #D5D9DE; --garis-tebal: #AEB4BC; --biru-pulpen: #1F3F8F; --biru-tekan: #172F6B;
   --cap-merah: #B3261E; --cap-hijau: #1E6B45; --cap-kuning: #8A5A00;
+  /* a document type's tag (.tchip, .ttag): a filled label, never a state; one hue per type, away from the stamp inks */
+  --jenis-fp: #5B2C91; --jenis-ttg: #0B6E7A; --jenis-po: #A3286A; --jenis-sj: #4D6A12; --jenis-fpj: #1D6FA3;
+  --jenis-pel: #7A4A2E; --jenis-lanjutan: var(--pensil);
   --kertas-bayang: 0 1px 2px rgba(26, 29, 34, .22), 0 4px 10px rgba(26, 29, 34, .07);
   /* the names the screens already use, pointed at the tokens above */
   --bg: var(--kertas); --panel: var(--kertas); --panel-2: var(--meja-muda); --text: var(--tinta); --muted: var(--pensil);
@@ -221,14 +224,18 @@ button.ghost { background: var(--panel); color: var(--text); border: 1px solid v
 details { margin-top: 8px; } summary { cursor: pointer; color: var(--muted); }
 
 /* phase 3 */
-.tchip { display: inline-block; font-size: 11.5px; font-weight: 700; padding: 1px 6px; border-radius: 3px; color: #fff; background: var(--tinta); vertical-align: middle; }
-.tchip.big { font-size: 13px; padding: 2px 10px; margin-left: 8px; }
-.t-CONTINUATION, .t-OTHER { background: var(--pensil); }
-.t-unsure { background: var(--kertas); color: var(--cap-merah); box-shadow: inset 0 0 0 1.5px var(--cap-merah); }
-.thumb .ttag { position: absolute; left: 0; top: 0; font-style: normal; font-size: 10.5px; font-weight: 700; color: #fff; background: var(--tinta); padding: 1px 5px; }
+.tchip { display: inline-block; font-size: 11.5px; font-weight: 700; padding: 1px 6px; border-radius: 3px; color: #fff; background: var(--jenis, var(--tinta)); vertical-align: middle; white-space: nowrap; }
+.tchip.big { font-size: 13px; padding: 2px 10px; margin-left: 8px; } i.tchip { font-style: normal; }
+/* each type's colour (DESIGN.md, Jenis dokumen): a continuation is pencil, "other" pencil outlined, unsure a red stamp */
+.t-FP { --jenis: var(--jenis-fp); } .t-TTG { --jenis: var(--jenis-ttg); } .t-PO { --jenis: var(--jenis-po); }
+.t-SJ { --jenis: var(--jenis-sj); } .t-FPJ { --jenis: var(--jenis-fpj); } .t-PEL { --jenis: var(--jenis-pel); }
+.t-CONTINUATION { --jenis: var(--jenis-lanjutan); } .t-OTHER { --jenis: var(--pensil); } .t-unsure { --jenis: var(--cap-merah); }
+.thumb .ttag { position: absolute; left: 0; top: 0; font-style: normal; font-size: 10.5px; font-weight: 700; color: #fff; background: var(--jenis, var(--tinta)); padding: 1px 5px; }
+.tchip.t-OTHER, .thumb .ttag.t-OTHER { background: var(--kertas); color: var(--pensil); box-shadow: inset 0 0 0 1.5px var(--pensil); }
+.tchip.t-unsure { background: var(--kertas); color: var(--cap-merah); box-shadow: inset 0 0 0 1.5px var(--cap-merah); }
 .filters .sep { flex-basis: 100%; height: 0; }
 .typebars div { display: grid; grid-template-columns: 110px 1fr 40px; align-items: center; gap: 8px; margin: 4px 0; }
-.typebars i { display: block; height: 10px; border-radius: 3px; min-width: 2px; } .typebars b { font-weight: 600; text-align: right; }
+.typebars i { display: block; height: 10px; border-radius: 3px; min-width: 2px; background: var(--jenis, var(--tinta)); } .typebars b { font-weight: 600; text-align: right; }
 .phasebox { margin-bottom: 16px; } .phasebox > summary { padding: 6px 0; }
 .classify .votes { display: grid; grid-template-columns: repeat(4, 1fr); gap: 16px; }
 .classify h3 { font-size: 12px; color: var(--muted); margin: 0 0 4px; font-weight: 600; }
@@ -461,6 +468,12 @@ td.prog { min-width: 150px; } td.prog .bar { margin-top: 6px; }
 .pg-title .pager { margin: 0; display: flex; gap: 18px; }
 .pager a { font-weight: 600; font-size: 13.5px; }
 .pg-state { display: flex; gap: 12px; flex-wrap: wrap; align-items: center; margin: 6px 0 18px; }
+/* Ubah jenis: a person changes a type the classifier got wrong, then the correction's status bar */
+.legend-types > span { margin-right: 10px; white-space: nowrap; }
+.rl { margin: -8px 0 18px; } .rl > p { margin: 0; } .rl-who .tchip { margin-left: 2px; }
+.rl-form { max-width: 640px; border-top: 1px solid var(--garis); padding-top: 12px; margin-top: 8px; }
+.rl-form h2 { font-size: 15px; margin: 0 0 4px; } .rl-form .tp { grid-template-columns: 18px 110px 1fr; }
+.rl-form .tp:has(input:disabled) { opacity: .55; cursor: default; }
 .pg-plain-msg { display: flex; flex-wrap: wrap; align-items: center; gap: 10px 14px; margin-bottom: 14px; }
 .pg-plain-img { max-width: 640px; width: 100%; display: block; box-shadow: var(--kertas-bayang); }
 .fx-right .btn, .fx-cell .btn, .fx-zoom .btn { padding: 3px 10px; font-size: 12.5px; }
@@ -689,6 +702,8 @@ h2.sect { margin: 32px 0 12px; }
                       background: var(--tinta); padding: 1px 6px; }
 .bx-tile:hover .bx-img { outline-color: var(--tinta); }
 .bx-tile b { font-size: 13.5px; } .bx-tile span { color: var(--pensil); font-size: 12.5px; }
+.bx-tile .tchip, .rv-thumb .tchip { align-self: flex-start; color: #fff; font-size: 11.5px; margin-top: 6px; }
+.bx-tile .tchip.t-OTHER { color: var(--pensil); } .bx-tile .tchip.t-unsure { color: var(--cap-merah); }
 .bx-tile small { color: var(--pensil); font-size: 12px; line-height: 1.35; margin-top: 2px; }
 .bx-docs.loose .bx-tile { width: 108px; } .bx-docs.loose .bx-img { height: 140px; }
 .bx-held { display: flex; flex-direction: column; margin-bottom: 8px; border-top: 1.5px solid var(--tinta); }

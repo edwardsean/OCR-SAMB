@@ -13,7 +13,7 @@ const ALL: [string, string][] = [                   // this app's screens over e
 ];
 const TECH: [string, string][] = [
   ["/status", "Status sistem"], ["/settings", "Model & kunci API"], ["/product-codes", "Kode produk pelanggan"],
-  ["/context", "Konteks Jev"],
+  ["/context", "Konteks klasifikasi"],
   ["/knowledge", "Pengetahuan AI"], ["/fields", "Daftar field"], ["/labels", "Semua label"],
 ];
 

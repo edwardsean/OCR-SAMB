@@ -174,11 +174,22 @@ def retry_upload(upload_id, by):
 
 
 def save_label(batch, page, label, customer="", note="", labelled_by=""):
-    """A person says what a page is. The pile (practice/exam) is drawn once, on first save; relabelling never moves a
-    page between piles. vlm-first: a page v1 already put in a pile keeps that pile."""
+    """A person says what a page is: a page the system was unsure of (Jenis halaman), or one it decided wrong (Ubah
+    jenis on the page; api/relabel.py). The pile (practice/exam) is drawn once, on first save; relabelling never moves
+    a page between piles. vlm-first: a page v1 already put in a pile keeps that pile. Refused (409) for a page of an
+    order already sent to Satellite, and while the page is queued."""
+    from api import relabel, stuck
     a = _app()
     if label not in {t[0] for t in a.LABEL_TYPES}:
         raise ActionError(400, "unknown label")
+    with db.connect() as c:
+        p = c.execute(f"""SELECT p.status::text AS status, {stuck.PUBLISHED} AS published FROM staging.page p
+                          WHERE p.batch_id=%s AND p.page_no=%s""", (batch, page)).fetchone()
+    if not p:
+        raise ActionError(404, "no such page")
+    why = relabel.refusal(p["status"], p["published"])
+    if why:
+        raise ActionError(409, why)
     v1_pile = a._v1_pile(batch, page) if a.VF else None
     with db.connect() as c:
         c.execute("""INSERT INTO staging.type_label (batch_id, page_no, label, customer, note, labelled_by, pile)

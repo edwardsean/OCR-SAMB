@@ -232,9 +232,10 @@ def propose(conn, content, parent, created_by, note):
 
 
 def activate(conn, version, approved_by):
-    """A person approved it: it becomes the one active context; the old one is retired. A proposal built on an older
-    context is refused: its content is that older context plus one change, so activating it would silently undo
-    whatever was approved since, and its replay was measured against the wrong context."""
+    """It becomes the one active context (a change that passed the replay, or a person's choice); the old one is
+    retired. A proposal built on an older context is refused: its content is that older context plus one change, so
+    activating it would silently undo whatever was made active since, and its replay was measured against the wrong
+    context."""
     r = conn.execute("SELECT status, parent, content FROM staging.context_version WHERE version=%s",
                      (version,)).fetchone()
     if not r or r["status"] != "proposed":
@@ -249,6 +250,24 @@ def activate(conn, version, approved_by):
     conn.execute("UPDATE staging.context_version SET status='retired' WHERE status='active'")
     conn.execute("""UPDATE staging.context_version SET status='active', approved_by=%s, approved_at=now()
                     WHERE version=%s""", (approved_by, version))
+
+
+AUTO = "auto: the replay passed"      # who made a change active when no person did (the user, 2026-10-08)
+
+
+def revert(conn, version, by):
+    """A person takes the context back to an earlier version (the undo now that a change that passes the replay is
+    used at once): a new version with that version's content, built on the active one, active at once. History stays
+    in order: nothing is deleted or re-activated in place."""
+    r = conn.execute("SELECT content FROM staging.context_version WHERE version=%s", (version,)).fetchone()
+    now = conn.execute("SELECT version FROM staging.context_version WHERE status='active'").fetchone()
+    if not r:
+        raise ValueError(f"no context #{version}")
+    if now and now["version"] == version:
+        raise ValueError(f"context #{version} is the active one already")
+    v = propose(conn, r["content"], now and now["version"], f"person:{by}", f"back to context #{version}")
+    activate(conn, v, by)
+    return v
 
 
 def reject(conn, version, by):

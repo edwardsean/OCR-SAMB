@@ -5,7 +5,7 @@ import os
 
 import pytest
 
-from common import wiki
+from common import context, wiki
 
 PAGE = """# TTG
 
@@ -157,7 +157,9 @@ def test_the_gate_replays_a_proposal_with_kept_answers_and_touches_only_the_page
     """A person's claim for Duta Buah's receipt (b-c80bbbde4d p5, its only one) on top of whatever TTG page is active.
     Pass B's answer is seeded (no model call): the PO number from the block printing PO.2026.09.32029. The claim cites
     no page (a person's), so p5 counts: Edward confirmed PO.2026.09.32029 where the reading had PO.RCV-14905/IX/2026.
-    Other customers' pages are untouched (their knowledge doesn't change). Nothing is activated or kept."""
+    Other customers' pages are untouched (their knowledge doesn't change). A tip that passes is switched on at once
+    (the user, 2026-10-08), whoever wrote it: here only recorded, never really activated or kept; one built on a page
+    that is no longer active is rejected instead."""
     from common import db
     from worker import learn, vf
     with db.connect() as c:
@@ -189,15 +191,24 @@ def test_the_gate_replays_a_proposal_with_kept_answers_and_touches_only_the_page
         def no_call(*a, **k):
             raise AssertionError(f"a model call: {a[:3]}")
         monkeypatch.setattr(vf, "ai_call", no_call)
+        used = []
+        monkeypatch.setattr(learn, "activate", lambda t, v, by, show=print, lint=False: used.append((t, v, by)))
         g = learn.gate("TTG", version, show=lambda *a: None)
         assert list(g["pages"]) == ["b-c80bbbde4d/5"]                  # only Duta Buah's knowledge changed
         rows = g["pages"]["b-c80bbbde4d/5"]["rows"]
         assert [(r["field"], r["before"], r["after"]) for r in rows if r["counted"] and r["field"] == "purchase_order_no"] \
             == [("purchase_order_no", "wrong", "right")]
         assert g["passed"] and not g["lost"] and not g["new_wrong"] and g["mapped"] == 1
+        assert used == [("TTG", version, context.AUTO)]                # passed: used at once, no person approves
+
+        def stale(t, v, by, show=print, lint=False):
+            raise ValueError(f"TTG #{v} was built on #1, but #2 is active now")
+        monkeypatch.setattr(learn, "activate", stale)
+        assert learn.gate("TTG", version, show=lambda *a: None)["passed"]
         with db.connect() as c:
-            assert c.execute("SELECT status FROM staging.knowledge_page WHERE doc_type='TTG' AND version=%s",
-                             (version,)).fetchone()["status"] == "proposed"     # a person's: waits for approval
+            r = c.execute("SELECT status, approved_by FROM staging.knowledge_page WHERE doc_type='TTG' AND version=%s",
+                          (version,)).fetchone()
+        assert r["status"] == "rejected" and r["approved_by"].startswith("the gate: ")   # never left open
     finally:
         with db.connect() as c:
             if version:
@@ -408,14 +419,15 @@ def test_the_status_bar_follows_a_fix_from_save_to_applied():
     lp = wiki.lesson_progress(_lesson_ex("waiting"), ahead=2)
     assert lp["headline"] == "Waiting for the teacher (2 lessons ahead)." and not lp["final"]
     assert _states(lp) == ["done", "done", "now", "todo", "todo", "todo", "todo"]
-    assert "approval" in wiki.lesson_progress(_lesson_ex("waiting"), pending=True)["headline"]
+    assert "still open" in wiki.lesson_progress(_lesson_ex("waiting"), pending=True)["headline"]
     assert "couldn't reach" in wiki.lesson_progress(_lesson_ex("waiting", error="timeout"))["headline"]
     assert _states(wiki.lesson_progress(_lesson_ex("teaching")))[3] == "now"
     testing = wiki.lesson_progress(_lesson_ex("proposed", **tip), {"progress": {"step": "testing", "done": 3, "of": 7}})
     assert testing["headline"] == "Testing the tip on other pages (3 of 7)…" and _states(testing)[4] == "now"
     assert testing["tip"].startswith("On AEON receipts")
     waits = wiki.lesson_progress(_lesson_ex("proposed", **tip), {"gate": {"passed": True}, "progress": {"step": "tested"}})
-    assert "approval on the Knowledge screen" in waits["headline"] and _states(waits)[5] == "now" and waits["final"]
+    assert waits["headline"] == "The tip passed its test. Switching it on…" and _states(waits)[5] == "now"
+    assert not waits["final"]                                       # no person to wait for: it is switched on now
     retry = wiki.lesson_progress(_lesson_ex("proposed", **tip), {"gate": {"passed": False}})
     assert "trying again" in retry["headline"] and not retry["final"]
     applying = wiki.lesson_progress(_lesson_ex("learned", **tip), {"progress": {"step": "applying", "done": 5, "of": 12}})

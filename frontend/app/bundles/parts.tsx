@@ -28,7 +28,7 @@ export function HeldCard({ h, batch }: { h: BundleDoc; batch: string }) {
       <Link className="bx-tile small" href={`/batches/${batch}/pages/${h.page_from}`} title={`${h.scan ?? ""}, halaman ${h.page_from}`}>
         {/* eslint-disable-next-line @next/next/no-img-element */}
         {h.thumb && <img src={h.thumb} alt="" loading="lazy" />}
-        <b>{w.DOC_SHORT[h.type] ?? h.type}</b><span>hal. {h.page_from}{h.page_to !== h.page_from ? `–${h.page_to}` : ""}</span>
+        <span className={`tchip t-${h.type}`}>{w.DOC_SHORT[h.type] ?? h.type}</span><span>hal. {h.page_from}{h.page_to !== h.page_from ? `–${h.page_to}` : ""}</span>
         {h.scan && <small className="bx-scan" title={`${h.upload ?? ""} ${h.scan}`}>{h.scan}</small>}
         {h.upload && <small className="bx-scan" title={`diunggah ${h.uploaded_by ?? ""}`}>{h.upload}</small>}</Link>
       <div className="bx-hbody">

@@ -12,9 +12,11 @@
   propose  a person's edit → a proposal.
   gate     replay a proposal on the stored pages its change touches that have a known answer (wiki.truth_of: a
            person's practice correction, or Satellite), at most wiki.TEST_PAGES of them, leave-one-out; pages with a
-           hidden-pile (exam) correction are replayed too and scored apart, never deciding. A proposal from
-           corrections marked on the paper becomes active by itself when it passes; any other waits for a person.
-  activate a person approves (or the gate, for a marked one); the pages of that type are mapped again (apply).
+           hidden-pile (exam) correction are replayed too and scored apart, never deciding. A proposal that passes
+           becomes active by itself, whoever wrote it (the user, 2026-10-08: "i want automatic use for the knowledge
+           tips as well"; until then only one from corrections marked on the paper did, and a person approved the rest).
+  activate the gate, when the replay passes (or a person, for a proposal left from before); the pages of that type are
+           mapped again (apply).
   apply    the active page again on the type's stored pages that still need it (wiki.needs_tip: a field it names
            isn't settled), reusing the test's answers: what changed is re-checked and regrouped.
   lint     a claim a person's later correction contradicts is taken out by itself (a 'lint' version), and what has no
@@ -414,8 +416,12 @@ def gate(doc_type, version, show=print):
     show(f"{doc_type} #{version}: {'PASSED' if g['passed'] else 'not passed'}: {g['why']} "
          f"(scored {g['scored']}: right {g['right_before']} → {g['right_after']}, wrong {g['wrong_before']} → "
          f"{g['wrong_after']}, flips {g['flips']}, pages mapped {calls})")
-    if g["passed"] and row["source"] == "marked":
-        activate(doc_type, version, "the gate (corrections marked on the paper)", show=show)
+    if g["passed"]:                       # used at once, no person approves it (the user, 2026-10-08)
+        try:
+            activate(doc_type, version, context.AUTO, show=show)
+        except ValueError as e:           # another page of this type became active since it was built: never used
+            reject(doc_type, version, f"the gate: {e}"[:200])
+            show(f"  not used: {e}")
     return g
 
 
@@ -634,10 +640,10 @@ def _lesson(eid, status, extra=None, version=None, doc=None):
 
 def teach_one(e, ask=None, show=print):
     """One lesson: a practice-pile correction. Closed without asking when the page's reading already has the value
-    (a knowledge approved since got it right); else the teacher writes one claim, code checks it, it becomes a
-    proposal and is replayed. Not kept: a second try, told why. No other stored page to prove it on: "needs pages"
-    (asked again when its scope has more pages). Returns the lesson's status ('proposed' stops the round: one change
-    at a time)."""
+    (a knowledge made active since got it right); else the teacher writes one claim, code checks it, it becomes a
+    proposal and is replayed; one that passes is active at once ('learned'). Not kept: a second try, told why. No
+    other stored page to prove it on: "needs pages" (asked again when its scope has more pages). Returns the lesson's
+    status ('proposed', a passed tip that couldn't be used, stops the round)."""
     from common.models import teacher
     real = ask is None                                   # only the real teacher's calls go in the ledger
     ask = ask or (lambda prompt: teacher.ask_text(prompt, TEACH_MODEL))
@@ -719,10 +725,12 @@ def teach_one(e, ask=None, show=print):
             with db.connect() as c:
                 st = c.execute("SELECT status FROM staging.knowledge_page WHERE doc_type=%s AND version=%s",
                                (t, v)).fetchone()["status"]
-            if st == "active":                           # marked on the paper: active by itself
+            if st == "active":                           # passed: used at once
                 _lesson(e["id"], "learned", {}, v, t)
                 return "learned"
-            return "proposed"                            # a typed correction: a person approves on /knowledge
+            if st == "rejected":                         # passed, but built on a page no longer active: not used
+                return "no_change"
+            return "proposed"
         reject(t, v, "the gate")
         if g.get("needs_pages"):
             _lesson(e["id"], "needs_pages", {"why": g["why"], "scope_pages": scope_n}, v, t)
@@ -735,8 +743,8 @@ def teach_one(e, ask=None, show=print):
 
 def teach(limit=20, show=print, ask=None):
     """The teacher's round: waiting lessons oldest first, and those that needed pages once their type has more
-    stored pages. Stops at a proposal waiting for a person (one change at a time) or when the model can't be
-    reached. A lesson still 'teaching' when a round starts was cut off (one teacher, so nothing else is writing it):
+    stored pages. A tip that passes is used at once, so the next lesson starts from it. Stops at a proposal still
+    open (one change at a time) or when the model can't be reached. A lesson still 'teaching' when a round starts was cut off (one teacher, so nothing else is writing it):
     it waits again."""
     try:
         with db.connect() as c:

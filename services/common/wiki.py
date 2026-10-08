@@ -737,7 +737,7 @@ def lesson_progress(example, page=None, ahead=0, pending=False):
     """What a person's fix is doing now, for the status bar after Save (the page viewer, a Review card), in plain
     words (the user, 2026-10-01). example: its staging.extract_example row, or None when none was kept; page: the
     knowledge_page row of the tip it proposed (lesson_doc, lesson_version), or None; ahead: lessons waiting before it;
-    pending: a tip of its document type waits for a person's approval. Returns {steps: [(label, state)], headline,
+    pending: an earlier tip of its document type is still an open proposal. Returns {steps: [(label, state)], headline,
     tip, final}; a state is done, now, todo, skip or stop; final: nothing more will happen by itself (stop asking)."""
     def bar(n_done, now=None, rest="todo"):
         states = ["done"] * n_done + ([now] if now else [])
@@ -757,8 +757,8 @@ def lesson_progress(example, page=None, ahead=0, pending=False):
         if lesson.get("error"):
             head = "Waiting: the teacher couldn't reach its AI. It tries again by itself every 30 minutes."
         elif pending:
-            head = ("Waiting: a tip for this kind of document is waiting for a person's approval on the Knowledge "
-                    "screen. One change at a time, so this lesson waits for that decision.")
+            head = ("Waiting: an earlier tip for this kind of document is still open on the Knowledge screen. One "
+                    "change at a time, so this lesson waits until it is used or rejected.")
         else:
             head = f"Waiting for the teacher ({ahead} lesson{'s' if ahead != 1 else ''} ahead)." if ahead else \
                 "Waiting for the teacher to start."
@@ -777,10 +777,9 @@ def lesson_progress(example, page=None, ahead=0, pending=False):
             return {"steps": bar(4, "now"), "tip": tip, "final": False,
                     "headline": f"Testing the tip on other pages ({done} of {of})…" if of else
                                 "Testing the tip on other pages…"}
-        if gate.get("passed"):
-            return {"steps": bar(5, "now"), "tip": tip, "final": True,
-                    "headline": "The tip passed its test. It waits for a person's approval on the Knowledge screen "
-                                "(a fix typed rather than clicked on the paper is approved by a person)."}
+        if gate.get("passed"):                       # switched on at once (the user, 2026-10-08): a moment
+            return {"steps": bar(5, "now"), "tip": tip, "final": False,
+                    "headline": "The tip passed its test. Switching it on…"}
         if gate:
             return {"steps": bar(4, "now"), "tip": tip, "final": False,
                     "headline": "The first tip didn't pass its test. The teacher is trying again…"}
