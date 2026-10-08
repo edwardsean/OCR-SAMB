@@ -36,7 +36,7 @@ import re
 
 from psycopg.types.json import Json
 
-from common import db, satellite, verify
+from common import db, satellite, trace, verify
 from common.fields import TYPE_MAP
 from grouper import matching
 
@@ -797,9 +797,12 @@ def ask_again(c, bid, page, fields):
 def run(bid):
     """Check every complete bundle of the batch and store checks, status, reasons and fingerprint."""
     with db.connect() as c:
-        done = {}
+        done, moved = {}, []
         for x in inputs(c, bid):
             r = evaluate(x)
+            if r["status"] != x["status"]:                  # the trace: an order's status changing, and why
+                moved.append({"sor": x["sor"], "batch": bid, "was": x["status"], "now": r["status"],
+                              "why": [str(w)[:200] for w in (r["reasons"] or [])[:5]] or None})
             c.execute("""UPDATE staging.bundle SET checks=%s, status=%s, fingerprint=%s, checked_at=now()
                          WHERE id=%s""", (Json({"checks": r["checks"], "reasons": r["reasons"], "pairs": r["pairs"]}),
                                           r["status"], r["fingerprint"], x["id"]))
@@ -807,6 +810,7 @@ def run(bid):
                 w = (x.get("where") or {}).get(page) or {"batch": bid, "page": page}
                 ask_again(c, w["batch"], w["page"], fields)
             done[x["sor"]] = r["status"]
+    trace.events("order.status", moved)
     return done
 
 

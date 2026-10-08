@@ -234,6 +234,9 @@ def on_message(ch, method, props, body):
             # never downgrade a page another ticket already read successfully
             c.execute("UPDATE staging.page SET error=%s, status=%s WHERE batch_id=%s AND page_no=%s AND status <> 'read'",
                       (err, "dead_letter" if method.redelivered else "queued", ticket["batch_id"], ticket["page_no"]))
+        from common import trace
+        trace.event("page.crashed", "fail", batch=ticket["batch_id"], page=ticket["page_no"], error=err,
+                    then="given up (dead letter)" if method.redelivered else "tried once more")
         if method.redelivered:
             ch.basic_reject(method.delivery_tag, requeue=False)   # second failure → q.pages.dlq
         else:

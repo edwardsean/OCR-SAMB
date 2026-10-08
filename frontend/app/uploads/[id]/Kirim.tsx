@@ -1,6 +1,5 @@
 // Step 5, Kirim ke Satellite: the batch's finished orders (every check passed, or approved) with the one button that
 // sends them, then what this batch has already sent, the ones just sent on top.
-import Link from "next/link";
 import { need } from "@/lib/api";
 import type { OrderList, PubRow, UploadDetail } from "@/lib/types";
 import Row from "@/components/OrderRow";
@@ -18,8 +17,9 @@ export default async function Kirim({ d, just }: { d: UploadDetail; just: string
   return (
     <section className="ws-panel">
       <h2>Kirim ke Satellite</h2>
-      <p className="lede">Order yang semua ceknya sesuai, atau sudah Anda setujui, dikirim ke Satellite: data tiap dokumen dan
-        satu PDF per SOR.</p>
+      <p className={`ws-now ${ready.length ? "need" : "wait"}`}>{ready.length
+        ? `${ready.length} order siap dikirim: data tiap dokumen dan satu PDF per SOR.`
+        : "Belum ada order yang siap dikirim. Order yang sesuai atau Anda setujui di langkah 4 muncul di sini."}</p>
       {just && <div className="pl-new">{fresh.length ? `${fresh.length} order baru saja dikirim ke Satellite.` : "Tidak ada order yang terkirim: cek ulangnya belum lolos."}</div>}
       {ready.length ? (
         <>
@@ -28,10 +28,7 @@ export default async function Kirim({ d, just }: { d: UploadDetail; just: string
             <tbody>{ready.map((r) => <Row key={r.sor_no} r={r} batch={o.batch ?? ""} back={id} here={id} />)}</tbody>
           </table>
         </>
-      ) : (
-        <p className="kosong">Belum ada order yang siap dikirim. Order yang Anda setujui di{" "}
-          <Link href={`/uploads/${id}?step=periksa`}>langkah 4</Link> muncul di sini.</p>
-      )}
+      ) : null}
 
       <h3 className="ws-grp">Sudah terkirim <span>({p.rows.length})</span></h3>
       {p.rows.length ? (

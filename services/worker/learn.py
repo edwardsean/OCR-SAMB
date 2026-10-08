@@ -28,10 +28,11 @@
                          | reject <type> <version> | apply <type> | lint [<type>] | backfill
 """
 import sys
+import time
 
 from psycopg.types.json import Json
 
-from common import config, context, customer, db, knowledge, satellite, settings, transcript, wiki
+from common import config, context, customer, db, knowledge, satellite, settings, trace, transcript, wiki
 from common.fields import DOCS, TYPE_MAP
 from common.verify import flat
 from worker import classify, vf
@@ -300,6 +301,15 @@ def _cells(doc_type, fa_a, fa, truth, cols):
 
 
 def gate(doc_type, version, show=print):
+    """The replay of one proposal (_gate), in the trace as tip.test."""
+    with trace.span("tip.test", doc_type=doc_type, version=version) as sp:
+        g = _gate(doc_type, version, show)
+        sp.note(passed=bool(g.get("passed")), why=g.get("why"), pages_mapped=g.get("mapped"),
+                right=f"{g.get('right_before')} → {g.get('right_after')}" if "right_after" in g else None)
+        return g
+
+
+def _gate(doc_type, version, show=print):
     """Replay the proposal on the stored pages of its type whose knowledge it changes; store the result. First,
     without any call: which of them have a value to score it on (a truth, not learned from that page). None: it
     can't be proven yet, and nothing is mapped. A marked proposal that passes becomes active (and is applied).
@@ -445,6 +455,7 @@ def activate(doc_type, version, by, show=print, lint=False):
                      WHERE doc_type=%s AND version=%s""", (by, doc_type, version))
         c.execute("""UPDATE staging.extract_example SET lesson_status='learned', lesson_at=now()
                       WHERE lesson_doc=%s AND lesson_version=%s AND lesson_status='proposed'""", (doc_type, version))
+    trace.event("tip.active", doc_type=doc_type, version=version, was=r["parent"], by=by, source=r["source"])
     return apply(doc_type, show=show)
 
 
@@ -476,6 +487,22 @@ def _store(bid, n, p, fa, m, show, why):
 
 
 def apply(doc_type, show=print, bid=None):
+    """The active page on the stored pages (_apply), in the trace as tip.apply. After a grouping (one batch) only a
+    run that changed a page is written: it runs for every type on every grouping, mostly with nothing to do."""
+    if bid is not None:
+        t0 = time.monotonic()
+        out = _apply(doc_type, show, bid)
+        if out:
+            trace.event("tip.apply", batch=bid, ms=int((time.monotonic() - t0) * 1000), doc_type=doc_type,
+                        pages_changed=len(out))
+        return out
+    with trace.span("tip.apply", doc_type=doc_type) as sp:
+        out = _apply(doc_type, show, bid)
+        sp.note(pages_changed=len(out) if hasattr(out, "__len__") else None)
+        return out
+
+
+def _apply(doc_type, show=print, bid=None):
     """The active page again on the type's stored pages (kept answers reused): a page whose values changed is
     stored, re-checked, and its batch regrouped. A page whose new value needs the AI OCR to look again waits for it
     (`again`, the sweep). Only pages that are 'read' (a page with a ticket is done by its worker), and never a page
@@ -639,6 +666,17 @@ def _lesson(eid, status, extra=None, version=None, doc=None):
 
 
 def teach_one(e, ask=None, show=print):
+    """One lesson (_teach_one), in the trace as lesson.tip: how it ended."""
+    with trace.span("lesson.tip", batch=e["batch_id"], page=e["page_no"], doc_type=e["doc_type"],
+                    field=e["field"]) as sp:
+        status = _teach_one(e, ask, show)
+        sp.note(result=status)
+        if status in ("retry", "wait"):
+            sp.set("wait")
+        return status
+
+
+def _teach_one(e, ask=None, show=print):
     """One lesson: a practice-pile correction. Closed without asking when the page's reading already has the value
     (a knowledge made active since got it right); else the teacher writes one claim, code checks it, it becomes a
     proposal and is replayed; one that passes is active at once ('learned'). Not kept: a second try, told why. No

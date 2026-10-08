@@ -44,7 +44,9 @@ def run_probes(names=PROBES):
 
 def serve(service_name, port=None, role=""):
     """Background /health endpoint the API's Status page polls: this service is up and can reach its dependencies.
-    port: HEALTH_PORT (8080)."""
+    port: HEALTH_PORT (8080). Also names the process for the trace (common/trace.py)."""
+    from common import trace
+    trace.named(service_name)
     port = int(port or config.HEALTH_PORT)
     class H(BaseHTTPRequestHandler):
         def do_GET(self):

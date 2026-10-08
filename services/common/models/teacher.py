@@ -19,7 +19,7 @@ import time
 
 import httpx
 
-from common import config, settings
+from common import config, settings, trace
 
 MODEL = config.TEACHER_MODEL
 
@@ -50,9 +50,11 @@ def _post(messages, model=None, role="TEACHER_MODEL"):
         raise RuntimeError(f"no API key for {role} ({model or MODEL}): set it on Teknis → Model & kunci API")
     headers = {"Authorization": f"Bearer {key}"} if key else {}
     t0 = time.time()
+    body = {"model": name, "messages": messages, "temperature": 0.2}
+    trace.ai_request(body)                           # the exact payload, for Jejak (common/trace.py)
     for attempt in range(5):
-        r = httpx.post(url, headers=headers,
-                       json={"model": name, "messages": messages, "temperature": 0.2}, timeout=240)
+        r = httpx.post(url, headers=headers, json=body, timeout=240)
+        trace.ai_http(r)
         if r.status_code == 429 or r.status_code >= 500:
             time.sleep(min(60, 5 * 2 ** attempt)); continue
         r.raise_for_status()

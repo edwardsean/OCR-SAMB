@@ -191,6 +191,22 @@ The batch row above as `upload`, plus `files` (its scans), `steps`, `next`, `blo
 `finished`, `orders` (`{sor: need | depends | outside | waiting | ready | published}`), `failed` and `unsure` (the
 pages steps 1 and 2 list: `[{"batch_id", "page_no", "file_name", "thumb", "error"}]`). `404` when there is no such batch.
 
+A step is never `done` while an earlier one isn't: it is `none` with `after` (the step it waits for). Step 1 (`baca`)
+counts a page in `done` only when it is read and nothing more is to be read on it, the same as `activity` below.
+
+`activity` is what each page is doing now (services/api/activity.py), one state per page:
+```json
+{"pages": [{"batch_id": "b-…", "page_no": 1, "file_name": "…", "doc_type": "PO", "unsure": false, "thumb": "…",
+            "state": "reading", "text": "Mencocokkan dengan teks yang tercetak", "since": "…", "again": true}],
+ "splitting": [{"batch_id", "file_name", "status", "page_total"}],
+ "eta_s": 180, "page_s": 90, "workers": 3}
+```
+`state`: `queued` (`ahead`: pages before it in the queue, over every batch) · `reading` (`text`: its stage) · `waiting`
+(a limit, or a model not set: goes on by itself) · `waiting_ai` (the AI looks again at a few values) · `failed` (with
+`kind`, `cause`, `can_retry`, `published`, `error`, as `failed` above) · `idle` (never sent to be read) · `done` (`ms`:
+how long its last reading took). `again`: read before, being read again. `eta_s`: seconds until every page is read,
+roughly (null when nothing is moving, or a limit holds every page).
+
 ## Scans and pages
 
 ### `GET /api/v1/scans?limit=20`
@@ -535,6 +551,7 @@ an upload becomes orders.
 | `notify` | `NOTIFY_EVERY_MINUTES` (5) | orders that newly need a person become one notice (`needs_you`, `fresh`) |
 | `sweep` | `SWEEP_EVERY_MINUTES` (180) | pages still waiting for the AI go back on `q.pages` |
 | `lint` | `LINT_EVERY_MINUTES` (360) | learned knowledge a person's later correction contradicts is taken out |
+| `trace` | every hour | the trace older than `TRACE_KEEP_DAYS` (90) is deleted, the AI calls' payloads older than `PAYLOAD_KEEP_DAYS` (14); a span still running after two hours is closed as cut off |
 
 Each job runs once per interval however many schedulers run (it takes its turn in `staging.job_run`); the Status
 page shows when each last ran and what it did. Any step is safe to repeat, so a message delivered twice or a worker

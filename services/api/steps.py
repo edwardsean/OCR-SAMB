@@ -13,8 +13,8 @@ batch shows its work in that order, with the system's own reading first:
   kirim     Kirim ke Satellite  finished orders to send, and what was sent
 
 A step's state: `need` (a person can act now), `sys` (the system is working: wait), `done` (nothing left), `none`
-(nothing has reached it), `later` (only what never blocks sending: a Faktur Pajak waiting for its number, an order
-waiting for a document from another batch).
+(nothing has reached it; with `after`, the earlier step it waits for), `later` (only what never blocks sending: an
+order waiting for a document from another batch). A step is never done while an earlier one isn't (2026-10-08).
 
 Ordered, not locked: every step can be opened. But an order whose only open problem is a missing document, while an
 earlier step of this batch is still open, `depends` on that step (its document may be there) and isn't counted as
@@ -63,29 +63,34 @@ def order_state(status, hold, checks, earlier_open):
 
 
 def build(scan, page, held, orders):
-    """Pure: the five steps from one batch's counts. scan: {files, pages, splitting, failed}; page: {read, failed,
-    call_failed, busy, waiting_ai, unsure, answered, loose_unread, loose_unsure, loose_other}; held: {block, wait, later};
-    orders: {need, depends, outside, waiting, ready, published}. Returns {steps, next, finished, blockers: the open
-    steps among 1–3}."""
+    """Pure: the five steps from one batch's counts. scan: {files, pages, splitting, failed, failed_pages}; page: {done,
+    failed, call_failed, busy, again, waiting_ai, unscheduled, unsure, classified, answered, loose_unread,
+    loose_unsure, loose_other}; held: {block, wait, later}; orders: {need, depends, outside, waiting, ready,
+    published}. Returns {steps, next, finished, blockers: the open steps among 1–3}.
+
+    A page counts in step 1 once it is read and nothing more is to be read on it (activity.state 'done'), the same as
+    the page list under it, so the two never disagree (the mentor, 2026-10-08: "1 dari 4 halaman dibaca" while two
+    files said "Selesai dibaca": a page an order sent back to the AI). A step is done only when every step before it
+    is done (or 'later'): otherwise it says which one it waits for (`after`), and what it has so far."""
     total = scan.get("pages") or 0
     failed = page.get("failed", 0) + page.get("call_failed", 0) + scan.get("failed", 0)   # stuck (api/stuck.py)
     busy = page.get("busy", 0) + scan.get("splitting", 0)
-    read = page.get("read", 0)
-    unscheduled = max(0, total - read - page.get("failed", 0) - page.get("busy", 0)
-                      - scan.get("failed_pages", 0))       # a file that couldn't be split has no pages to schedule
-    baca = {"key": "baca", "pages": total, "read": read, "failed": failed, "busy": busy,
-            "waiting_ai": page.get("waiting_ai", 0), "unscheduled": 0 if busy else unscheduled}
+    done = page.get("done", 0)
+    baca = {"key": "baca", "pages": total, "done": done, "read": done, "failed": failed, "busy": busy,
+            "again": page.get("again", 0), "waiting_ai": page.get("waiting_ai", 0),
+            "unscheduled": page.get("unscheduled", 0), "splitting": scan.get("splitting", 0)}
     baca["state"] = ("need" if failed else "sys" if busy or baca["waiting_ai"] or baca["unscheduled"]
                      else "done" if total else "none")
 
-    jenis = {"key": "jenis", "unsure": page.get("unsure", 0), "answered": page.get("answered", 0)}
-    jenis["state"] = "need" if jenis["unsure"] else "done" if read else "none"
+    unsure = page.get("unsure", 0)
+    pending = max(0, total - page.get("classified", 0) - unsure)      # pages whose type isn't known yet
+    jenis = {"key": "jenis", "unsure": unsure, "answered": page.get("answered", 0), "pending": pending}
+    jenis["state"] = "need" if unsure else "done" if total and not pending else "none"
 
     coc = {"key": "cocokkan", "block": held.get("block", 0), "wait": held.get("wait", 0),
            "later": held.get("later", 0), "loose_unread": page.get("loose_unread", 0),
            "loose_unsure": page.get("loose_unsure", 0), "loose_other": page.get("loose_other", 0)}
-    coc["state"] = ("need" if coc["block"] else "sys" if coc["wait"] else "later" if coc["later"]
-                    else "done" if read else "none")
+    coc["state"] = "need" if coc["block"] else "sys" if coc["wait"] else "done" if total else "none"
 
     o = {k: orders.get(k, 0) for k in ("need", "depends", "outside", "waiting", "ready", "published")}
     per = {"key": "periksa", **o, "orders": sum(o.values())}
@@ -96,6 +101,12 @@ def build(scan, page, held, orders):
     kirim["state"] = "need" if o["ready"] else "done" if o["published"] else "none"
 
     steps = [baca, jenis, coc, per, kirim]
+    open_ = None
+    for s in steps:                     # never ✓ while an earlier step isn't finished: say which one it waits for
+        if open_ and s["state"] in ("done", "none"):
+            s["state"], s["after"] = "none", open_
+        if s["state"] not in ("done", "later") and not open_:
+            open_ = s["key"]
     nxt = next((s["key"] for s in steps if s["state"] == "need"), None)
     return {"steps": steps, "next": nxt, "blockers": earlier_open(baca, jenis, coc),
             "finished": bool(total) and all(s["state"] in ("done", "later") for s in steps)}
@@ -124,13 +135,20 @@ def of_uploads(c, ids=None):
              FROM staging.scan_batch WHERE upload_id = ANY(%s) GROUP BY 1""", (ids,))}
     page = {r["upload_id"]: dict(r) for r in c.execute(
         f"""SELECT s.upload_id,
-                  count(*) FILTER (WHERE p.status = 'read') AS read,
+                  count(*) FILTER (WHERE p.status = 'read' AND p.outcome IS DISTINCT FROM 'waiting_ai'
+                                     AND NOT {stuck.CALL_FAILED}) AS done,
                   count(*) FILTER (WHERE p.status IN ('dead_letter', 'failed')) AS failed,
                   count(*) FILTER (WHERE {stuck.CALL_FAILED}) AS call_failed,
-                  count(*) FILTER (WHERE p.status = 'queued') AS busy,
+                  count(*) FILTER (WHERE p.status = 'queued'
+                                     OR (p.status = 'rendered' AND s.status IN ('received', 'splitting'))) AS busy,
+                  count(*) FILTER (WHERE p.status = 'queued' AND p.fields_all IS NOT NULL) AS again,
+                  count(*) FILTER (WHERE p.status = 'rendered'          -- a split's pages are sent within ms
+                                     AND s.status NOT IN ('received', 'splitting')) AS unscheduled,
                   count(*) FILTER (WHERE p.status = 'read' AND p.outcome = 'waiting_ai'
                                      AND NOT {stuck.CALL_FAILED}) AS waiting_ai,
                   count(*) FILTER (WHERE p.type_status = 'unsure' AND l.page_no IS NULL) AS unsure,
+                  count(*) FILTER (WHERE p.type_status IN ('decided', 'labelled')
+                                     OR (p.type_status = 'unsure' AND l.page_no IS NOT NULL)) AS classified,
                   count(l.page_no) AS answered,
                   count(*) FILTER (WHERE loose AND p.status <> 'read') AS loose_unread,
                   count(*) FILTER (WHERE loose AND p.status = 'read' AND p.type_status = 'unsure'

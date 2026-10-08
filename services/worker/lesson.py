@@ -30,7 +30,7 @@ from concurrent.futures import ThreadPoolExecutor
 
 from psycopg.types.json import Json
 
-from common import config, context, db, settings, verify
+from common import config, context, db, settings, trace, verify
 from common.models import teacher
 from worker import classify, vf
 from worker import main as v1
@@ -249,6 +249,21 @@ def approved_after(c, version, when):
 
 
 def run_one(lesson):
+    """One lesson, in the trace (common/trace.py) as lesson.type: how it ended and why."""
+    with trace.span("lesson.type", batch=lesson["batch_id"], page=lesson["page_no"], label=lesson["label"]) as sp:
+        status = _run_one(lesson)
+        with db.connect() as c:
+            r = c.execute("SELECT proposal, error, answer->>'why_missed' AS why FROM staging.lesson WHERE id=%s",
+                          (lesson["id"],)).fetchone() or {}
+        sp.note(result=status, context=r.get("proposal"), why_missed=r.get("why"))
+        if status == "retry":
+            sp.set("wait", r.get("error"))
+        elif status == "failed" and r.get("error"):
+            sp.note(not_kept=r["error"][:300])
+        return status
+
+
+def _run_one(lesson):
     bid, n = lesson["batch_id"], lesson["page_no"]
     with db.connect() as c:
         page = c.execute("""SELECT p.*, l.pile, l.note, l.label::text AS label FROM staging.page p
@@ -351,6 +366,8 @@ def adopt(c, new, parent, created_by, note, gate):
     version = context.propose(c, new, parent, created_by, note)
     c.execute("UPDATE staging.context_version SET gate=%s WHERE version=%s", (Json(gate), version))
     context.activate(c, version, context.AUTO)
+    trace.event("context.active", version=version, was=parent, change=note,
+                right=f"{gate.get('right_before')} → {gate.get('right_after')}" if "right_after" in gate else None)
     return version
 
 

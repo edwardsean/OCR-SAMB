@@ -68,7 +68,10 @@ export default async function Batches({ searchParams }: { searchParams: SearchPa
                     <td>{nx ? <Link className="ws-next" href={`${href}?step=${nx.key}`}><b>{NAME[nx.key]}</b>
                         <span>{words(nx)[0]}</span></Link>
                       : u.finished ? <span className="cap hijau">Selesai</span>
-                      : <span className="muted small">tidak ada; sistem masih bekerja</span>}</td>
+                      : (() => {                     // nothing for you: say what it waits for, never a guess
+                        const open = u.steps.find((x) => x.state !== "done");
+                        return <span className="muted small">Tidak ada untuk Anda{open ? ` · ${NAME[open.key]}: ${words(open)[0].toLowerCase()}` : ""}</span>;
+                      })()}</td>
                   </tr>
                 );
               })}

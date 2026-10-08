@@ -1,7 +1,7 @@
 "use client";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { useEffect, useState, type ReactNode } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 import { api, why } from "@/lib/client";
 import type { BundleDoc } from "@/lib/types";
 import { fieldName, useWords } from "@/components/Words";
@@ -14,6 +14,11 @@ export function HeldCard({ h, batch }: { h: BundleDoc; batch: string }) {
   const [by, setBy] = useReviewer();
   const [value, setValue] = useState(h.confirm?.value ?? "");
   const [crop, setCrop] = useState(true);
+  const img = useRef<HTMLImageElement>(null);
+  useEffect(() => {                      // a crop that failed before the page came alive never fired onError
+    const i = img.current;
+    if (i && i.complete && i.naturalWidth === 0) setCrop(false);
+  }, []);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   async function send(e: React.FormEvent) {
@@ -38,8 +43,8 @@ export function HeldCard({ h, batch }: { h: BundleDoc; batch: string }) {
           <>
             {crop ? (
               // eslint-disable-next-line @next/next/no-img-element
-              <img className="bx-crop" src={`/crop/${batch}/${h.page_from}/${h.confirm.field}`} alt="bagian halaman tempat nomornya tercetak" onError={() => setCrop(false)} />
-            ) : <p className="small muted">Potongan halamannya tidak ada: buka halamannya.</p>}
+              <img ref={img} className="bx-crop" src={`/crop/${batch}/${h.page_from}/${h.confirm.field}`} alt="bagian halaman tempat nomornya tercetak" onError={() => setCrop(false)} />
+            ) : <p className="small muted">AI tidak menemukan nomornya di halaman ini. <Link href={`/batches/${batch}/pages/${h.page_from}`}>Buka halamannya</Link> untuk mencarinya.</p>}
             <form className="bx-form" onSubmit={send}>
               <label>{fieldName(w, h.confirm.field, h.type)}, seperti tercetak{h.confirm.read && <> <span className="muted">(terbaca {h.confirm.read})</span></>}
                 <input className="mono" required value={value} onChange={(e) => setValue(e.target.value)} /></label>

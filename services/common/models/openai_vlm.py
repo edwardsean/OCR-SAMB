@@ -18,7 +18,7 @@ import time
 import httpx
 from PIL import Image
 
-from common import config, settings
+from common import config, settings, trace
 from common.models import vlm
 
 MAX_IMAGES = 8                  # images one request may carry (the page and its crops)
@@ -71,8 +71,10 @@ def _post(spec, content, max_tokens=4096):
     body = {"model": model, "temperature": 0, "max_tokens": max_tokens, "response_format": {"type": "json_object"},
             "messages": [{"role": "user", "content": content}]}
     t0 = time.time()
+    trace.ai_request(body)                           # the exact payload, for Jejak (common/trace.py)
     for attempt in range(6):
         r = httpx.post(f"{base}/chat/completions", headers=headers, json=body, timeout=240)
+        trace.ai_http(r)
         if r.status_code == 429:
             text = r.text.lower()
             if "per day" in text or "(rpd)" in text or "(tpd)" in text:

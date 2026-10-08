@@ -12,7 +12,8 @@ const ALL: [string, string][] = [                   // this app's screens over e
   ["/review", "Periksa order"], ["/label", "Jenis halaman"], ["/bundles", "Berkas per SOR"], ["/published", "Data terkirim"],
 ];
 const TECH: [string, string][] = [
-  ["/status", "Status sistem"], ["/settings", "Model & kunci API"], ["/product-codes", "Kode produk pelanggan"],
+  ["/status", "Status sistem"], ["/teknis/jejak", "Jejak (trace)"], ["/teknis/metrik", "Metrik"],
+  ["/settings", "Model & kunci API"], ["/product-codes", "Kode produk pelanggan"],
   ["/context", "Konteks klasifikasi"],
   ["/knowledge", "Pengetahuan AI"], ["/fields", "Daftar field"], ["/labels", "Semua label"],
 ];

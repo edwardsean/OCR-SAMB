@@ -1,0 +1,104 @@
+{% extends "base.html" %}
+{% import "_trace_log.html" as tl %}
+{% block title %}Jejak {{ u.code }}{% endblock %}
+{% block main %}
+  <section class="head">
+    <p class="crumbs"><a href="/teknis/jejak">Jejak</a> / {{ u.code }}</p>
+    <h1 class="mono">{{ u.code }}</h1>
+    <p class="lede">What happened to this batch, step by step, in the order the work goes. Uploaded by {{ u.uploaded_by }} ·
+      <a href="/uploads/{{ u.id }}">the batch's page</a> · <a href="/teknis/jejak?q={{ u.code }}&hours=2160">every row, newest first</a>.
+      Hover a title for what that step does; open a line's grey name for its raw data.</p>
+  </section>
+  {% if missing %}<div class="alert bad">{{ missing }}</div>{% endif %}
+  {% if t %}{% set b = t.batch %}
+  <dl class="jj-sum">
+    <div><dt>Started</dt><dd>{{ b.start|jam(true) if b.start else '—' }}</dd></div>
+    <div><dt>Every page read once</dt><dd>{{ b.read_at|jam(true) if b.read_at else 'not yet' }}</dd></div>
+    <div><dt>Took</dt><dd>{{ b.wall_ms|dur }}</dd></div>
+    <div><dt>A page (median · 90%)</dt><dd>{{ b.p50_ms|dur }} · {{ b.p90_ms|dur }}</dd></div>
+    <div><dt>Waited in the queue (median)</dt><dd>{{ b.queue_p50_ms|dur }}</dd></div>
+    <div><dt>Tries</dt><dd>{{ b.attempts }} for {{ b.pages }} page{{ 's' if b.pages != 1 }}</dd></div>
+    <div><dt>AI calls</dt><dd>{{ b.ai_n }} · {{ '{:,}'.format(b.tokens_in) }} tokens in, {{ '{:,}'.format(b.tokens_out) }} out</dd></div>
+    <div><dt>AI cost</dt><dd>${{ '%.4f'|format(b.usd) }}</dd></div>
+    <div><dt>Failed · waited for a limit</dt><dd class="{{ 'jj-err' if b.fails }}">{{ b.fails }} · {{ b.waits }}</dd></div>
+  </dl>
+
+  {% set S = t.story %}
+  {% set OUT = {'clear': 'every value backed', 'needs_person': 'needs a person', 'waiting_ai': 'waits for the AI', 'held_unsure': 'type unsure'} %}
+  {% for key, name, about in steps if key != 'jobs' %}
+  <section class="jj-step">
+    <h2>{{ name }}</h2>
+    <p class="small muted jj-about">{{ about }}</p>
+    {% if key == 'read' %}
+      {% for p in S.read %}{% set m = p.summary %}
+      <details class="tl-page"{{ ' open' if S.read|length <= 3 or m.fails }}>
+        <summary><b>{{ p.file_name }} · page {{ p.page_no }}</b>
+          <span class="tl-d"> · {{ OUT.get(m.outcome, m.outcome) if m.outcome else 'not read yet' }}
+          · {{ m.attempts or 0 }} tr{{ 'y' if m.attempts == 1 else 'ies' }}{% if m.proc_ms %} · {{ m.proc_ms|dur }} of work{% endif %}
+          {%- if m.queue_ms %} · {{ m.queue_ms|dur }} in the queue{% endif %} · {{ m.ai_n or 0 }} AI call{{ 's' if m.ai_n != 1 }}
+          {%- if m.usd %} · ${{ '%.4f'|format(m.usd) }}{% endif %}</span>
+          {% if m.fails %}<span class="jj-st fail"> failed</span>{% endif %}
+          · <a href="/teknis/jejak/halaman/{{ p.batch_id }}/{{ p.page_no }}">its own page</a></summary>
+        {{ tl.page_log(p, words) }}
+      </details>
+      {% else %}<p class="muted small">No page traced yet.</p>{% endfor %}
+    {% elif S[key] %}
+      <ol class="tlog">{% for r in S[key] %}{{ tl.line(r, words, 'tl-ai' if r.kind.startswith('ai.') else '') }}{% endfor %}</ol>
+    {% else %}
+      <p class="muted small">{{ 'Not traced: this happened before the trace existed.' if t.pre_trace and key in ('upload', 'split') else 'Nothing yet.' }}</p>
+    {% endif %}
+  </section>
+  {% endfor %}
+
+  {% set L = t.lanes %}
+  {% if L and L.pages %}
+  <h2>Timeline</h2>
+  <p class="small muted">From {{ L.t0|jam(true) }} to {{ L.t1|jam(true) }} WIB ({{ (L.span_s * 1000)|dur }}). One row per page; hover a
+    piece for its stage and time. The marks under it: grouping, orders' status, people, the teachers.</p>
+  <div class="wf-legend small">
+    <span><i class="wf-queue"></i>waiting in the queue</span>
+    {% for s in stages %}<span><i class="wf-{{ s }}"></i>{{ ('page.' ~ s)|title }}</span>{% endfor %}
+    <span><i class="wf-fail"></i>failed</span>
+  </div>
+  <div class="wf">
+    {% for row in L.pages %}
+    <div class="wf-row">
+      <a class="wf-label" href="/teknis/jejak/halaman/{{ row.batch_id }}/{{ row.page_no }}" title="{{ row.label }}">{{ row.label }}</a>
+      <div class="wf-track">{% for g in row.segments %}<i class="wf-{{ g.kind }}{{ ' wf-fail' if g.status == 'fail' }}{{ ' wf-run' if g.status == 'running' }}"
+          style="left:{{ g.left }}%;width:{{ g.width }}%" title="{{ 'Waiting in the queue' if g.kind == 'queue' else ('page.' ~ g.kind)|title }} · {{ g.at|jam }} · {{ g.ms|dur }}{{ ' · ' ~ words[g.status] if g.status not in ('ok', 'info') }}"></i>{% endfor %}</div>
+    </div>
+    {% endfor %}
+    <div class="wf-row wf-marks">
+      <span class="wf-label">what followed</span>
+      <div class="wf-track">{% for e in L.marks %}<i class="wf-mark jj-{{ e.status }}" style="left:{{ e.left }}%"
+          title="{{ e.at|jam }} · {{ e|title }}{{ ' · ' ~ e.sor_no if e.sor_no }}{{ ' · ' ~ e.who if e.who }} · {{ e|describe }}"></i>{% endfor %}</div>
+    </div>
+  </div>
+  {% endif %}
+
+  <details class="jj-numbers"><summary class="ws-grp">Numbers per file and page</summary>
+  <table class="reg">
+    <thead><tr><th>File</th><th class="num">Pages read</th><th class="num">Split</th><th>Received</th><th>Every page read once</th><th class="num">Took</th></tr></thead>
+    <tbody>{% for f in t.files %}
+      <tr><td><a href="/batches/{{ f.id }}">{{ f.file_name }}</a>{% if f.error %}<div class="jj-err small">{{ f.error }}</div>{% endif %}</td>
+        <td class="num">{{ f.pages_done }} / {{ f.page_total }}</td><td class="num">{{ f.split_ms|dur }}</td>
+        <td class="mono">{{ f.received_at|jam }}</td><td class="mono">{{ f.done_at|jam }}</td><td class="num">{{ f.wall_ms|dur }}</td></tr>
+    {% endfor %}</tbody>
+  </table>
+  <table class="reg jj-pages">
+    <thead><tr><th>Page</th><th class="num">Tries</th><th class="num">Queue</th><th class="num">Work</th>
+      {% for s in stages %}<th class="num small" title="{{ ('page.' ~ s)|title }}">{{ s.replace('_', ' ') }}</th>{% endfor %}
+      <th class="num">AI calls</th><th class="num">Tokens in / out</th><th class="num">USD</th></tr></thead>
+    <tbody>{% for p in t.pages %}
+      <tr class="jj-{{ p.status }}">
+        <td><a href="/teknis/jejak/halaman/{{ p.batch_id }}/{{ p.page_no }}">{{ p.file_name }} · page {{ p.page_no }}</a></td>
+        <td class="num">{{ p.attempts }}</td><td class="num">{{ p.queue_ms|dur }}</td><td class="num">{{ p.proc_ms|dur }}</td>
+        {% for s in stages %}<td class="num small">{{ p.stages[s]|dur if s in p.stages else '' }}</td>{% endfor %}
+        <td class="num">{{ p.ai_n }}</td><td class="num small">{{ '{:,}'.format(p.tokens_in) }} / {{ '{:,}'.format(p.tokens_out) }}</td>
+        <td class="num small">{{ '%.4f'|format(p.usd) if p.usd_known else '—' }}</td>
+      </tr>
+    {% endfor %}</tbody>
+  </table>
+  </details>
+  {% endif %}
+{% endblock %}

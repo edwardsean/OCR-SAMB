@@ -67,12 +67,15 @@ export type StepKey = "baca" | "jenis" | "cocokkan" | "periksa" | "kirim";
 /** need: a person can act now · sys: the system works, wait · done · none: nothing reached it yet · later: only
  * what never blocks sending (a Faktur Pajak, an order waiting for another batch's document) */
 export type StepState = "need" | "sys" | "done" | "none" | "later";
+/** after: the earlier step it waits for, when nothing has reached it or it can't be finished before that one */
+type StepBase = { state: StepState; after?: StepKey };
 export type Step =
-  | { key: "baca"; state: StepState; pages: number; read: number; failed: number; busy: number; waiting_ai: number; unscheduled: number }
-  | { key: "jenis"; state: StepState; unsure: number; answered: number }
-  | { key: "cocokkan"; state: StepState; block: number; wait: number; later: number; loose_unread: number; loose_unsure: number; loose_other: number }
-  | { key: "periksa"; state: StepState; need: number; depends: number; outside: number; waiting: number; ready: number; published: number; orders: number }
-  | { key: "kirim"; state: StepState; ready: number; published: number };
+  | StepBase & { key: "baca"; pages: number; done: number; read: number; failed: number; busy: number; again: number;
+                 waiting_ai: number; unscheduled: number; splitting: number }
+  | StepBase & { key: "jenis"; unsure: number; answered: number; pending: number }
+  | StepBase & { key: "cocokkan"; block: number; wait: number; later: number; loose_unread: number; loose_unsure: number; loose_other: number }
+  | StepBase & { key: "periksa"; need: number; depends: number; outside: number; waiting: number; ready: number; published: number; orders: number }
+  | StepBase & { key: "kirim"; ready: number; published: number };
 /** an order's place in its batch's step 4 */
 export type OrderStep = "need" | "depends" | "outside" | "waiting" | "ready" | "published";
 export type PageRef = { batch_id: string; page_no: number; file_name: string; thumb: string | null; error: string | null };
@@ -88,6 +91,18 @@ export type UploadDetail = {
   blockers: StepKey[];
   orders: Record<string, OrderStep>; failed: StuckPage[]; unsure: PageRef[];
   failed_files: FailedFile[]; not_now: string | null;
+  activity: Activity;
+};
+/** What each page of a batch is doing now (services/api/activity.py): one state per page. */
+export type PageState = "queued" | "reading" | "waiting" | "waiting_ai" | "failed" | "idle" | "done";
+export type PageNow = {
+  batch_id: string; page_no: number; file_name: string; doc_type: string | null; unsure: boolean; thumb: string | null;
+  state: PageState; text?: string; since?: string; ahead?: number | null; again?: boolean; ms?: number | null;
+  kind?: StuckPage["kind"]; cause?: StuckPage["cause"]; can_retry?: boolean; published?: boolean; error?: string | null;
+};
+export type Activity = {
+  pages: PageNow[]; splitting: { batch_id: string; file_name: string; status: string; page_total: number }[];
+  eta_s: number | null; page_s: number; workers: number;
 };
 export type SearchResult = {
   q: string; uploads: Upload[];

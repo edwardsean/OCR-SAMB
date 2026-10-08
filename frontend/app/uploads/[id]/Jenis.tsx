@@ -10,8 +10,13 @@ export default function Jenis({ d }: { d: UploadDetail }) {
   return (
     <section className="ws-panel">
       <h2>Jenis halaman</h2>
-      <p className="lede">AI belum yakin jenis halaman-halaman ini. Pilih jenisnya: jenis menentukan nomor mana yang dicari
-        untuk menemukan ordernya. Setelah dijawab, AI membaca ulang halaman itu sesuai jenisnya.</p>
+      {d.unsure.length ? (
+        <p className="ws-now need">AI belum yakin jenis {d.unsure.length} halaman ini. Pilih jenisnya: jenis menentukan nomor
+          yang dicari untuk menemukan ordernya.</p>
+      ) : s.state !== "done" ? (
+        <p className="ws-now wait">Menunggu langkah 1: {s.pending} halaman belum dibaca. Halaman yang jenisnya belum pasti
+          akan muncul di sini.</p>
+      ) : null}
       {d.unsure.length ? (
         <>
           <p><Link className="btn primary" href={`/label?upload=${id}`}>Mulai tentukan jenis ({d.unsure.length} halaman)</Link></p>
@@ -26,10 +31,9 @@ export default function Jenis({ d }: { d: UploadDetail }) {
             ))}
           </div>
         </>
-      ) : (
-        <p className="kosong">✓ Tidak ada halaman yang jenisnya belum pasti di batch ini
-          {s.answered ? `; ${s.answered} halaman sudah dijawab.` : "."}</p>
-      )}
+      ) : s.state === "done" ? (
+        <p className="ws-now ok">Semua jenis halaman sudah pasti{s.answered ? `; ${s.answered} dipilih oleh Anda.` : "."}</p>
+      ) : null}
     </section>
   );
 }

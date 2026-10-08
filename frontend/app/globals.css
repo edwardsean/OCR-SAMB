@@ -776,6 +776,16 @@ h2.sect { margin: 32px 0 12px; }
 .ws-panel > .lede { margin-bottom: 16px; }
 .ws-grp { font-size: 15px; font-weight: 700; margin: 26px 0 8px; }
 .ws-grp span { font-weight: 500; color: var(--pensil); font-size: 13px; }
+/* a step's one status line (2026-10-08): what is happening now, in its state's ink, and whether you need to act */
+.ws-now { margin: 0 0 16px; font-weight: 600; max-width: 75ch; }
+.ws-now.need { color: var(--cap-merah); } .ws-now.sys, .ws-now.wait { color: var(--cap-kuning); }
+.ws-now.ok { color: var(--cap-hijau); } .ws-now.ok::before { content: "✓ "; }
+.ws-now a { font-weight: 600; }
+/* step 1's pages: what each one is doing now (services/api/activity.py) */
+.pn-table { margin: 4px 0 14px; } .pn-table td { vertical-align: top; }
+.pn { font-size: 13.5px; font-weight: 600; color: var(--pensil); }
+.pn.need { color: var(--cap-merah); } .pn.sys, .pn.wait { color: var(--cap-kuning); } .pn.ok { color: var(--cap-hijau); }
+.pn-files { list-style: none; padding: 0; margin: 0 0 12px; color: var(--cap-kuning); }
 .ws-dep { margin: 6px 0 0; font-size: 13px; color: var(--cap-kuning); font-weight: 600; }
 .ws-dep::before { content: "↳ "; }
 .ws-panel > .ws-dep { margin: 0 0 16px; }

@@ -1,7 +1,6 @@
 // Step 4, Periksa order: the batch's orders (each whole, from every batch its documents came in), grouped by where
 // they stand: needs you, waits for an earlier step of this batch (its missing document may be there), waits for a
 // document from another batch, waits for the system, done.
-import Link from "next/link";
 import { need } from "@/lib/api";
 import type { OrderList, OrderRow, OrderStep, UploadDetail } from "@/lib/types";
 import Row from "@/components/OrderRow";
@@ -25,8 +24,16 @@ export default async function Periksa({ d }: { d: UploadDetail }) {
     <section className="ws-panel">
       <NoticesSeen />
       <h2>Periksa order</h2>
-      <p className="lede">Satu baris per order (SOR), lengkap dengan dokumennya dari batch mana pun. Buka order untuk memutuskan;
-        setelah disetujui, order pindah ke <Link href={`/uploads/${id}?step=kirim`}>langkah 5</Link>.</p>
+      {(() => {
+        const s = d.steps[3];
+        if (s.key !== "periksa") return null;
+        const [cls, text] = s.need ? ["need", `${s.need} order perlu keputusan Anda. Buka order untuk memutuskan; yang disetujui pindah ke langkah 5.`]
+          : s.depends || s.waiting ? ["sys", "Order masih menunggu langkah sebelumnya atau sistem. Tidak perlu tindakan."]
+          : s.state === "done" ? ["ok", "Semua order sudah diperiksa."]
+          : s.outside ? ["wait", `${s.outside} order menunggu dokumen dari batch lain.`]
+          : ["wait", "Menunggu langkah sebelumnya: order muncul setelah halamannya dibaca."];
+        return <p className={`ws-now ${cls}`}>{text}</p>;
+      })()}
       {o.rows.length ? (
         <table className="reg orders">
           <thead><tr><th /><th>Pelanggan</th><th>Dokumen</th><th>Yang perlu dicek</th><th /></tr></thead>
@@ -38,7 +45,7 @@ export default async function Periksa({ d }: { d: UploadDetail }) {
             </tbody>
           ))}
         </table>
-      ) : <p className="kosong">Belum ada order dari batch ini. Halaman disatukan per order setelah AI selesai membacanya.</p>}
+      ) : null}
     </section>
   );
 }

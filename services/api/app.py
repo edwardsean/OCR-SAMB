@@ -40,6 +40,9 @@ async def _settings(request, call_next):
     """The models and API keys saved on the Teknis screen (common/settings.py), read again at most every few
     seconds: an action that calls a model (a replay, publishing) uses what is saved now."""
     settings.refresh()
+    if request.headers.get("x-trace") == "off":          # a test's call: nothing it does goes in the trace
+        with trace.muted():
+            return await call_next(request)
     return await call_next(request)
 templates = Jinja2Templates(directory=os.path.join(HERE, "templates"))
 templates.env.filters.update(bahasa.FILTERS)       # Indonesian numbers and dates on every screen
@@ -57,8 +60,46 @@ def static_v(name):
 
 templates.env.globals["static_v"] = static_v
 
+
+def _jam(t, full=False):
+    """A moment in WIB: 14:07:05 (with the day when it isn't today, or full)."""
+    if not t:
+        return ""
+    t = t.astimezone(timezone(timedelta(hours=7)))
+    today = datetime.now(timezone(timedelta(hours=7))).date()
+    return t.strftime("%d %b %H:%M:%S" if full or t.date() != today else "%H:%M:%S")
+
+
+def _pretty(v):
+    """A payload's value for reading: JSON (or a string holding JSON) indented, any other text as it is."""
+    if isinstance(v, str):
+        try:
+            v = json.loads(v)
+        except ValueError:
+            return v
+    return json.dumps(v, indent=2, ensure_ascii=False, default=str) if not isinstance(v, (int, float)) else str(v)
+
+
+def _prob(logprob):
+    import math
+    try:
+        return f"{math.exp(float(logprob)):.3f}"
+    except (TypeError, ValueError):
+        return ""
+
+
+def _trace_filters():
+    from api import observe, trace_words as tw
+    return {"dur": observe.dur, "jam": _jam, "summary": observe.summary, "title": tw.title, "explain": tw.explain,
+            "describe": tw.describe, "raw": tw.raw, "step": tw.step, "pretty": _pretty, "prob": _prob}
+
+
+templates.env.filters.update(_trace_filters())
+
 # vlm-first experiment (branch vlm-first): same UI code, its own database / vhost / MinIO prefix, pages cloned from v1
 VF = config.VF
+from common import trace                  # noqa: E402  what this process writes in the trace is the API's
+trace.named("rtm-api")
 PHASE_BUILT = 7 if VF else 5                 # grouping (6) and cross-checks + Review (7) are built on vlm-first
 WIB = timezone(timedelta(hours=7))
 
@@ -76,10 +117,11 @@ TESTDATA = config.env("TESTDATA_DIR") or next(
 NAV = [("/", "Batch", "batches_need"), ("/upload", "Unggah batch", None)]      # as the web app's top bar
 ALL_BATCHES = [("/review", "Periksa order"), ("/label", "Jenis halaman"), ("/bundles", "Berkas per SOR"),
                ("/published", "Data terkirim")]                                  # the web app's screens over every batch
-TECH = [("/status", "Status sistem"), ("/settings", "Model & kunci API"), ("/product-codes", "Kode produk pelanggan"),
+TECH = [("/status", "Status sistem"), ("/teknis/jejak", "Jejak (trace)"), ("/teknis/metrik", "Metrik"),
+        ("/settings", "Model & kunci API"), ("/product-codes", "Kode produk pelanggan"),
         ("/fields", "Daftar field"), ("/labels", "Semua label")]
 if VF:
-    TECH[2:2] = [("/context", "Konteks klasifikasi"), ("/knowledge", "Pengetahuan AI")]
+    TECH[4:4] = [("/context", "Konteks klasifikasi"), ("/knowledge", "Pengetahuan AI")]
 
 EXPECTED_TABLES = 20      # 19 from the base schema + staging.type_label (006)
 if VF:
@@ -89,6 +131,7 @@ if VF:
     EXPECTED_TABLES += 1   # + job_run (025): the scheduler's jobs
     EXPECTED_TABLES += 1   # + upload (026): upload batches
     EXPECTED_TABLES += 1   # + setting (027): models and API keys saved from the Teknis screen
+    EXPECTED_TABLES += 2   # + trace, ai_payload (028): what happened, when, how long; each AI call's request and response
 
 SVC = config.SERVICE_PREFIX                  # this stack's service names: vf-* on main, rtm-* in the worktree
 HEALTH_PORT = config.HEALTH_PORT             # where each worker answers /health
@@ -297,14 +340,16 @@ def upload_view(upload_id):
     """One upload batch: its record, its files (each a scan, with its progress), its orders by status, its five
     steps (api/steps.py), and the pages steps 1 and 2 list: those stuck (api/stuck.py, each with why and whether a
     person may try it again), those whose type is unsure; the files that couldn't be split; and why nothing can be
-    tried right now (a model not set, a limit), if so."""
-    from api import stuck
+    tried right now (a model not set, a limit), if so. `activity`: what each page is doing now (api/activity.py)."""
+    from api import activity, stuck
     from common import uploads
     from worker import vf
+    blocked = vf.blocked()
     with db.connect() as c:
         u = uploads.get(c, upload_id)
         if not u:
             return None
+        live = activity.of_upload(c, upload_id, blocked)
         files = [dict(r) for r in c.execute(
             """SELECT id, file_name, page_total, pages_rendered, page_done, status, received_at, error
                  FROM staging.scan_batch WHERE upload_id=%s ORDER BY file_name""", (upload_id,))]
@@ -328,7 +373,7 @@ def upload_view(upload_id):
             "failed": [{**page(p), **stuck.view(p)} for p in pages if p["stuck"]],
             "failed_files": [{"batch_id": f["id"], "file_name": f["file_name"], "error": f["error"]}
                              for f in files if f["status"] == "failed"],
-            "not_now": stuck.blocked_text(vf.blocked()),
+            "not_now": stuck.blocked_text(blocked), "activity": live,
             "unsure": [page(p) for p in pages if p["type_status"] == "unsure" and not p["labelled"]
                        and not p["stuck"]]}
 
@@ -458,6 +503,8 @@ def save_model_row(kind: str = Form(...), url: str = Form(""), model: str = Form
         return _s_back(f"{_row_title(kind)} not saved: {e}", kind, bad=True)
     settings.refresh(force=True)
     print(f"settings: {kind} row = {settings.norm(url)} {model.strip()}, by {by.strip()}", flush=True)
+    trace.event("person.settings", "ok", who=by.strip() or None, row=kind, endpoint=settings.norm(url),
+                model=model.strip(), key_changed=bool(key.strip()) or None)        # never the key itself
     return _s_back(f"{_row_title(kind)} saved: every service uses {model.strip()} within seconds. Press Test to check it.",
                    kind)
 
@@ -1334,6 +1381,7 @@ def vf_after_label(batch, page, label):
                          pika.BasicProperties(delivery_mode=2, content_type="application/json"))
     finally:
         mq.close()
+    trace.event("page.queued", batch=batch, page=page, why=f"a person said it is {label}")
 
 
 def _vf_page(c, p):
@@ -1699,6 +1747,7 @@ def revert_context(version: int = Form(...), by: str = Form(...)):
             context.revert(c, version, by.strip())
     except ValueError as e:
         return JSONResponse({"error": str(e)}, status_code=409)
+    trace.event("person.context_revert", "ok", who=by.strip(), to_version=version)
     _wake_teacher(f"context taken back to #{version}")
     return RedirectResponse("/context", status_code=303)
 
@@ -3294,6 +3343,113 @@ def phase7_cached(batch_id):
     r = phase7_checks(batch_id)
     _P7[batch_id] = (fp, time.time(), r)
     return r
+
+
+# ---------------------------------------------------------------------------------------------- Jejak, Metrik
+
+TRACE_MISSING = "The trace table doesn't exist yet: apply schema/028-trace.sql (README, A new migration)."
+STATUS_WORDS = {"ok": "ok", "fail": "failed", "wait": "waiting", "running": "running", "skip": "skipped", "info": ""}
+
+
+def _when(v):
+    """A datetime-local value from the screen (WIB) as an aware moment, or None."""
+    if not v:
+        return None
+    try:
+        return datetime.fromisoformat(v).replace(tzinfo=timezone(timedelta(hours=7)))
+    except ValueError:
+        return None
+
+
+def _scans_of(c, ids):
+    """{batch id: {file_name, upload_id, code}} for the rows' links."""
+    ids = sorted({i for i in ids if i})
+    if not ids:
+        return {}
+    return {r["id"]: dict(r) for r in c.execute(
+        """SELECT s.id, s.file_name, s.upload_id, u.code FROM staging.scan_batch s
+             LEFT JOIN staging.upload u ON u.id = s.upload_id WHERE s.id = ANY(%s)""", (ids,))}
+
+
+@app.get("/teknis/jejak", response_class=HTMLResponse, include_in_schema=False)
+def page_jejak(request: Request, q: str = "", step: str = "", status: str = "", service: str = "", around: str = "",
+               hours: int = 6, limit: int = 300):
+    """Jejak: everything that happened in a window (common/trace.py, api/observe.py), newest first, in plain words
+    (api/trace_words.py), filtered by the workflow's step."""
+    from api import observe, trace_words as tw
+    hours = max(1, min(hours, 24 * 90))
+    since, until = observe.window(around=_when(around), hours=hours)
+    f = {"q": q, "step": step, "status": status, "service": service, "around": around, "hours": hours,
+         "since": since, "until": until}
+    rows, scans, missing = [], {}, None
+    try:
+        with db.connect() as c:
+            rows = observe.explore(c, q or None, since, until, step or None, status or None, service or None,
+                                   max(20, min(limit, 2000)))
+            scans = _scans_of(c, [r["batch_id"] for r in rows])
+    except Exception as e:
+        missing = TRACE_MISSING if "trace" in str(e) and "does not exist" in str(e) else f"{type(e).__name__}: {e}"
+    return templates.TemplateResponse("jejak.html", ctx(request, rows=rows, scans=scans, f=f, steps=tw.STEPS,
+                                                        missing=missing, limit=limit, words=STATUS_WORDS))
+
+
+@app.get("/teknis/jejak/batch/{upload_id}", response_class=HTMLResponse, include_in_schema=False)
+def page_jejak_batch(request: Request, upload_id: int):
+    """Jejak for one batch: every page's attempts, queue wait, stages and AI calls; a timeline; what followed."""
+    from api import observe
+    from common import uploads
+    with db.connect() as c:
+        u = uploads.get(c, upload_id)
+        if not u:
+            return templates.TemplateResponse("not_found.html", ctx(request, what="batch"), status_code=404)
+        try:
+            t = observe.of_upload(c, upload_id)
+            missing = None
+        except Exception as e:
+            t, missing = None, TRACE_MISSING if "does not exist" in str(e) else f"{type(e).__name__}: {e}"
+    from api import trace_words as tw
+    return templates.TemplateResponse("jejak_batch.html", ctx(request, u=u, t=t, missing=missing, stages=observe.STAGES,
+                                                              words=STATUS_WORDS, steps=tw.STEPS))
+
+
+@app.get("/teknis/jejak/halaman/{batch_id}/{page_no}", response_class=HTMLResponse, include_in_schema=False)
+def page_jejak_page(request: Request, batch_id: str, page_no: int):
+    """Jejak for one page: its spans, stages, events and AI calls, nested, oldest first."""
+    from api import observe
+    with db.connect() as c:
+        scan = _scans_of(c, [batch_id]).get(batch_id)
+        log = observe.of_page(c, batch_id, page_no) if scan else []
+    return templates.TemplateResponse("jejak_page.html", ctx(request, scan=scan, batch_id=batch_id, page_no=page_no,
+                                                             log=log, words=STATUS_WORDS),
+                                      status_code=200 if scan else 404)
+
+
+@app.get("/teknis/jejak/ai/{call_id}", response_class=HTMLResponse, include_in_schema=False)
+def page_jejak_ai(request: Request, call_id: int):
+    """One AI call's exact request and response (staging.ai_payload), loaded into its line when it is opened."""
+    with db.connect() as c:
+        m = c.execute("SELECT * FROM staging.model_call WHERE id=%s", (call_id,)).fetchone()
+        try:
+            p = c.execute("SELECT * FROM staging.ai_payload WHERE call_id=%s", (call_id,)).fetchone()
+        except Exception:                  # before schema/028: no payloads kept
+            p = None
+    return templates.TemplateResponse("_ai_payload.html", {"request": request, "m": m, "p": p,
+                                                           "keep": config.PAYLOAD_KEEP_DAYS})
+
+
+@app.get("/teknis/metrik", response_class=HTMLResponse, include_in_schema=False)
+def page_metrik(request: Request, days: int = 1):
+    """Metrik: how long pages, files and stages take, the AI calls (latency, failures, tokens, cost), failures by
+    kind, the teachers and people's actions, over the last `days`."""
+    from api import activity, observe
+    days = max(1, min(days, 90))
+    try:
+        with db.connect() as c:
+            m, missing = observe.metrics(c, days), None
+    except Exception as e:
+        m, missing = None, TRACE_MISSING if "does not exist" in str(e) else f"{type(e).__name__}: {e}"
+    return templates.TemplateResponse("metrik.html", ctx(request, m=m, missing=missing, days=days, words=STATUS_WORDS,
+                                                         stage_names=activity.STAGE))
 
 
 @app.get("/teknis/scan/{batch_id}", response_class=HTMLResponse, include_in_schema=False)

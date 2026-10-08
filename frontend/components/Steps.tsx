@@ -19,36 +19,42 @@ export function langkah(keys: StepKey[]): string {
     : `langkah ${ns.slice(0, -1).join(", ")} dan ${ns[ns.length - 1]}`;
 }
 
-/** What a step says: [the line in its ink, the line under it]. */
+/** What a step says: [the line in its ink, the line under it]. A step that can't finish before an earlier one says
+ * which (`after`), never ✓ (the mentor, 2026-10-08: "jenis halaman selesai" while pages were still being read). */
 export function words(s: Step, blockers: StepKey[] = []): [string, string] {
+  const wait = s.after ? `Menunggu langkah ${n(s.after)}` : null;
   switch (s.key) {
     case "baca":
-      if (s.state === "need") return [`${s.failed} gagal dibaca`, `${s.read} dari ${s.pages} halaman dibaca`];
-      if (s.busy) return ["Sedang dibaca", `${s.read} dari ${s.pages} halaman`];
-      if (s.waiting_ai) return [`${s.waiting_ai} menunggu AI`, `${s.read} dari ${s.pages} halaman dibaca`];
-      if (s.unscheduled) return [`${s.read} dari ${s.pages} dibaca`, `${s.unscheduled} belum dijadwalkan`];
-      return s.pages ? ["Selesai", `${s.pages} halaman dibaca`] : ["Belum ada", "file sedang disiapkan"];
+      if (s.state === "need") return [`${s.failed} gagal dibaca`, `${s.done} dari ${s.pages} halaman selesai`];
+      if (s.state === "sys") {
+        if (!s.pages) return ["Menyiapkan file", "dipecah menjadi halaman"];
+        if (s.busy) return ["Sedang dibaca", `${s.done} dari ${s.pages} halaman selesai`];
+        if (s.waiting_ai) return ["AI melihat ulang", `${s.waiting_ai} halaman · berjalan sendiri`];
+        return [`${s.unscheduled} belum dijadwalkan`, `${s.done} dari ${s.pages} halaman selesai`];
+      }
+      return s.state === "done" ? ["Selesai", `${s.pages} halaman dibaca`] : ["Belum mulai", "file sedang disiapkan"];
     case "jenis":
-      if (s.state === "need") return [`${s.unsure} halaman`, s.answered ? `${s.answered} sudah dijawab` : "jenisnya belum pasti"];
-      return s.state === "done" ? ["Selesai", s.answered ? `${s.answered} sudah dijawab` : "semua jenis sudah pasti"]
-        : ["Belum ada", "menunggu pembacaan"];
+      if (s.state === "need") return [`${s.unsure} perlu Anda`, "jenisnya belum pasti"];
+      if (s.state === "done") return ["Selesai", s.answered ? `${s.answered} dipilih Anda` : "semua jenis sudah pasti"];
+      return [wait ?? "Belum mulai", s.pending ? `${s.pending} halaman belum dibaca` : "menunggu pembacaan"];
     case "cocokkan": {
-      const later = s.later ? `+${s.later} tidak mendesak` : "";
-      if (s.state === "need") return [`${s.block} dokumen`, later || "nomornya belum pasti"];
-      if (s.state === "sys") return [`${s.wait} menunggu sistem`, later || "AI atau SAP"];
-      if (s.state === "later") return [`${s.later} tidak mendesak`, "tidak menghalangi pengiriman"];
-      return s.state === "done" ? ["Selesai", "semua dokumen punya order"] : ["Belum ada", "menunggu pembacaan"];
+      const fpj = s.later ? `${s.later} Faktur Pajak menunggu SAP` : "";
+      if (s.state === "need") return [`${s.block} perlu Anda`, "nomornya belum pasti"];
+      if (s.state === "sys") return [`${s.wait} menunggu sistem`, "AI atau SAP · berjalan sendiri"];
+      if (s.state === "done") return ["Selesai", fpj || "semua dokumen punya order"];
+      return [wait ?? "Belum mulai", fpj || "dokumen muncul setelah dibaca"];
     }
-    case "periksa": {
-      const dep = s.depends ? `${s.depends} menunggu ${langkah(blockers)}` : "";
-      if (s.state === "need") return [`${s.need} order`, dep || (s.waiting ? `${s.waiting} menunggu sistem` : `dari ${s.orders} order`)];
-      if (s.state === "sys") return [dep || `${s.waiting} menunggu sistem`, `dari ${s.orders} order`];
+    case "periksa":
+      if (s.state === "need") return [`${s.need} perlu Anda`, `dari ${s.orders} order`];
+      if (s.state === "sys") return [s.depends ? `${s.depends} menunggu ${langkah(blockers)}` : `${s.waiting} menunggu sistem`,
+        `dari ${s.orders} order`];
       if (s.state === "later") return [`${s.outside} menunggu batch lain`, "dokumennya belum diunggah"];
-      return s.state === "done" ? ["Selesai", `${s.orders} order`] : ["Belum ada", "menunggu pembacaan"];
-    }
+      if (s.state === "done") return ["Selesai", `${s.orders} order`];
+      return [wait ?? "Belum ada order", s.orders ? `${s.orders} order sejauh ini` : "order muncul setelah dibaca"];
     case "kirim":
       if (s.state === "need") return [`${s.ready} siap dikirim`, s.published ? `${s.published} sudah terkirim` : "tinggal dikirim"];
-      return s.state === "done" ? [`${s.published} terkirim`, "tidak ada yang menunggu"] : ["Belum ada", "0 siap dikirim"];
+      if (s.state === "done") return [`${s.published} terkirim`, "tidak ada yang menunggu"];
+      return [wait ?? "Belum ada", s.published ? `${s.published} terkirim sejauh ini` : "order siap muncul di sini"];
   }
 }
 

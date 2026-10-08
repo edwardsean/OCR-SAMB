@@ -22,7 +22,7 @@ import pika
 from PIL import Image
 from pypdf import PdfReader
 
-from . import config, db, queue, storage
+from . import config, db, queue, storage, trace
 
 RENDER_DPI = 300        # the scans are 300 dpi bilevel; this keeps every pixel
 RENDER_WORKERS = config.RENDER_WORKERS
@@ -105,6 +105,8 @@ def receive(data, file_name, upload=None):
         if not dup:
             raise RuntimeError(f"{batch_id} is taken by another file")   # two files sharing 10 hex digits of SHA-256
         return {"batch_id": dup["id"], "duplicate": True, "earlier": dict(dup)}
+    trace.event("file.received", batch=batch_id, file=file_name, pages=page_total, kb=len(data) // 1024,
+                upload=(upload or {}).get("id"))
     try:
         queue.send(queue.Q_INTAKE, [{"batch_id": batch_id}])
     except Exception as e:                              # recorded: the scheduler sends it later
@@ -129,7 +131,7 @@ def split(batch_id):
                 return {"batch_id": batch_id, "status": cur and cur["status"]}
             conn.execute("DELETE FROM staging.page WHERE batch_id=%s", (batch_id,))   # what a dead split left
         page_total = row["page_total"]
-        with tempfile.TemporaryDirectory() as tmp:
+        with tempfile.TemporaryDirectory() as tmp, trace.span("file.split", batch=batch_id, pages=page_total):
             pdf_path = os.path.join(tmp, "in.pdf")
             try:
                 storage.client().fget_object(storage.bucket(), row["file_path"], pdf_path)
@@ -154,7 +156,7 @@ def waiting(minutes):
                  AND received_at < now() - make_interval(mins => %s) ORDER BY received_at""", (minutes,))]
 
 
-def enqueue(batch_id, only_rendered=False):
+def enqueue(batch_id, only_rendered=False, why="new"):
     """Publish one ticket per page. Only the call that moves split → queued publishes, so a retry can't double-queue."""
     with db.connect() as conn:
         row = conn.execute("""UPDATE staging.scan_batch SET status='queued'
@@ -181,6 +183,7 @@ def enqueue(batch_id, only_rendered=False):
 
     with db.connect() as conn:
         conn.execute("UPDATE staging.page SET status='queued' WHERE batch_id=%s AND status='rendered'", (batch_id,))
+    trace.events("page.queued", [{"batch": batch_id, "page": p["page_no"]} for p in pages], why=why)
     return {"batch_id": batch_id, "published": len(pages), "status": "queued"}
 
 
@@ -194,7 +197,7 @@ def rerun(batch_id, pages=None):
                          (batch_id, list(pages)))
         else:
             conn.execute("UPDATE staging.page SET status='rendered', error=NULL WHERE batch_id=%s", (batch_id,))
-    return enqueue(batch_id, only_rendered=bool(pages))
+    return enqueue(batch_id, only_rendered=bool(pages), why="tried again")
 
 
 def queue_depth(name=queue.Q_PAGES):

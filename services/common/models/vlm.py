@@ -14,7 +14,7 @@ from zoneinfo import ZoneInfo
 
 import httpx
 
-from common import config, settings
+from common import config, settings, trace
 from common.models import schemas
 
 URL = config.GEMINI_BASE_URL + "/models/{model}:generateContent"
@@ -49,7 +49,9 @@ def _call(parts, schema, retries=4, timeout=180):
         if _EXHAUSTED.get(model) == today:
             tried.append(f"{model}:daily-quota"); continue
         for attempt in range(retries):
+            trace.ai_request({"model": model, **body})
             r = httpx.post(URL.format(model=model), headers={"x-goog-api-key": key}, json=body, timeout=timeout)
+            trace.ai_http(r)
             if r.status_code == 429 and "PerDay" in r.text:  # daily quota gone: stop asking this model today
                 _EXHAUSTED[model] = today
                 tried.append(f"{model}:daily-quota"); break

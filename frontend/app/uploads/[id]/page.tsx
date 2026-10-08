@@ -32,13 +32,14 @@ export default async function UploadPage({ params, searchParams }: { params: Pro
   // the step asked for; else the first that needs a person; else where the system is working
   const at: StepKey = asked && ORDER.includes(asked) ? asked
     : d.next ?? d.steps.find((s) => s.state === "sys")?.key ?? (d.finished ? "kirim" : "periksa");
-  const baca = d.steps[0].key === "baca" ? d.steps[0] : null;
-  const live = !!baca && (baca.busy > 0 || baca.waiting_ai > 0);
+  // asked again every few seconds only while a page is moving (an order waiting days for SAP never keeps it busy)
+  const live = d.activity.splitting.length > 0
+    || d.activity.pages.some((p) => ["queued", "reading", "waiting", "waiting_ai"].includes(p.state));
   const next = d.next ? d.steps.find((s) => s.key === d.next)! : null;
   const href = `/uploads/${u.id}`;
   return (
     <>
-      <AutoRefresh every={6000} active={live} />
+      <AutoRefresh every={4000} active={live} />
       <section className="head">
         <p className="crumbs"><Link href="/">Batch</Link> / {u.code}</p>
         <div className="head-row">
