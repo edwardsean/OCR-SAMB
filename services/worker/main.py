@@ -1,12 +1,17 @@
-"""Page worker. Takes one ticket from q.pages at a time.
+"""Page worker. Reads WORKER_CONCURRENCY pages from q.pages at a time (2026-10-08, the throughput work: a page spends
+~85% of its time waiting for the AI's answer, so one worker reads several while it waits).
 
 Steps: enhance + classical OCR (2, worker/enhance.py) → classify (3) → AI OCR (4) → check every value by code (5, common/verify.py).
 After a page is done: tick the batch scoreboard; the worker that ticks it to N of N rings the bell on q.group.
 """
+import functools
 import io
 import json
+import signal
+import threading
 import time
 import traceback
+from concurrent.futures import ThreadPoolExecutor
 
 import cv2
 import numpy as np
@@ -208,6 +213,8 @@ def on_message(ch, method, props, body):
     try:
         if PIPELINE == "vlm-first":            # the experiment on branch vlm-first (worker/vf.py)
             from worker import vf
+            if ticket.get("run", 1) != current_run(ticket["batch_id"]):
+                ch.basic_ack(method.delivery_tag); return  # an earlier run's ticket (re-run, or stopped): never re-parked
             why = ticket.get("parked") and vf.blocked()
             if why:                            # back from the waiting room, but the AI still can't be asked: no work
                 vf.park(ticket, why)
@@ -243,20 +250,97 @@ def on_message(ch, method, props, body):
             ch.basic_nack(method.delivery_tag, requeue=True)      # first failure → one retry
 
 
-def run():
-    while True:
+class _OnItsThread:
+    """The channel as a page thread uses it (ack, nack, reject, publish): each call runs on the connection's own thread,
+    because pika's connection is not thread-safe. Fire and forget: a call on a connection that has closed is dropped,
+    and RabbitMQ gives the unacknowledged page to a worker again."""
+
+    def __init__(self, conn, ch):
+        self.conn, self.ch = conn, ch
+
+    def __getattr__(self, name):
+        fn = getattr(self.ch, name)
+
+        def later(*a, **k):
+            try:
+                self.conn.add_callback_threadsafe(functools.partial(fn, *a, **k))
+            except Exception as e:                          # the connection closed meanwhile
+                print(f"worker: {name} dropped ({type(e).__name__}): the page is given again", flush=True)
+        return later
+
+
+def _guarded(ch, method, props, body):
+    """A page thread's work: on_message, and should even its own error handling fail (the database down), the ticket
+    is put back rather than left unacknowledged."""
+    try:
+        on_message(ch, method, props, body)
+    except Exception:
+        traceback.print_exc()
+        ch.basic_nack(method.delivery_tag, requeue=True)
+
+
+STOP = threading.Event()
+
+
+def _stop(*_):
+    """docker stop / restart (SIGTERM): take no new page, finish the ones started (stop_grace_period, 3 minutes in
+    docker-compose.yml). Stopping mid-page threw away AI answers already paid for (2026-10-08: 21 calls)."""
+    if not STOP.is_set():
+        print("worker stopping: no new page; finishing the pages it has", flush=True)
+    STOP.set()
+
+
+def pages_at_once():
+    """Pages per worker, as saved on Teknis → Model & kunci API (common/settings.py NUMBERS; read again at most every
+    ten seconds), within 1..WORKER_CONCURRENCY_MAX."""
+    settings.refresh()
+    return max(1, min(config.WORKER_CONCURRENCY, config.WORKER_CONCURRENCY_MAX))
+
+
+def run(concurrency=None):
+    """Consume q.pages, the saved number of pages at a time (pages_at_once; `concurrency` fixes it): the connection's
+    thread takes the tickets and keeps the heartbeat; a pool of page threads reads them. RabbitMQ hands this worker at
+    most that many at once (prefetch), so a worker never holds pages it can't start; a change on the screen is taken
+    within seconds (a lower number lets the pages in hand finish). On SIGTERM it stops taking pages and returns once
+    the pages it has are done (their acks go out first)."""
+    n = concurrency or pages_at_once()
+    signal.signal(signal.SIGTERM, _stop)
+    while not STOP.is_set():
+        pool, conn, ch, busy = None, None, None, []
         try:
             conn = queue.connect()
             ch = conn.channel()
             queue.declare(ch)
             if PIPELINE == "vlm-first":
                 queue.declare_wait(ch)
-            ch.basic_qos(prefetch_count=1)          # one page at a time per worker
-            ch.basic_consume(queue.Q_PAGES, on_message)
-            print("worker consuming", queue.Q_PAGES)
-            ch.start_consuming()
+            ch.basic_qos(prefetch_count=n)
+            pool = ThreadPoolExecutor(config.WORKER_CONCURRENCY_MAX, thread_name_prefix="page")   # prefetch limits it
+            safe = _OnItsThread(conn, ch)
+
+            def take(_ch, method, props, body):
+                busy[:] = [f for f in busy if not f.done()] + [pool.submit(_guarded, safe, method, props, body)]
+            tag = ch.basic_consume(queue.Q_PAGES, take)
+            print(f"worker consuming {queue.Q_PAGES}, {n} pages at a time", flush=True)
+            while not STOP.is_set():
+                conn.process_data_events(time_limit=1)    # the tickets, the heartbeat, the page threads' acks
+                now = concurrency or pages_at_once()
+                if now != n:                              # changed on the screen: RabbitMQ hands out that many
+                    ch.basic_qos(prefetch_count=now)
+                    print(f"worker: {n} → {now} pages at a time", flush=True)
+                    n = now
+            ch.basic_cancel(tag)                          # no new page: RabbitMQ keeps the rest for other workers
+            while any(not f.done() for f in busy):
+                conn.process_data_events(time_limit=1)    # the started pages finish, and their acks go out
+            conn.process_data_events(time_limit=1)
+            conn.close()
+            print("worker stopped: every page it had is done", flush=True)
         except Exception as e:
+            if STOP.is_set():
+                break
             print("worker reconnecting:", e); time.sleep(3)
+        finally:
+            if pool:
+                pool.shutdown(wait=STOP.is_set())
 
 
 if __name__ == "__main__":

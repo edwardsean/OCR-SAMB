@@ -16,11 +16,13 @@ def rows():
     from common import db
 
     def clean():
+        trace.flush()
         with db.connect() as c:
             c.execute("DELETE FROM staging.trace WHERE batch_id=%s", (BID,))
     clean()
 
     def get():
+        assert trace.flush()                                            # the writer thread has written it all
         with db.connect() as c:
             return c.execute("SELECT * FROM staging.trace WHERE batch_id=%s ORDER BY id", (BID,)).fetchall()
     yield get
@@ -68,13 +70,30 @@ def test_a_span_a_stopped_worker_left_running_is_closed_before_the_page_starts_a
     assert r["status"] == "fail" and r["error"].startswith("cut off") and r["ended_at"]
 
 
+@needs_db
 def test_tracing_never_stops_the_work(monkeypatch):
-    def down():
-        raise ConnectionError("the database is down")
-    monkeypatch.setattr(trace, "_conn", down)
+    """A write that fails (here a table that doesn't exist, as before migration 028) is dropped, the work goes on, and
+    tracing pauses for a while."""
+    trace.flush()
     monkeypatch.setattr(trace, "_off_until", 0.0)
-    with trace.span("page", batch=BID, page=1) as sp:                  # nothing is written, nothing raised
+    trace._write("INSERT INTO staging.no_such_table VALUES (1)", ())
+    with trace.span("page", batch=BID, page=1) as sp:                  # nothing raised here
         trace.stage("read")
-        trace.event("page.queued")
         sp.note(outcome="clear")
-    assert trace._off_until > time.time()                               # paused for a while: the work never waits
+    trace.flush()
+    assert trace._off_until > time.time()                               # paused: what came after was dropped
+
+
+@needs_db
+def test_the_work_never_waits_for_the_trace(rows):
+    """Written by one thread per process, in order, with the time it happened (not the time it was written)."""
+    t0 = time.perf_counter()
+    for n in range(200):
+        with trace.span("page", batch=BID, page=n):
+            trace.stage("read")
+    assert time.perf_counter() - t0 < 0.5          # 600 rows queued: no database round trip on the way
+    got = rows()
+    assert len(got) == 400 and all(r["status"] == "ok" for r in got)
+    first = next(r for r in got if r["kind"] == "page" and r["page_no"] == 0)
+    child = next(r for r in got if r["kind"] == "page.read" and r["page_no"] == 0)
+    assert child["parent"] == first["id"] and child["at"] >= first["at"]

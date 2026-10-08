@@ -26,6 +26,7 @@ _apply() lays the rows into config (VF_AI_OCR, VF_AI_MAP, TEACHER_MODEL, WIKI_TE
 CLASSIFY_MODEL); every service calls refresh() as it works (a page ticket, a teacher round, an API request): the table
 is read again at most every REFRESH_SECONDS, and modules that keep a copy of a model (vf.AI_OCR …) are told through
 on_change. Keys are kept as typed; a screen only ever shows their last 4 characters (masked)."""
+import threading
 import time
 from urllib.parse import urlparse
 
@@ -53,7 +54,11 @@ ROWS = {
         "the page-type teacher's test: asks it again about the labelled pages before a better description is kept"]),
 }
 FIELDS = {k: (f"{k.upper()}_BASE_URL", f"{k.upper()}_API_KEY", f"{k.upper()}_MODEL") for k in ROWS}
-NAMES = {n for f in FIELDS.values() for n in f}
+# numbers set on the same screen (the user, 2026-10-08: "make this a setting in the teknis side that we can modify
+# without touching the code"): name -> (title, what it does, lowest, highest); until saved, config's own value
+NUMBERS = {"WORKER_CONCURRENCY": ("Pages per worker", "Pages each worker reads at once. More is faster; each worker "
+                                  "needs about 1 GB of memory at 4.", 1, 16)}
+NAMES = {n for f in FIELDS.values() for n in f} | set(NUMBERS)
 
 # models the system has been measured with, best first: the screen pre-selects the first one an endpoint lists
 RECOMMENDED = {
@@ -67,6 +72,7 @@ LOCAL = ("localhost", "127.0.0.1", "host.docker.internal", "ollama")      # endp
 
 EFFECTIVE = {}                                      # kind -> the row in effect (_resolve)
 _state = {"checked": 0.0, "effective": None, "saved": {}}
+_refreshing = threading.Lock()         # a worker reads several pages at once: one thread reads the table at a time
 _hooks = []
 
 
@@ -116,13 +122,41 @@ def _apply(got):
     config.VF_AI_OCR = config.TEACHER_MODEL = vision         # every call that sends a page image
     config.VF_AI_MAP = config.WIKI_TEACHER_MODEL = config.MATCH_MODEL = text   # every call that sends only text
     config.CLASSIFY_MODEL = rows["classify"]["ident"]        # each page's type
+    config.WORKER_CONCURRENCY = number(got, "WORKER_CONCURRENCY")
     EFFECTIVE.clear()
     EFFECTIVE.update(rows)
     _state["saved"] = dict(got)
-    now = sorted((k, r["url"], r["key"], r["model"]) for k, r in rows.items())
+    now = sorted((k, r["url"], r["key"], r["model"]) for k, r in rows.items()) + [("pages", config.WORKER_CONCURRENCY)]
     changed = now != _state["effective"]
     _state["effective"] = now
     return changed
+
+
+def number(got, name):
+    """A number setting in effect: the saved value within its range, else config's own (WORKER_CONCURRENCY_DEFAULT)."""
+    lo, hi = NUMBERS[name][2:]
+    default = getattr(config, name + "_DEFAULT", lo)
+    try:
+        return min(hi, max(lo, int(got.get(name))))
+    except (TypeError, ValueError):
+        return default
+
+
+def save_number(c, name, value, by):
+    """Save a number setting (NUMBERS). Raises ValueError for people."""
+    if name not in NUMBERS:
+        raise ValueError(f"{name} isn't a setting here")
+    if not (by or "").strip():
+        raise ValueError("say who you are")
+    title, _, lo, hi = NUMBERS[name]
+    try:
+        n = int(str(value).strip())
+    except ValueError:
+        raise ValueError(f"{title}: a whole number, {lo} to {hi}") from None
+    if not lo <= n <= hi:
+        raise ValueError(f"{title}: {lo} to {hi}")
+    _put(c, name, str(n), by.strip())
+    return n
 
 
 def saved(c):
@@ -137,14 +171,19 @@ def refresh(force=False):
     now = time.time()
     if not force and now - _state["checked"] < REFRESH_SECONDS:
         return False
-    _state["checked"] = now
-    try:
-        from common import db
-        with db.connect() as c:
-            got = {k: r["value"] for k, r in saved(c).items()}
-    except Exception:
+    if not _refreshing.acquire(blocking=force):  # another thread is reading it now: what is in effect stays
         return False
-    return _lay(got)
+    try:
+        _state["checked"] = now
+        try:
+            from common import db
+            with db.connect() as c:
+                got = {k: r["value"] for k, r in saved(c).items()}
+        except Exception:
+            return False
+        return _lay(got)
+    finally:
+        _refreshing.release()
 
 
 def _lay(got):
@@ -207,7 +246,10 @@ def view(c):
                     "needs_key": needs_key(r["url"]), "set": bool(r["ident"]) and (bool(r["key"]) or not needs_key(r["url"])),
                     "by": who and who["updated_by"], "at": who and who["updated_at"],
                     "key_by": rows.get(key_n) and rows[key_n]["updated_by"]})
-    return {"rows": out}
+    nums = [{"name": n, "title": t, "does": d, "lo": lo, "hi": hi, "value": number(got, n), "saved": n in rows,
+             "by": rows[n]["updated_by"] if n in rows else None, "at": rows[n]["updated_at"] if n in rows else None}
+            for n, (t, d, lo, hi) in NUMBERS.items()]
+    return {"rows": out, "numbers": nums}
 
 
 def _put(c, name, value, by):

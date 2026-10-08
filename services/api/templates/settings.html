@@ -55,6 +55,18 @@
   </section>
   {% endfor %}
 
+  {% for n in v.numbers %}
+  <section class="mrow" id="{{ n.name }}">
+    <h2>{{ n.title }} <span class="small muted">{{ n.value }}{% if not n.saved %} (the default){% endif %}</span></h2>
+    <p class="small muted">{{ n.does }}{% if n.by %} Saved by {{ n.by }}{% if n.at %}, {{ n.at|tgl }}{% endif %}.{% endif %}</p>
+    <form method="post" action="/settings/number" class="pick">
+      <input type="hidden" name="name" value="{{ n.name }}"><input type="hidden" name="by" class="js-by">
+      <input type="number" name="value" min="{{ n.lo }}" max="{{ n.hi }}" value="{{ n.value }}" style="width:5em">
+      <button type="submit">Save</button>
+    </form>
+  </section>
+  {% endfor %}
+
   <p class="small muted">Endpoints: Alibaba Model Studio (international) <span class="mono">https://dashscope-intl.aliyuncs.com/compatible-mode/v1</span>
     · Z.ai <span class="mono">https://api.z.ai/api/paas/v4</span> · OpenRouter <span class="mono">https://openrouter.ai/api/v1</span>
     · Groq <span class="mono">https://api.groq.com/openai/v1</span> · Gemini <span class="mono">https://generativelanguage.googleapis.com/v1beta/openai</span>.

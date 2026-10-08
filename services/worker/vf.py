@@ -5,7 +5,9 @@
   3 Jev                 classifies from that reading, knowing every type's fields (common/context.py)
   4 decide              Jev >= 0.85. An SOR QR means FP; an FP also needs the QR, the FP layout or the printed title
                         FAKTUR PENJUALAN (all from the image, never from the AI). Otherwise unsure: a person's label.
-  5 Tesseract reads     only now, after classification (decided or labelled pages)
+  5 Tesseract reads     started as soon as the image is prepared, beside the AI's reading (tesseract_read); its
+                        reading is used after classification (decided or labelled pages). Read-then-map's two
+                        mappings are asked at the same time too (2026-10-08: a page ~110 s → ~85 s)
   6 check               each value: printed in Tesseract's text / = the QR (common/verify.py); then Tesseract re-reads
                         each unconfirmed value's spot, zoomed in (worker/zoom.py); after every witness, the 7a rules
                         (common/gates.py), which only take ✅ away but for FP sums over two independent amounts
@@ -42,10 +44,12 @@
                         new look-again questions), from stored data. Writes nothing, calls no model: measure a rule
                         change before adopting it; adopt with `python -m grouper.group <batch> --recheck`.
 """
+import contextvars
 import json
 import re
 import sys
 import time
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime
 from decimal import Decimal
 from zoneinfo import ZoneInfo
@@ -82,6 +86,11 @@ def _models_changed():
     CAPS = {AI_OCR: DAILY_CAP, **({AI_MAP: MAP_CAP} if AI_MAP != AI_OCR else {})}
 
 MAP_TWICE = config.VF_MAP_TWICE              # map each transcript twice and merge (transcript.merge)
+# Side by side (2026-10-08, the throughput work): what needs nothing from the other runs at the same time. The two
+# mappings need only the AI's copy; Tesseract needs only the prepared image. Enough threads for every page a worker
+# reads at once (WORKER_CONCURRENCY).
+_MAPS = ThreadPoolExecutor(2 * config.WORKER_CONCURRENCY_MAX, thread_name_prefix="map")   # threads start when used
+_TESS = ThreadPoolExecutor(max(1, config.TESSERACT_AT_ONCE), thread_name_prefix="tesseract")   # CPU: one at a time
 STARTING = {"read_all", "transcribe"}      # a page's first call; everything else finishes a page already started
 TEXT_PURPOSES = {"map", "map_b"}           # calls that go to the text model (map_b: pass B, with knowledge)
 REQUIRED = {code: [f["name"] for f in d["header"] if f["source"] == "6.1"] for code, d in DOCS.items()}
@@ -697,6 +706,7 @@ def _handle(ticket, bid, n, run, v1_reading, second_look):
     trace.stage("prepare")
     up, prep, up_key, thumb_key, prep_flags = prepare(ticket, prev, bid, n)                        # 1
     trace.stage_note(**trace_io.prepare(ticket, prep, prep_flags, up_key))
+    tess = _TESS.submit(contextvars.copy_context().run, tesseract_read, up)   # 5, beside the AI's reading
 
     title = (prev or {}).get("fp_title")             # the printed-title witness, looked for at most once per page
     x = {"fields_all": None, "extract_status": None, "extract_error": None, "vlm_meta": {}}      # 2
@@ -789,10 +799,10 @@ def _handle(ticket, bid, n, run, v1_reading, second_look):
         trace.stage_note(**trace_io.project(cls["doc_type"], fields))
     if cls["type_status"] in ("decided", "labelled"):
         dt = cls["doc_type"]
-        trace.stage("tesseract")
-        work = enhance.mask_bands(up, *enhance.measure(up)[2:])
-        _, rd = enhance.read(work)
-        trace.stage_note(**trace_io.tesseract(rd))
+        if not tess.done():
+            trace.stage("wait_tesseract")              # the AI was quicker than Tesseract this time
+        rd = tess.result()
+        trace.stage("boxes")                           # the viewer's clickable boxes, and Satellite's records loaded
         if READER == "two_step" and two["mapping"] and fields_all:   # boxes on Tesseract's own words, now it has read
             transcript.snap_boxes(fields_all, two["mapping"], rd.get("ocr_words"), up.shape)
         if two["blocks"] and two["tv"]:              # what a person can click on the page viewer (worker/boxes.py)
@@ -1134,15 +1144,16 @@ def read_then_map(bid, n, up, ctx, prev):
     old = (tr["mapping"] if tr and same_map else None) or {}
     if not old and ((prev or {}).get("mapping") or {}).get("version") == mv:
         old = prev["mapping"]                        # the page's own mapping, same version: no call
-    raw = old.get("raw")
-    if raw is None:
-        raw, meta["map"] = ai_call("map", bid, n, map_blocks, blocks, schema)
+    raw, raw2 = old.get("raw"), old.get("raw2") if MAP_TWICE else None
+    asked = {k: _MAPS.submit(ai_call, "map", bid, n, map_blocks, blocks, schema)          # both at once: each needs
+             for k, v in (("map", raw), ("map2", raw2 if MAP_TWICE else True)) if v is None}   # only the copy
+    if "map" in asked:
+        raw, meta["map"] = asked["map"].result()
+    if "map2" in asked:
+        raw2, meta["map2"] = asked["map2"].result()
     first = mapped(raw, blocks, schema, None, up, ctx)
     fa, mapping, notes = first
     if MAP_TWICE:
-        raw2 = old.get("raw2")
-        if raw2 is None:
-            raw2, meta["map2"] = ai_call("map", bid, n, map_blocks, blocks, schema)
         second = mapped(raw2, blocks, schema, None, up, ctx)
         fa, mapping, notes = transcript.merge(first, second)
         mapping["raw2"] = raw2
@@ -1293,8 +1304,19 @@ def blocked():
             return f"OutOfBudget: vlm-first's daily cap for {spec} ({cap_of(spec)}) is used up"
         wait = refused_for(spec)
         if wait:
+            if quota_ended(spec):            # Model Studio's free quota is gone: time alone never brings it back
+                return (f"DailyLimit: {spec}'s free quota is used up (AllocationQuota.FreeTierOnly): change the model "
+                        "on the Teknis screen, or turn billing on for it; one call is tried again each hour")
             return f"DailyLimit: {int(wait // 60)} min left of {spec}'s refusal"
     return None
+
+
+def quota_ended(spec):
+    """This model's last refusal was its free quota ending (Model Studio, Free Quota Only switched on)."""
+    with db.connect() as c:
+        r = c.execute("""SELECT error FROM staging.model_call WHERE model=%s AND (ok OR error LIKE 'DailyLimit%%')
+                          ORDER BY at DESC LIMIT 1""", (spec,)).fetchone()
+    return bool(r and "FreeTierOnly" in (r["error"] or ""))
 
 
 def retry_of(bid, n):
@@ -1312,6 +1334,17 @@ def retry_kind(extract_status, extract_error, waits):
     if not why:
         return None
     return ("limit" if any(w in why for w in LIMITS) else "failed"), why
+
+
+def tesseract_read(up):
+    """Step 5: Tesseract reads the prepared page, the independent witness every value is checked against. Started as
+    soon as the image is prepared, beside the AI's reading (neither needs the other), so a page no longer waits for it
+    after the AI; in the page's trace as its own stage, with its real start and length (run in the page's context)."""
+    with trace.span("page.tesseract"):
+        work = enhance.mask_bands(up, *enhance.measure(up)[2:])
+        _, rd = enhance.read(work)
+        trace.note(**trace_io.tesseract(rd))
+        return rd
 
 
 def trace_outcome(oc, cls, x, sl):

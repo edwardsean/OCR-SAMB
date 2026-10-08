@@ -19,7 +19,8 @@ from api import stuck
 
 STAGE = {"prepare": "Menyiapkan gambar halaman", "read": "AI membaca isi halaman",
          "classify": "Menentukan jenis dokumen", "knowledge": "Memakai pengetahuan tentang pelanggan ini",
-         "project": "Menyusun isian sesuai jenis dokumennya",
+         "project": "Menyusun isian sesuai jenis dokumennya", "wait_tesseract": "Menunggu Tesseract selesai membaca",
+         "boxes": "Menandai letak setiap nilai di halaman",
          "tesseract": "Mencocokkan dengan teks yang tercetak", "check": "Memeriksa angka",
          "look_again": "AI melihat ulang bagian yang belum pasti", "store": "AI mencari nama toko",
          "save": "Menyimpan hasil"}
@@ -40,7 +41,8 @@ SELECT p.batch_id, p.page_no, s.file_name, s.status::text AS scan_status, p.stat
   LEFT JOIN LATERAL (SELECT at FROM staging.trace t WHERE t.batch_id = p.batch_id AND t.page_no = p.page_no
                         AND t.kind = 'page' AND t.status = 'running' ORDER BY at DESC LIMIT 1) run ON true
   LEFT JOIN LATERAL (SELECT kind, at FROM staging.trace t WHERE t.batch_id = p.batch_id AND t.page_no = p.page_no
-                        AND t.kind LIKE 'page.%%' AND t.status = 'running' ORDER BY at DESC LIMIT 1) st ON true
+                        AND t.kind LIKE 'page.%%' AND t.status = 'running'
+                      ORDER BY (t.kind = 'page.tesseract'), at DESC LIMIT 1) st ON true   -- Tesseract runs beside
   LEFT JOIN LATERAL (SELECT at, detail FROM staging.trace t WHERE t.batch_id = p.batch_id AND t.page_no = p.page_no
                         AND t.kind = 'page.queued' ORDER BY at DESC LIMIT 1) q ON true
   LEFT JOIN LATERAL (SELECT at, detail FROM staging.trace t WHERE t.batch_id = p.batch_id AND t.page_no = p.page_no
@@ -94,12 +96,13 @@ def state(p, blocked=None):
     return {"state": "done", "ms": p.get("last_ms")}
 
 
-def pace(rows):
-    """Pure: (seconds a page usually takes, page workers at work) from the page spans of the last day: the median
-    time, and the workers that read a page in the last two hours (each container names itself)."""
+def pace(rows, per_worker=1):
+    """Pure: (seconds a page usually takes, pages read at once) from the page spans of the last day: the median time,
+    and the workers that read a page in the last two hours (each container names itself) times the pages each reads
+    at once (WORKER_CONCURRENCY)."""
     ms = [r["ms"] for r in rows if r["ms"]]
     workers = len({r["service"] for r in rows if r.get("service") and r.get("recent")}) or DEFAULT_WORKERS
-    return (statistics.median(ms) / 1000 if len(ms) >= 3 else DEFAULT_PAGE_S), workers
+    return (statistics.median(ms) / 1000 if len(ms) >= 3 else DEFAULT_PAGE_S), workers * max(1, per_worker)
 
 
 def eta(pages, page_s, workers, now):
@@ -124,7 +127,8 @@ def of_upload(c, upload_id, blocked=None, now=None):
     now = now or datetime.now(timezone.utc)
     rows = [dict(r) for r in c.execute(PAGES, (upload_id,))]
     order = {(r["batch_id"], r["page_no"]): i for i, r in enumerate(c.execute(QUEUE))}
-    page_s, workers = pace([dict(r) for r in c.execute(PACE)])
+    from common import config
+    page_s, workers = pace([dict(r) for r in c.execute(PACE)], config.WORKER_CONCURRENCY)
     out = []
     for r in rows:
         r["ahead"] = order.get((r["batch_id"], r["page_no"]))

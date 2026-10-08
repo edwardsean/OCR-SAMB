@@ -40,7 +40,8 @@ def round_(batches):
         try:
             t0 = time.time()
             with trace.span("group", batch=bid) as sp:
-                res = group.run(bid) or {}
+                res = group.run(bid)
+                res = (res[0] if isinstance(res, tuple) else res) or {}   # run gives (plan, files)
                 sp.note(orders=sorted(res.get("bundles") or {}) or None,
                         waiting=sum(1 for d in res.get("documents") or [] if d.get("hold")) or None)
                 try:                                       # read-then-map 2c: knowledge chosen for another customer

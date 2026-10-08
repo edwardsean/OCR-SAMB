@@ -87,8 +87,20 @@ JEV_AT_ONCE = _int("JEV_AT_ONCE", 6)                 # replay calls asked at onc
 
 VF_READER = _str("VF_READER", "one_step")            # two_step: transcribe everything, then map
 VF_MAP_TWICE = _bool("VF_MAP_TWICE", True)           # map each transcript twice and merge
-VF_AI_OCR_DAILY_CAP = _int("VF_AI_OCR_DAILY_CAP", 150)   # calls a day this system allows itself, per model
-VF_AI_MAP_DAILY_CAP = _int("VF_AI_MAP_DAILY_CAP", 300)
+# calls a day this system allows itself, per model: a guard against a runaway, not a budget. A day of ~6,800 pages is
+# ~7,500 vision calls (copy, look-again, store) and ~14,000 text calls (two mappings each); was 150/300 for the free
+# tiers (2026-10-08: it stopped the system at ~150 pages a day)
+VF_AI_OCR_DAILY_CAP = _int("VF_AI_OCR_DAILY_CAP", 20_000)
+VF_AI_MAP_DAILY_CAP = _int("VF_AI_MAP_DAILY_CAP", 40_000)
+# pages each page worker reads at once (worker/main.py): set on Teknis → Model & kunci API (common/settings.py
+# NUMBERS), read by running workers within seconds; this is only the value until one is saved there. A worker needs
+# ~1 GB at 4 pages (2026-10-08: 3 × 4 on a 3.8 GB Docker VM had one worker killed for memory, its pages paid again)
+WORKER_CONCURRENCY = _int("WORKER_CONCURRENCY", 4)
+WORKER_CONCURRENCY_DEFAULT = WORKER_CONCURRENCY
+WORKER_CONCURRENCY_MAX = 16
+# pages Tesseract reads at once per worker: it is the CPU-heavy part (~11 s, a few hundred MB on an enlarged copy of
+# the page); 2026-10-08's load test ran 4 at once per worker and saturated 8 CPUs and 2.5 GB, delaying the AI calls
+TESSERACT_AT_ONCE = _int("TESSERACT_AT_ONCE", 1)
 VF_WAIT_MINUTES = _float("VF_WAIT_MINUTES", 15)      # a page the daily limit refused waits this long
 VF_QUOTA_TZ = _str("VF_QUOTA_TZ", "America/Los_Angeles")   # the day the providers' daily quotas count in
 

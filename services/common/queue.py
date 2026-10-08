@@ -61,6 +61,9 @@ def wake_grouper(bid, reason="a page was read"):
 def wake_teacher(reason):
     """Tell vf-teacher there may be work. The message is only a wake-up: staging.lesson is the state, so several
     wake-ups for the same work are harmless. Publish AFTER the database commit, or the teacher may look too early."""
+    from common import trace
+    if trace.is_muted():                   # a test's correction or label: never a real teacher call (2026-10-08: the
+        return                             # test suite woke it and it paid the text model for a test's lesson)
     import json
     conn = connect()
     try:

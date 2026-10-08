@@ -206,6 +206,10 @@ def transcribe(png_bytes, spec):
 
 
 TRANSCRIBE_TOKENS = 12000
+# A mapping's answer allowance. 4,096 cut long tables (2026-10-08's load test: 5 answers stopped at exactly 4,096
+# tokens, "finish_reason": "length"); every retry was paid and cut the same way. 8,192 is within every text model the
+# settings offer; an answer still cut is salvaged (salvage_map), never thrown away.
+MAP_TOKENS = 8192
 
 
 def salvage_blocks(text):
@@ -221,11 +225,47 @@ def salvage_blocks(text):
     return out
 
 
+def salvage_map(text):
+    """A mapping answer the limit cut (or that broke): its "fields" object when it is whole (it comes first), and every
+    whole row of its "lines" before the break. {} when nothing whole is left."""
+    dec, out, t = json.JSONDecoder(), {}, text or ""
+    m = re.search(r'"fields"\s*:\s*\{', t)
+    if m:
+        try:
+            out["fields"] = dec.raw_decode(t, m.end() - 1)[0]
+        except json.JSONDecodeError:
+            pass
+    m = re.search(r'"lines"\s*:\s*\[', t)
+    if m:
+        rows, i = [], m.end()
+        while True:
+            j, k = t.find("{", i), t.find("]", i)
+            if j < 0 or 0 <= k < j:                         # no more rows, or the array closed
+                break
+            try:
+                row, i = dec.raw_decode(t, j)
+            except json.JSONDecodeError:                    # the row the limit cut: everything before it is kept
+                break
+            if isinstance(row, dict):
+                rows.append(row)
+        out["lines"] = rows
+    return out
+
+
 def map_text(prompt, spec):
     """Step 2 of read-then-map: a text-only call (the transcript and the field list are in the prompt). Returns
-    (the answer's JSON object, meta)."""
-    text, meta = _post(spec, [{"type": "text", "text": prompt}], max_tokens=4096)
-    raw = _json(text)
+    (the answer's JSON object, meta). An answer cut at the allowance (or broken) is salvaged: its header fields and the
+    rows before the break (meta "salvaged", "cut"); only an answer with nothing whole in it fails."""
+    text, meta = _post(spec, [{"type": "text", "text": prompt}], max_tokens=MAP_TOKENS)
+    try:
+        raw = _json(text)
+    except json.JSONDecodeError:
+        raw = salvage_map(text)
+        if not raw:
+            raise
+        meta = {**meta, "salvaged": len(raw.get("lines") or [])}
+    if (meta.get("tokens_out") or 0) >= MAP_TOKENS - 16:
+        meta = {**meta, "cut": True}                       # the table's last rows may be missing
     return (raw if isinstance(raw, dict) else {}), meta
 
 

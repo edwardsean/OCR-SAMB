@@ -45,6 +45,8 @@ def error_of(row):
 def cause(error):
     """Pure: (cause, a sentence for people) from a raw error. cause: setting | connection | answer | other."""
     e = error or ""
+    if e.startswith("Stopped on purpose"):
+        return "other", "Dihentikan dengan sengaja. Coba lagi untuk membacanya."
     if re.search(r"HTTP (400|401|403|404)\b|refused the API key|no API key|NotSet|isn't set|no model", e):
         return "setting", f"Pengaturan model bermasalah (alamat, model atau kunci API). Periksa {WHERE}, lalu coba lagi."
     if re.search(r"connect|ssl|timeout|timed out|eof|HTTP 5\d\d|unavailable after retries", e, re.I):
@@ -60,6 +62,11 @@ def blocked_text(why):
         return None
     if why.startswith("NotSet"):
         return f"Model belum diatur: halaman menunggu dan lanjut sendiri setelah diatur di {WHERE}."
+    if "free quota is used up" in why:
+        model = re.search(r"DailyLimit: (\S+)'s free quota", why)
+        name = model.group(1).split(":", 1)[-1] if model else "model AI"
+        return (f"Kuota gratis {name} di Alibaba sudah habis. Ganti model di {WHERE}, atau aktifkan penagihan "
+                "(top up) untuk model itu di Alibaba Model Studio. Sampai itu, halaman menunggu.")
     if why.startswith("DailyLimit"):
         m = re.search(r"(\d+) min left", why)
         return "Batas AI dari penyedia sedang berlaku: halaman lanjut sendiri" + (f" dalam ±{m.group(1)} menit." if m else ".")
@@ -74,7 +81,7 @@ def view(row):
     k = kind(row.get("status"), row.get("extract_status"), row.get("waits"))
     err = error_of(row)
     c, reason = cause(err) if k else (None, None)
-    if k == "crashed" and c == "other":
+    if k == "crashed" and c == "other" and not (err or "").startswith("Stopped on purpose"):
         reason = "Pemrosesan halaman ini berhenti di tengah jalan."
     return {"kind": k, "cause": c, "reason": reason, "published": bool(row.get("published")),
             "can_retry": bool(k) and not row.get("published"), "error": err}
