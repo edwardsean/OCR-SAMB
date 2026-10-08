@@ -76,11 +76,18 @@ export type Step =
 /** an order's place in its batch's step 4 */
 export type OrderStep = "need" | "depends" | "outside" | "waiting" | "ready" | "published";
 export type PageRef = { batch_id: string; page_no: number; file_name: string; thumb: string | null; error: string | null };
+/** A stuck page (services/api/stuck.py): why, in plain words, and whether a person may try it again. */
+export type StuckPage = PageRef & {
+  kind: "crashed" | "call_failed"; cause: "setting" | "connection" | "answer" | "other"; reason: string;
+  published: boolean; can_retry: boolean;
+};
+export type FailedFile = { batch_id: string; file_name: string; error: string | null };
 export type UploadDetail = {
   upload: Upload; files: Scan[]; steps: Step[]; next: StepKey | null; finished: boolean;
   /** the open steps among 1–3: where an order's missing document may still be */
   blockers: StepKey[];
-  orders: Record<string, OrderStep>; failed: PageRef[]; unsure: PageRef[];
+  orders: Record<string, OrderStep>; failed: StuckPage[]; unsure: PageRef[];
+  failed_files: FailedFile[]; not_now: string | null;
 };
 export type SearchResult = {
   q: string; uploads: Upload[];
