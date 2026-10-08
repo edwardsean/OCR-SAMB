@@ -1,9 +1,11 @@
-// One page: what it is, and (once read) the paper beside its fields, where a value is corrected by clicking it on
-// the paper (PageFixer).
+// One page: what it is (a person can change a type the classifier got wrong: Relabel), and (once read) the paper
+// beside its fields, where a value is corrected by clicking it on the paper (PageFixer).
 import Link from "next/link";
 import { getWords, need, one, type SearchParams } from "@/lib/api";
 import type { PageDetail } from "@/lib/types";
+import AutoRefresh from "@/components/AutoRefresh";
 import PageFixer from "./PageFixer";
+import Relabel from "./Relabel";
 
 export async function generateMetadata({ params }: { params: Promise<{ n: string }> }) {
   return { title: `Halaman ${(await params).n}` };
@@ -42,6 +44,8 @@ export default async function PageView({ params, searchParams }: { params: Promi
           {(p.quality_flags ?? []).map((f) => <span key={f} className={`badge ${f}`}>{w.FLAG[f] ?? f}</span>)}
           {p.qr_text && <span className="badge qr">ada kode QR</span>}
         </p>
+        {(t || d.label) && <Relabel batch={id} d={d} />}
+        <AutoRefresh every={4000} active={p.status === "queued"} />
       </section>
 
       {!p.upright_path ? (

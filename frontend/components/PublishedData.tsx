@@ -81,7 +81,7 @@ export default function PublishedData({ pv }: { pv: Published }) {
   const toCheck = pv.docs.reduce((n, d) => n + d.to_check, 0);
   const pages: SpreadPage[] = pv.docs.flatMap((d) => d.pages.map((p, k) => ({
     n: p.n, img: p.img, alt: `${d.name}, halaman ${p.n} di scan`,
-    tab: <>{w.DOC_SHORT[d.type] ?? d.type}{d.pages.length > 1 ? ` (${k + 1})` : ""}<small>hal. {p.n}</small></>,
+    tab: <><span className={`tchip t-${d.type}`}>{w.DOC_SHORT[d.type] ?? d.type}</span>{d.pages.length > 1 ? ` (${k + 1})` : ""}<small>hal. {p.n}</small></>,
   })));
   return (
     <SpreadProvider pages={pages}>

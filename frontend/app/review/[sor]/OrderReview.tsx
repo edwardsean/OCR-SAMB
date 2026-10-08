@@ -181,7 +181,7 @@ export default function OrderReview({ v, pub, fixed, back }: {
 
   const pages: SpreadPage[] = v.strip.filter((s) => s.img).map((s) => ({
     n: s.page, img: s.img!, alt: `${w.DOC[s.type] ?? s.kind}, ${ctx.pageName(s.page)}`, title: s.flag ? "ada yang perlu dicek di halaman ini" : undefined,
-    tab: <>{w.DOC_SHORT[s.type] ?? s.kind}<small>{ctx.pageName(s.page)}</small>{s.flag && <span className="tab-flag">!</span>}</>,
+    tab: <><span className={`tchip t-${s.type}`}>{w.DOC_SHORT[s.type] ?? s.kind}</span><small>{ctx.pageName(s.page)}</small>{s.flag && <span className="tab-flag">!</span>}</>,
   }));
   let k = 0;
 
@@ -223,7 +223,7 @@ export default function OrderReview({ v, pub, fixed, back }: {
               {v.strip.map((s) => (
                 <Link key={s.page} className={cx("rv-thumb", s.flag && "flag")} href={`/batches/${ctx.at(s.page).batch}/pages/${ctx.at(s.page).page}`} title={`Buka ${ctx.pageName(s.page)}`}>
                   <div className="img" style={{ backgroundImage: `url('${s.thumb ?? ""}')` }}>{s.flag && <span className="dot">!</span>}</div>
-                  <b>{w.DOC_SHORT[s.type] ?? s.kind}</b>{ctx.pageName(s.page)}
+                  <span className={`tchip t-${s.type}`}>{w.DOC_SHORT[s.type] ?? s.kind}</span> {ctx.pageName(s.page)}
                 </Link>
               ))}
             </div>
@@ -232,7 +232,7 @@ export default function OrderReview({ v, pub, fixed, back }: {
               <p className="sub">Data sudah ditulis ke Satellite, beserta satu PDF untuk order ini. Order yang sudah terkirim tidak dicek lagi.</p>
               <div className="acts"><a className="btn primary" href={`/documents/${v.sor}.pdf`}>Buka {v.sor}.pdf</a></div>
               <div className="passed">{v.bundle.documents.map((d, i) => (
-                <span className="chip" key={i}>{w.DOC_SHORT[d.type] ?? d.type} · {d.lines} baris · {d.confidence !== null ? Math.round(d.confidence * 100) : "—"}% terverifikasi</span>
+                <span className="chip" key={i}><span className={`tchip t-${d.type}`}>{w.DOC_SHORT[d.type] ?? d.type}</span> {d.lines} baris · {d.confidence !== null ? Math.round(d.confidence * 100) : "—"}% terverifikasi</span>
               ))}</div>
               <details className="pub-rows" open><summary><b>Data yang ditulis ke Satellite</b>{" "}
                 <Link className="small" href={`/published?sor=${v.sor}#${v.sor}`}>· lihat di Data terkirim</Link></summary>

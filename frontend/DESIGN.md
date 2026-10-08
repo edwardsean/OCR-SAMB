@@ -14,6 +14,13 @@ colors:
   cap-merah: "#B3261E"    # red stamp: needs a person, errors
   cap-hijau: "#1E6B45"    # green stamp: done, matches
   cap-kuning: "#8A5A00"   # amber: waiting for the system
+  jenis-fp: "#5B2C91"     # document types: the filled tag of a page's type (white text), never a state
+  jenis-ttg: "#0B6E7A"
+  jenis-po: "#A3286A"
+  jenis-sj: "#4D6A12"
+  jenis-fpj: "#1D6FA3"
+  jenis-pel: "#7A4A2E"
+  jenis-lanjutan: "{colors.pensil}"
 typography:
   title:
     fontFamily: Plus Jakarta Sans
@@ -74,6 +81,13 @@ accountant reconciles them. Each order's state is a rubber stamp.
   9.7:1. Never a status.
 - **Cap merah / cap hijau / cap kuning:** stamp inks, used only for state: needs a person (6.5:1), done (6.5:1),
   waiting (5.9:1). No tinted pastel backgrounds: a state is ink on paper.
+- **Jenis dokumen** (the user, 2026-10-08: "for each type of documents, a different color in their label, so i can
+  distinguish better"): a page's type is a small filled tag with white text (`.tchip.t-<TYPE>`, `.ttag` on a
+  thumbnail), one hue per type, each away from the stamp inks and the ballpoint: Faktur Penjualan violet #5B2C91
+  (9.5:1), Tanda Terima teal #0B6E7A (6.0:1), PO plum #A3286A (6.8:1), Surat Jalan moss #4D6A12 (6.2:1), Faktur
+  Pajak cerulean #1D6FA3 (5.4:1), Pelunasan brown #7A4A2E (7.4:1). A continuation is pensil, "other" is pensil
+  outlined, and "unsure" is the red stamp, because it needs a person. A type is filled, a state is ink: never use a
+  type's colour for anything else.
 
 ## Typography
 
@@ -113,6 +127,8 @@ containment at most.
   One per order. `.cap.besar` (rotated a few degrees) only in an order's own header.
 - **Reconciliation:** `table.rekon`: label left, amount right, the difference under a rule, the result double-ruled.
 - **State of a value:** plain text in its ink with a leading mark (✓ for backed, ! for check it).
+- **Type tag:** `.tchip.t-<TYPE>` wherever a page's or document's type is named (registers, tiles, tabs, the page
+  header); `.ttag` on a thumbnail. The colour comes from `--jenis` set by `.t-<TYPE>`.
 - **Buttons:** `.btn` (outlined, ink), `.btn.primary` (filled biru pulpen, one per screen area), `.linkbtn`.
 - **Technical folds:** `details.tech`, closed, at the end of a screen.
 

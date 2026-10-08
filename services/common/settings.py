@@ -41,7 +41,7 @@ ROWS = {
         "looks again at a value nothing printed backs",
         "asks which store the goods go to",
         "reads the region a handwriting or stamp tip points to",
-        "page-type teacher: improves the page-type descriptions the classification model reads (Konteks Jev)"]),
+        "page-type teacher: improves the page-type descriptions the classification model reads (Konteks klasifikasi)"]),
     "text": ("Text model", "works on the copy of the page, as text", [
         "fills in the fields from the copy, twice",
         "applies learned tips to a page",

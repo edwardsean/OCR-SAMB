@@ -107,9 +107,10 @@ export default async function ScanPage({ params, searchParams }: { params: Promi
             );
           })}
         </div>
-        <p className="note">Label di pojok kiri: <b>FP</b> Faktur Penjualan, <b>TTG</b> Tanda Terima, <b>PO</b> Purchase Order,
-          {" "}<b>LANJUT</b> halaman lanjutan, <b>?</b> jenis belum pasti. Tanda di pojok kanan: ↻ diputar, ▮ ada pita hitam,
-          ◌ cetakan pudar, ✕ kualitas buruk, ▦ ada kode QR. Halaman yang pudar belum selesai dibaca.</p>
+        <p className="note legend-types">Label di pojok kiri:{" "}
+          {TYPES.map((t) => <span key={t}><i className={`tchip t-${t}`}>{t === "CONTINUATION" ? "LANJUT" : t === "unsure" ? "?" : t}</i> {w.DOC[t] ?? t}</span>)}.
+          Tanda di pojok kanan: ↻ diputar, ▮ ada pita hitam, ◌ cetakan pudar, ✕ kualitas buruk, ▦ ada kode QR. Halaman yang pudar
+          belum selesai dibaca.</p>
       </section>
 
       <p className="tech-link"><a href={`/teknis/scan/${id}`}>Detail teknis</a> <small className="muted">(untuk tim pengembang:

@@ -197,9 +197,11 @@ LESSON_HEAD = [
                                         "untuk mengukur seberapa baik sistem belajar."),
     (r"Waiting: the teacher couldn't reach its AI.*", "Menunggu: guru AI belum bisa menghubungi AI-nya. Dicoba lagi "
                                                      "otomatis setiap 30 menit."),
-    (r"Waiting: a tip for this kind of document is waiting.*", "Menunggu: ada kiat untuk jenis dokumen ini yang masih "
-                                                              "menunggu persetujuan. Satu perubahan sekaligus, jadi "
-                                                              "pelajaran ini menunggu keputusan itu."),
+    (r"Waiting: an earlier tip for this kind of document is still open.*", "Menunggu: kiat sebelumnya untuk jenis "
+                                                                          "dokumen ini masih terbuka di layar Pengetahuan "
+                                                                          "AI. Satu perubahan sekaligus, jadi pelajaran "
+                                                                          "ini menunggu sampai kiat itu dipakai atau "
+                                                                          "ditolak."),
     (r"Waiting for the teacher \((\d+) lessons? ahead\)\.", r"Menunggu guru AI (\1 pelajaran di depan)."),
     (r"Waiting for the teacher to start\.", "Menunggu guru AI mulai."),
     (r"The teacher is writing a tip from your fix…", "Guru AI sedang menulis kiat dari perbaikan Anda…"),
@@ -208,8 +210,7 @@ LESSON_HEAD = [
                                                                "halaman baru masuk."),
     (r"Testing the tip on other pages \((\d+) of (\d+)\)…", r"Menguji kiat di halaman lain (\1 dari \2)…"),
     (r"Testing the tip on other pages…", "Menguji kiat di halaman lain…"),
-    (r"The tip passed its test\..*", "Kiat lulus uji. Menunggu persetujuan di layar Pengetahuan AI (perbaikan yang "
-                                    "diketik, bukan diklik di kertas, disetujui oleh orang)."),
+    (r"The tip passed its test\..*", "Kiat lulus uji. Sedang diaktifkan…"),
     (r"The first tip didn't pass its test\..*", "Kiat pertama tidak lulus uji. Guru AI mencoba lagi…"),
     (r"Learned\. Applying the tip to stored pages \((\d+) of (\d+)\)…",
      r"Sudah dipelajari. Menerapkan kiat ke halaman tersimpan (\1 dari \2)…"),

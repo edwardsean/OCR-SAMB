@@ -83,7 +83,7 @@ export default function LabelForm({ d }: { d: LabelData }) {
                       title={`Halaman ${n.page_no}${n.type ? " · " + (n.type === "unsure" ? "belum pasti" : w.DOC[n.type] ?? n.type) : ""}`}>
                 {/* eslint-disable-next-line @next/next/no-img-element */}
                 <img src={`/img/${n.thumb}`} alt={`halaman ${n.page_no}`} loading="lazy" />
-                <span>{n.page_no}{n.type ? (n.type === "unsure" ? " · ?" : ` · ${n.type}`) : ""}</span></button>
+                <span>{n.page_no} {n.type && <i className={`tchip t-${n.type}`}>{n.type === "unsure" ? "?" : w.DOC_SHORT[n.type] ?? n.type}</i>}</span></button>
             ))}
           </div>
         </section>

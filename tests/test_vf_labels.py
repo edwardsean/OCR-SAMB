@@ -83,8 +83,8 @@ def test_one_change_at_a_time():
     def ask(l):
         asked.append(l)
         return {"a": "no_change", "b": "proposed", "c": "proposed"}[l]
-    assert [s for _, s in lesson.ask_in_turn(["a", "b", "c"], ask)] == ["no_change", "proposed"]
-    assert asked == ["a", "b"]                   # c waits until a person approves or rejects b
+    assert [s for _, s in lesson.ask_in_turn(["a", "b", "c"], ask)] == ["no_change", "proposed", "proposed"]
+    assert asked == ["a", "b", "c"]              # b's change is active at once (2026-10-08): c is taught on it
     asked.clear()
     assert [s for _, s in lesson.ask_in_turn(["a", "r", "c"], lambda l: asked.append(l) or
                                              {"a": "failed", "r": "retry", "c": "proposed"}[l])] == ["failed", "retry"]

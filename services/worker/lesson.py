@@ -7,17 +7,18 @@ proposal:
   Jev is asked again with the old context and with the new one, side by side, on every practice-labelled page
   (truth = the label) and on anchor pages (decided with the QR code or the FP layout; truth = that decision).
   Pass = more practice pages right, none becomes wrong, no anchor changes, unsure does not go up.
-Only a change that passes becomes a proposed context (context #N); a person approves or rejects it on the Context
-screen. After approval the exam pile is scored, for the report. Exam-pile labels are never sent to the teacher:
-refused here, before any call.
+A change that passes becomes the active context (context #N) at once, with no person approving it (the user,
+2026-10-08: "i dont want a person to approve it, since that would be a burden, i want that if it passes, then the
+context is changed"); a person can take the context back to an earlier version on Teknis → Konteks klasifikasi. Once
+it is active the exam pile is scored, for the report. Exam-pile labels are never sent to the teacher: refused here,
+before any call.
 
-Runs by itself: the vf-teacher service consumes q.lessons (a label made a lesson; a context was approved or
-rejected) and runs the waiting lessons one at a time, in order.
+Runs by itself: the vf-teacher service consumes q.lessons (a label made a lesson; a context was taken back) and runs
+the waiting lessons one at a time, in order, each against the context active when it starts.
 
   python -m worker.lesson backfill <batch>   lessons for labels that already exist (e.g. cloned from v1)
-  python -m worker.lesson run [limit]        the same as a wake-up, by hand: one change at a time (stops at the first
-                                             proposal until a person approves or rejects it); lessons a newer context
-                                             already gets right are closed
+  python -m worker.lesson run [limit]        the same as a wake-up, by hand: one change at a time, each used at once;
+                                             lessons a newer context already gets right are closed
   python -m worker.lesson serve              the vf-teacher service
   python -m worker.lesson exam <version>     score an approved context on the exam pile
 """
@@ -102,20 +103,20 @@ def prompt(ctx, label, note, state, jev, earlier=None):
 EARLIER TRY on this page: you proposed {json.dumps(earlier[0], ensure_ascii=False)}. It was not kept: {earlier[1]}.
 Propose a DIFFERENT change.
 """ if earlier else "")
-    facts = "".join(f"\n- {code} (Jev gave it {x['weight']}) lists {', '.join(f'{n} ({h})' for n, h in x['fields'].items())},"
+    facts = "".join(f"\n- {code} (the classifier gave it {x['weight']}) lists {', '.join(f'{n} ({h})' for n, h in x['fields'].items())},"
                     f" which were found on this page; {label} lists none of them."
                     for code, x in pulls(ctx, label, state, jev).items())
     facts = (f"\nFACTS, worked out from the CONTEXT and the reading (not guesses):{facts}\n" if facts else "")
     return f"""You are helping improve a document classifier for PT Sarana Abadi Makmur Bersama (SAMB), an Indonesian
-distributor. The classifier (Jev) never sees the image: it reads only what an AI OCR model extracted from the page
+distributor. The classifier (an instruct language model) never sees the image: it reads only what an AI OCR model extracted from the page
 (below) and picks a document type using the CONTEXT below: each type's description, titles, and the fields it has
 and how often.
 
 A person looked at this page and said it is: {label}.{(' Their note: ' + note) if note else ''}
-Jev said: {jev.get('choice')} with confidence {jev.get('confidence')}; probabilities {json.dumps(jev.get('probabilities'))}.
+The classifier said: {jev.get('choice')} with confidence {jev.get('confidence')}; probabilities {json.dumps(jev.get('probabilities'))}.
 
-How Jev weighs the CONTEXT: it compares the fields found on the page with each type's field list. A field found on
-this page that {label}'s list does not have, but another type Jev considered has as "always", pulls Jev toward that
+How the classifier weighs the CONTEXT: it compares the fields found on the page with each type's field list. A field found on
+this page that {label}'s list does not have, but another type the classifier considered has as "always", pulls the classifier toward that
 other type (for example an SOR plus PPN and Total look like SAMB's invoice, FP). A useful change adds such a field to
 {label} ("field_for_type", with a note naming the customer that prints it), or says it in {label}'s description
 ("edit_type" "what": one sentence naming the customer and those fields). document_title and page_marker are on every
@@ -125,7 +126,7 @@ right and none come out wrong.
 Look at the image, then answer with ONE JSON object. Replace every <...> with real content; never copy a <...> or
 leave an optional key you don't use (omit it instead):
 {{"evidence": "<what is VISIBLE on this page that shows it is a {label}, quoting printed text>",
-  "why_missed": "<why Jev, reading only the AI OCR's fields, was unsure or chose differently>",
+  "why_missed": "<why the classifier, reading only the AI OCR's fields, was unsure or chose differently>",
   "change": ONE of
     {{"kind": "field_for_type", "type": "{label}", "field": "<a name from FIELD LIST>", "how_often": "<always|usually|sometimes>", "note": "<up to 160 chars: which customer prints it, and its printed label>"}}
     {{"kind": "edit_type", "type": "{label}", "what": "<the type's new description, up to 400 chars>", "titles_add": ["<a title printed on this page>"], "not_for": "<what it is easily mistaken for>"}}
@@ -138,7 +139,7 @@ change what existing fields mean. Keep text short. One change only.
 
 CONTEXT: {json.dumps(types, ensure_ascii=False)}
 FIELD LIST: {json.dumps(fields, ensure_ascii=False)}
-WHAT THE AI OCR READ (all Jev saw): {json.dumps(state, ensure_ascii=False)}
+WHAT THE AI OCR READ (all the classifier saw): {json.dumps(state, ensure_ascii=False)}
 """
 
 
@@ -242,7 +243,7 @@ def new_field_problems(change, page):
 
 
 def approved_after(c, version, when):
-    """Was this context approved by a person after `when` (the seed never was)?"""
+    """Was this context made active after `when` (by the replay, or a person taking it back; never the seed)?"""
     r = c.execute("SELECT approved_at FROM staging.context_version WHERE version=%s", (version,)).fetchone()
     return bool(r and r["approved_at"] and r["approved_at"] > when)
 
@@ -267,7 +268,7 @@ def run_one(lesson):
     if not page["fields_all"]:
         return done("failed", error="the AI OCR hasn't read this page yet")
     if newer:
-        # A change was approved since the miss: if it already fixed this page, there's nothing left to teach. Only
+        # A change was made active since the miss: if it already fixed this page, there's nothing left to teach. Only
         # then: re-asking the same context could pass a borderline page by chance and hide the weakness.
         votes = page["type_votes"] or {}
         now = _machine(votes) if votes.get("context_version") == ctx_v else jev_decides(
@@ -322,10 +323,16 @@ def run_one(lesson):
             if gate["jev_errors"]:                   # Jev failing isn't the teacher's fault: try again later
                 return later(gate_summary(gate))
             if gate["passed"]:
-                with db.connect() as c:
-                    version = context.propose(c, new, ctx_v, f"teacher:{teacher.MODEL}",
-                                              f"{change['kind']} for {page['label']} from page {n}")
-                    c.execute("UPDATE staging.context_version SET gate=%s WHERE version=%s", (Json(gate), version))
+                try:
+                    with db.connect() as c:
+                        version = adopt(c, new, ctx_v, f"teacher:{teacher.MODEL}",
+                                        f"{change['kind']} for {page['label']} from page {n}", gate)
+                except ValueError as e:              # a person took the context back meanwhile: taught again on it
+                    return later(f"not used: {e}"[:300])
+                try:                                 # the exam pile it was never built from: for the report
+                    score_exam(version)
+                except Exception as e:
+                    print("exam scoring failed:", e, flush=True)
                 return done("proposed", answer={**answer, "tries": tries}, proposal=version)
         why = "; ".join(problems) if problems else gate_summary(gate)
         tries.append({"change": change, "evidence": answer.get("evidence"), "why_missed": answer.get("why_missed"),
@@ -337,14 +344,24 @@ def run_one(lesson):
 MAX_FAILED_CALLS = 3
 
 
+def adopt(c, new, parent, created_by, note, gate):
+    """A change that passed the replay is used at once (the user, 2026-10-08: no person approves it): proposed and
+    made active in one transaction, so it never waits. ValueError when another context became active since `parent`
+    (a person took the context back while the lesson was taught): nothing is written."""
+    version = context.propose(c, new, parent, created_by, note)
+    c.execute("UPDATE staging.context_version SET gate=%s WHERE version=%s", (Json(gate), version))
+    context.activate(c, version, context.AUTO)
+    return version
+
+
 def ask_in_turn(lessons, ask):
-    """One change at a time: stop at the first proposal. It was replayed against the active context, and the next
-    lesson must be asked against whatever a person approves (or keeps). Also stop when a model can't be reached.
-    A generator, so each lesson's result shows as soon as it is known."""
+    """One lesson at a time, in order. A change that passed is already active, and the next lesson starts from it
+    (run_one loads the active context; one a newer context already gets right is closed without a call). Stop when a
+    model can't be reached. A generator, so each lesson's result shows as soon as it is known."""
     for l in lessons:
         status = ask(l)
         yield l, status
-        if status in ("proposed", "retry"):
+        if status == "retry":
             return
 
 
@@ -356,14 +373,14 @@ def run(limit=50, quiet=False):
         lessons = c.execute("""SELECT l.* FROM staging.lesson l JOIN staging.page p USING (batch_id, page_no)
                                WHERE l.status='waiting' AND p.upright_path IS NOT NULL
                                ORDER BY l.created_at LIMIT %s""", (limit,)).fetchall()
-    if pending:
+    if pending:                                 # from before changes were used at once (2026-10-08)
         if not quiet:
             print(f"proposal context #{pending[0]['version']} waits on the Context screen: approve or reject it first")
         return
     for l, status in ask_in_turn(lessons, run_one):
         print(f"page {l['page_no']} ({l['label']}): {status}", flush=True)
         if status == "proposed":
-            print("one change at a time: approve or reject it on the Context screen", flush=True)
+            print("the change passed the replay and is the active context now", flush=True)
         if status == "retry":
             print("a model couldn't be reached: the lesson waits and is retried later", flush=True)
     if not lessons and not quiet:
@@ -408,7 +425,7 @@ def teach_wiki():
 
 
 def score_exam(version):
-    """After a person approved a context: how does it do on the exam pile it was never built from? (report only)"""
+    """Once a context is active: how does it do on the exam pile it was never built from? (report only)"""
     with db.connect() as c:
         ctx = c.execute("SELECT content FROM staging.context_version WHERE version=%s", (version,)).fetchone()["content"]
         exam = c.execute("""SELECT p.batch_id, p.page_no, p.fields_all, p.qr_text, p.layout_score, p.fp_title,

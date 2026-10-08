@@ -261,7 +261,9 @@ def scan(batch_id: str):
 @router.get("/scans/{batch_id}/pages/{page_no}", tags=[SCANS], summary="One page, with its fields and where each sits")
 def page(batch_id: str, page_no: int):
     """One page for the page viewer: what it is, its image, and (once read) its fields with where each sits on the
-    paper, its table rows, and the words a person can click to correct a value (app._fix_view)."""
+    paper, its table rows, and the words a person can click to correct a value (app._fix_view). Also its type: a
+    person's (`label`), the classifier's (`machine`), and why it can't be changed now (`relabel_refused`, or null)."""
+    from api import relabel
     A = _a()
     with db.connect() as c:
         b = c.execute("SELECT id, file_name, page_total, status FROM staging.scan_batch WHERE id=%s",
@@ -271,9 +273,30 @@ def page(batch_id: str, page_no: int):
             return _missing("no such page")
         pc = verify.load(c, batch_id, page_no)
         fixv = A._fix_view(c, p, pc) if A.VF else None
+        rl = relabel.load(c, batch_id, page_no)
     keep = ("page_no", "status", "doc_type", "type_status", "outcome", "quality_flags", "qr_text", "upright_path",
             "original_path", "thumb_upright_path", "thumb_path", "error")
-    return _ok({"scan": b, "page": {k: p.get(k) for k in keep}, "fix": fixv, "upload": A._upload_of(batch_id)})
+    m = (p.get("type_votes") or {}).get("machine") or {}
+    lab = rl["label"]
+    return _ok({"scan": b, "page": {k: p.get(k) for k in keep}, "fix": fixv, "upload": A._upload_of(batch_id),
+                "label": lab and {k: lab[k] for k in ("label", "labelled_by", "labelled_at", "note")},
+                "machine": {"status": m.get("status"), "doc_type": m.get("doc_type")} if m else None,
+                "relabel_refused": relabel.refusal(p["status"], rl["page"]["published"])})
+
+
+@router.get("/scans/{batch_id}/pages/{page_no}/type-lesson", tags=[TYPES],
+            summary="What a person's type for a page is doing now (the status bar)")
+def type_lesson(batch_id: str, page_no: int):
+    """After a person changes a page's type: the page processed again as that type, the teacher finding why the
+    classifier missed it and testing one change to its context, a person approving the change (api/relabel.py).
+    `final` = nothing more happens by itself. 404 when the page has no type from a person."""
+    from api import relabel
+    with db.connect() as c:
+        d = relabel.load(c, batch_id, page_no)
+    lp = relabel.progress(d, bahasa.DOC) if d["page"] else None
+    if not lp:
+        return _missing("no type from a person on this page")
+    return _ok({**lp, "steps": [{"label": label, "state": state} for label, state in lp["steps"]]})
 
 
 class Retry(BaseModel):

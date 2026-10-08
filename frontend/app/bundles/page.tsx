@@ -72,7 +72,7 @@ export default async function BundlesPage({ searchParams }: { searchParams: Sear
                         {/* eslint-disable-next-line @next/next/no-img-element */}
                         <span className="bx-img">{doc.thumb && <img src={doc.thumb} alt="" loading="lazy" />}
                           {doc.pages.length > 1 && <em>{doc.pages.length} hal.</em>}</span>
-                        <b>{w.DOC_SHORT[doc.type] ?? doc.type}</b>
+                        <span className={`tchip t-${doc.type}`}>{w.DOC_SHORT[doc.type] ?? doc.type}</span>
                         <span>hal. {range(doc.page_from, doc.page_to)}</span>
                         {b.many_scans && <small className="bx-scan" title={doc.scan}>{own[doc.scan]}</small>}
                         {doc.joined && <small>{doc.joined}</small>}

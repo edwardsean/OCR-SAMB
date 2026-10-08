@@ -118,9 +118,17 @@ export type PageDetail = {
     error: string | null;
   };
   fix: FixView | null;
+  /** The page's type from a person (Ubah jenis, or the Label screen), and what the classifier said. */
+  label: { label: string; labelled_by: string | null; labelled_at: string; note: string | null } | null;
+  machine: { status: string | null; doc_type: string | null } | null;
+  /** Why its type can't be changed now (its order is sent to Satellite; it is being processed), or null. */
+  relabel_refused: string | null;
 };
 
-export type Lesson = { steps: { label: string; state: string }[]; headline: string; tip: string | null; final: boolean };
+export type Lesson = {
+  steps: { label: string; state: string }[]; headline: string; tip: string | null; final: boolean;
+  why?: string | null; detail?: string | null;
+};
 
 export type OrderRow = {
   sor_no: string; status: string; customer_name: string | null; reviewed_by: string | null; docs: string[];
