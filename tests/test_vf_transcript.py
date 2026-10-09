@@ -75,6 +75,33 @@ def test_empty_cells_keep_their_place():
     assert "| 4 |  | 253,444" in transcript.render(BLOCKS)
 
 
+def test_a_row_whose_cells_hold_nothing_keeps_its_text():
+    """BATCH-20261008-03 p28 (Duta Buah's receiving note): PO.2026.09.32006 is printed across two columns above the
+    first row; the AI OCR copied it as a table row with six empty cells, and the text model was handed an empty line
+    ("[b13] table_row (x 41-164, y 295-308)  |  |  |  |  | "), so the receipt never got its PO number."""
+    b13 = {"id": "b13", "kind": "table_row", "text": "PO.2026.09.32006", "cells": ["", "", "", "", "", ""],
+           "box": [295, 41, 308, 164]}
+    assert transcript.block_text(b13) == transcript.shown(b13) == "PO.2026.09.32006"
+    assert "[b13] table_row (x 41-164, y 295-308) PO.2026.09.32006" in transcript.render([b13])
+    fa, mapping, _ = transcript.to_fields_all(
+        {"fields": {"purchase_order_no": {"block": "b13", "text": "PO.2026.09.32006", "value": "PO.2026.09.32006"}}},
+        [b13], NAMES, COLS)
+    assert fa["purchase_order_no"]["value"] == "PO.2026.09.32006" and not mapping["dropped"]
+
+
+def test_a_row_whose_cells_miss_words_shows_its_whole_line_too():
+    """b-d50bc72289 p1: the product's name is in the row's text and in none of its cells."""
+    row = {"id": "b29", "kind": "table_row", "box": [400, 20, 420, 980],
+           "text": "1 2288451 (8992826211017) FILMA MARGARINE SALTED SACHET 200GR Y N 2 CT 1x60 120 EAL 338,144 676,288",
+           "cells": ["1", "2288451", "(8992826211017)", "Y", "N", "2 CT", "1x60", "120 EAL", "338,144", "676,288"]}
+    assert transcript.cells_miss(row)[:2] == ["FILMA", "MARGARINE"]
+    assert transcript.shown(row).startswith("1 | 2288451 | (8992826211017) | Y") and \
+        "(whole line: 1 2288451 (8992826211017) FILMA MARGARINE" in transcript.shown(row)
+    assert transcript.grounded("FILMA MARGARINE SALTED SACHET 200GR", row)
+    assert transcript.block_text(row) == " ".join(row["cells"])            # cells first, as before
+    assert transcript.shown(BLOCKS[3]) == "0001 | VASELINE B/WASH 425ML | 4 |  | 253,444"   # cells hold it all
+
+
 def test_notes_never_enter_the_reading():
     """crosscheck._store_named reads every dict in fields_all as store words, and the page view counts them."""
     raw = {"fields": {"purchase_order_no": {"block": "b1", "text": "4505832724"}},
