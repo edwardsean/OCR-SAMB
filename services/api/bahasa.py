@@ -61,7 +61,8 @@ DESC_BY_TYPE = {("FP", "customer_name"): "nama pelanggan di bagian Kepada",
                 ("PO", "total"): "total pesanan"}
 COL = {"kode_material": "Kode material", "nama_produk": "Nama produk", "kemasan": "Kemasan",
        "qty_crt": "Qty (karton)", "qty_pcs": "Qty (pcs)", "item_code": "Kode barang",
-       "material_description": "Nama barang", "qty": "Qty", "uom": "Satuan", "product_code": "Kode produk",
+       "material_description": "Nama barang", "qty": "Qty", "uom": "Unit", "satuan": "Satuan (isi per kemasan)",
+       "product_code": "Kode produk",
        "product_description": "Nama produk", "unit_price": "Harga satuan", "discount": "Diskon"}
 
 # what an unsettled value does (the page viewer's fields; common.fields.DECIDES levels)

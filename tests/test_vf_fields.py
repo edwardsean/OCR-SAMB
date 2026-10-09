@@ -54,5 +54,9 @@ def test_project_lift_round_trip_on_v1_readings():
     for r in rows:
         f = {k: v for k, v in r["fields"].items()}
         back = project(lift(f, r["t"]), r["t"])
-        # a field v1 never read (a receipt's own totals, added for S2's checks) comes back empty
+        # a field or row column v1 never read (a receipt's own totals, added for S2's checks; a row's satuan, added
+        # 2026-10-09) comes back empty
+        if "lines" in back:
+            back["lines"] = [{k: v for k, v in row.items() if v is not None or k in old}
+                             for row, old in zip(back["lines"], f.get("lines") or [])]
         assert {k: v for k, v in back.items() if k in f or v is not None} == f, r["page_no"]

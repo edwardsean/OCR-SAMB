@@ -51,6 +51,7 @@ BY_EYE = ("visual",)      # read from the region's crop by the AI OCR
 CLAIM = re.compile(r"^\s*[-*]\s+`?([a-z][a-z_]*(?:\.[a-z_]+)?)`?\s*:\s*(.+?)\s*$")
 BRACKET = re.compile(r"\s*\[([^\[\]]*)\]\s*$")
 PAGE_REF = re.compile(r"(b-[0-9a-f]+)/(\d+)")
+CHAINS = re.compile(r"\(chains?\s+([\w-]+(?:\s*,\s*[\w-]+)*)\)")     # (chain 1100002424) or (chain 1100002312, 1100002314)
 REGION = re.compile(r"^region\s+(\d+)\s*,\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)$")
 NOT_PRINTED = "(not printed)"
 MIN_PAGES = 2             # a drafted claim needs examples on this many pages, in as many bundles, agreeing
@@ -70,8 +71,9 @@ def parse(md):
             out["title"] = line[2:].strip()
         elif line.startswith("## "):
             head = line[3:].strip()
-            m = re.search(r"\(chain\s+([\w-]+)\)", head)
-            cur = {"head": head, "chain": m.group(1) if m else None, "claims": [], "prose": []}
+            m = CHAINS.search(head)
+            chains = [x.strip() for x in m.group(1).split(",")] if m else []
+            cur = {"head": head, "chain": chains[0] if chains else None, "chains": chains, "claims": [], "prose": []}
             out["sections"].append(cur)
         elif cur is not None:
             m = CLAIM.match(line)
@@ -124,6 +126,22 @@ def section_head(chain, label):
     return ANY if chain is None else f"{label or 'customer'} (chain {chain})"
 
 
+def dropped(old_md, new_md):
+    """The claims of one page that another leaves out: [(section head, claim line)]. A claim is the same when its
+    section names the same customers and its field and text read the same (its brackets may differ). Installing a page
+    from the repo on a server (learn.install) checks this, so knowledge learned on that server isn't lost unseen."""
+    def key(s, c):
+        return tuple(s.get("chains") or ()) or ("any",), c["field"], flat(c["text"])
+    have = {key(s, c) for s in parse(new_md)["sections"] for c in s["claims"]}
+    return [(s["head"], c["line"]) for s in parse(old_md)["sections"] for c in s["claims"] if key(s, c) not in have]
+
+
+def covers(section, chain):
+    """Is this customer's section for this chain? A section may name several (Alfamart's DCs, a chain whose every
+    store is its own customer in Satellite): "## Alfamart (chain 1100002312, 1100002314)"."""
+    return bool(chain) and chain in (section.get("chains") or ([section["chain"]] if section.get("chain") else []))
+
+
 def claims_for(parsed, chain):
     """What a page of this customer is given: "Any customer", then the customer's own section (a claim there on the
     same field replaces the general one). A page whose customer isn't known gets "Any customer" only."""
@@ -131,7 +149,7 @@ def claims_for(parsed, chain):
     for s in (parsed or {}).get("sections") or []:
         if s["chain"] is None and s["head"].lower().startswith("any"):
             general += s["claims"]
-        elif chain and s["chain"] == chain:
+        elif covers(s, chain):
             own += s["claims"]
     mine = {c["field"] for c in own}
     return [c for c in general if c["field"] not in mine] + own
@@ -539,11 +557,13 @@ def draft(doc_type, examples, bundle_of, labels):
 def merge_draft(parsed, drafted, labels):
     """The page with the claims put in (a new claim replaces its section's claim on the same field, when that one
     says something else). Returns (sections, [claims added or changed])."""
-    sections = [{"head": s["head"], "chain": s["chain"], "claims": list(s["claims"]), "prose": list(s.get("prose") or [])}
+    sections = [{"head": s["head"], "chain": s["chain"], "chains": list(s.get("chains") or []),
+                 "claims": list(s["claims"]), "prose": list(s.get("prose") or [])}
                 for s in (parsed or {}).get("sections") or []]
     new = []
     for ch, c, _ in drafted:
-        s = next((x for x in sections if x["chain"] == ch and (ch or x["head"].lower().startswith("any"))), None)
+        s = next((x for x in sections if (covers(x, ch) if ch else
+                                          x["chain"] is None and x["head"].lower().startswith("any"))), None)
         if s is None:
             s = {"head": section_head(ch, labels.get(ch)), "chain": ch, "claims": [], "prose": []}
             sections.append(s)
@@ -586,7 +606,8 @@ def without(parsed, drop):
     """The page's sections with these claims taken out (the lint): drop = [(chain, field)]."""
     sections = []
     for s in (parsed or {}).get("sections") or []:
-        sections.append({"head": s["head"], "chain": s["chain"], "prose": list(s.get("prose") or []),
+        sections.append({"head": s["head"], "chain": s["chain"], "chains": list(s.get("chains") or []),
+                         "prose": list(s.get("prose") or []),
                          "claims": [c for c in s["claims"] if (s["chain"], c["field"]) not in drop]})
     return sections
 

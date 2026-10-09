@@ -22,6 +22,12 @@ def F(name, kind, source, label, desc):
 
 SQL = {"id": "text", "text": "text", "amount": "numeric(18,2)", "qty": "numeric(12,3)", "date": "date"}
 
+# How many pieces one pack holds (the user, 2026-10-09: "satuan is how many pcs is for 1 kemasan or box"). Kept as read,
+# never decides: the receipt check counts pieces with Satellite's pieces per carton, and `uom` still says what a
+# quantity counts (CTN, PCS). Only a printed number: an EA row stays empty (one piece is one piece).
+SATUAN = ("pieces in one pack (carton, box, dus): the number printed with or for the unit, e.g. 72 in CTN/72, 12 in "
+          "CTN12, 24 in 'Isi 24', 6 in '1x6'; never the quantity; empty when no such number is printed")
+
 DOCS = {
     "FP": {
         "name": "Faktur Penjualan", "about": "SAMB's own sales invoice · link ke SOR · cek qty & pajak",
@@ -59,6 +65,7 @@ DOCS = {
             F("material_description", "text", "6.1", "Material description", "item description"),
             F("qty", "qty", "6.1", "Qty", "quantity received (not ordered, not the pack size)"),
             F("uom", "text", "6.1", "UOM", "unit"),
+            F("satuan", "qty", "6.1", "Satuan", SATUAN),
         ],
     },
     "PO": {
@@ -77,6 +84,7 @@ DOCS = {
             F("product_description", "text", "6.1", "Product description", "item description"),
             F("qty", "qty", "6.1", "Qty", "quantity"),
             F("uom", "text", "6.1", "UOM", "unit"),
+            F("satuan", "qty", "6.1", "Satuan", SATUAN),
             F("unit_price", "amount", "6.1", "Unit price", "unit price"),
             F("discount", "text", "6.1", "Discount", "discount(s) as printed, e.g. '3.00% / 3.50%'"),
         ],
@@ -230,7 +238,8 @@ LINE_CANON = {f["name"]: f for f in [
     CF("samb_material_code", "id", "SAMB's material code (column 'Kode' on SAMB's invoice)"),
     CF("qty", "qty", "the quantity: on a goods receipt the quantity RECEIVED (Diterima, Qty Received), not the quantity "
                      "ordered and not the pack size (24/CTN); on an order the quantity ordered"),
-    CF("uom", "text", "unit of measure"),
+    CF("uom", "text", "unit of measure: what the quantity counts (CTN, PCS, EA)"),
+    CF("satuan", "qty", SATUAN),
     CF("qty_crt", "qty", "on SAMB's invoice QTY is printed 'CRT / PCS': the number BEFORE the slash"),
     CF("qty_pcs", "qty", "on SAMB's invoice QTY is printed 'CRT / PCS': the number AFTER the slash"),
     CF("kemasan", "text", "packaging (Kemasan) on SAMB's invoice"),
@@ -240,9 +249,10 @@ LINE_CANON = {f["name"]: f for f in [
 LINE_MAP = {
     "FP": {"samb_material_code": "kode_material", "description": "nama_produk", "kemasan": "kemasan",
            "qty_crt": "qty_crt", "qty_pcs": "qty_pcs"},
-    "TTG": {"customer_item_code": "item_code", "description": "material_description", "qty": "qty", "uom": "uom"},
+    "TTG": {"customer_item_code": "item_code", "description": "material_description", "qty": "qty", "uom": "uom",
+            "satuan": "satuan"},
     "PO": {"customer_item_code": "product_code", "description": "product_description", "qty": "qty", "uom": "uom",
-           "unit_price": "unit_price", "discount": "discount"},
+           "satuan": "satuan", "unit_price": "unit_price", "discount": "discount"},
 }
 
 

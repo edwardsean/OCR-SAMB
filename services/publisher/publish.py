@@ -52,6 +52,15 @@ def typed(kind, v):
     return str(v)
 
 
+def pack(v):
+    """A satuan as printed → pieces in one pack: CTN/72 → 72, 24 / EA → 24, 1x6 → 6 (the number after the x); None
+    when no number is printed."""
+    s = str(v or "")
+    m = re.search(r"\d+\s*[xX×]\s*(\d[\d.,]*)", s)
+    nums = [m.group(1)] if m else re.findall(r"\d[\d.,]*", s)
+    return typed("qty", nums[-1]) if nums and s != NOT_PRINTED else None
+
+
 def plan(sor, docs, pages, where=None):
     """Pure. docs: [{type, pages, linked_by}] (the bundle's documents, from every scan); pages: {page key: {doc_type,
     fields, fields_all, checks}}; where: {page key: {batch, page}} when the order spans scans (grouper/members.py),
@@ -91,7 +100,8 @@ def plan(sor, docs, pages, where=None):
             rows = (q.get("fields") or {}).get("lines") if q.get("doc_type") == t else \
                 project(q.get("fields_all") or {}, t).get("lines")
             for r in rows or []:
-                lines.append({f["name"]: typed(f["kind"], r.get(f["name"])) for f in DOCS[t]["lines"]})
+                lines.append({f["name"]: pack(r.get(f["name"])) if f["name"] == "satuan" else
+                              typed(f["kind"], r.get(f["name"])) for f in DOCS[t]["lines"]})
         w = where or {}
         out.append({"type": t, "table": TABLE[t], "header": header, "lines": lines, "page_ref": ref,
                     "source_pages": [w[n]["page"] if n in w else n for n in own],
