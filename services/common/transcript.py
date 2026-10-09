@@ -25,6 +25,7 @@ PROMPT_SHA = {            # prompt version -> sha1 of its text: tests/test_vf_tr
     ("MAP", 1): "c350a7de07e3",
     ("MAP", 2): "19451bf19327",
     ("MAP", 3): "5aecb2170711",
+    ("MAP_NAMED", 1): "c9358d6dfb4d",
 }
 KINDS = {"printed", "table_header", "table_row", "handwriting", "stamp", "mark"}
 NOTE_KINDS = {"handwriting", "stamp", "mark", "remark", "signature"}
@@ -63,10 +64,39 @@ def normalise_blocks(blocks):
     return out
 
 
-def block_text(b):
-    """A block's text: a table row's cells joined in order (so handwriting beside a row never enters it)."""
+def cells_of(b):
+    """A table row's cells, or None when no cell holds anything: the AI OCR can leave a copied line in no cell
+    (BATCH-20261008-03 p28: PO.2026.09.32006, printed across two columns above the first row, came back with six empty
+    cells, and the text model was handed an empty line)."""
     cells = b.get("cells")
+    return cells if cells and any(str(c).strip() for c in cells) else None
+
+
+def cells_miss(b):
+    """The words of a row's text that none of its cells holds (the AI OCR left FILMA MARGARINE SALTED SACHET 200GR out
+    of every cell of its row on b-d50bc72289 p1)."""
+    cells = cells_of(b)
+    if not cells:
+        return []
+    joined = flat(" ".join(str(c) for c in cells))
+    return [w for w in str(b.get("text") or "").split() if flat(w) and flat(w) not in joined]
+
+
+def block_text(b):
+    """A block's text: a table row's cells joined in order (so handwriting beside a row never enters it); its text when
+    no cell holds anything."""
+    cells = cells_of(b)
     return " ".join(str(c) for c in cells if str(c).strip()) if cells else (b.get("text") or "")
+
+
+def shown(b):
+    """A block as the text model and the page view show it: a table row's cells; its text when no cell holds anything;
+    its cells and then the whole line when the cells miss words of it."""
+    cells = cells_of(b)
+    if not cells:
+        return b.get("text") or ""
+    row = " | ".join(str(c) for c in cells)
+    return f"{row}  (whole line: {b['text']})" if cells_miss(b) else row
 
 
 def render(blocks):
@@ -75,20 +105,32 @@ def render(blocks):
     for b in blocks:
         box = b.get("box")
         where = f"(x {box[1]}-{box[3]}, y {box[0]}-{box[2]})" if box else "(position unknown)"
-        text = " | ".join(str(c) for c in b["cells"]) if b.get("cells") else (b.get("text") or "")
+        text = shown(b)
         on = f" [on {b['about']}]" if b.get("about") else ""
         lines.append(f"[{b['id']}] {b['kind']} {where}{on} {text}")
     return "\n".join(lines)
 
 
+TAUGHT = ("LEARNED FROM PEOPLE for this document type (use each only where this page shows what it names: its label, "
+          "its column or its place):")
+
+
 def map_prompt(blocks, heads, cols, hints=None):
     """The text model's prompt: the task, the field list (heads/cols from openai_vlm._field_list), what people taught
     for this page's type and customer (pass B only), and the transcript."""
-    taught = ("\n\nLEARNED FROM PEOPLE for this document type (use each only where this page shows what it names: "
-              f"its label, its column or its place):\n{hints}") \
-        if hints else ""
+    taught = f"\n\n{TAUGHT}\n{hints}" if hints else ""
     return (f"{vlm.MAP}\n\nFIELDS (key: meaning):\n{heads}\n\nLINE ITEM COLUMNS: {cols}{taught}\n\n"
             f"TRANSCRIPT:\n{render(blocks)}")
+
+
+def map_named_prompt(blocks, heads, cols, hints):
+    """Pass B's prompt (vlm.MAP_NAMED): only the fields its tips name (heads), a table's rows only when they name a
+    column (cols), the tips, and the whole transcript (a tip says where on the page to look)."""
+    lines = vlm.MAP_NAMED_LINES if cols else ""
+    answer = 'Answer with ONE JSON object: {"fields": {<field>: {...} or null}' + (', "lines": [...]' if cols else "") + "}."
+    return (f"{vlm.MAP_NAMED}{lines}{answer}\n\nFIELDS (key: meaning):\n{heads}"
+            + (f"\n\nLINE ITEM COLUMNS: {cols}" if cols else "")
+            + f"\n\n{TAUGHT}\n{hints}\n\nTRANSCRIPT:\n{render(blocks)}")
 
 
 # ---------------------------------------------------------------------------------------------- the mapping
@@ -100,11 +142,13 @@ def _spaced(s):
 def grounded(text, block):
     """The value is in that block as it is written, as whole tokens: never a piece of a longer number or word (a
     handwritten "2" beside a row is not the "2" inside "425ML"; "1.126.011" is not "1.126.011,00" cut short).
-    A table row is matched against its cells, one cell at a time or across neighbouring cells."""
+    A table row is matched against its cells, one cell at a time or across neighbouring cells, and against its whole
+    line too when the cells miss words of it (cells_miss)."""
     t = _spaced(text)
     if not flat(t):
         return False
-    hay = [_spaced(block_text(block))] + [_spaced(c) for c in block.get("cells") or []]
+    hay = [_spaced(block_text(block))] + [_spaced(c) for c in cells_of(block) or []] + \
+        ([_spaced(block.get("text"))] if cells_miss(block) else [])
     pat = re.compile(r"(?<![0-9A-Z])(?<![0-9][.,])" + re.escape(t) + r"(?![0-9A-Z]|[.,][0-9])")
     return any(pat.search(h) for h in hay)
 

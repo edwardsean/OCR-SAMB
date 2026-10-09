@@ -89,7 +89,7 @@ CHECK = {"sor_in_satellite": "SO ada di Satellite", "docs_complete": "Dokumen le
          "vendor_is_samb": "PO ditujukan ke SAMB", "fp_po_total": "Total PO = order SAMB",
          "fp_po_lines": "Baris PO = baris order", "received": "Barang diterima = CGR Satellite",
          "dates": "Urutan tanggal benar", "fpj": "Faktur = Faktur Pajak", "calibration": "Kalibrasi pelanggan",
-         "store_named": "Toko di halaman = toko order"}
+         "store_named": "Toko di halaman = toko order", "same_number": "Dokumen bernomor sama = salinan"}
 CHECK_STATUS = {"pass": "cocok", "accepted": "diterima", "fail": "tidak cocok", "unknown": "belum bisa dicek",
                 "waiting": "menunggu", "info": "info", "n/a": "tidak berlaku"}
 BUNDLE = {"needs_review": "Perlu dicek", "grouping": "Menunggu sistem", "auto_ok": "Siap dikirim",
@@ -122,7 +122,7 @@ PUB_STATE = {"print": "✓ sesuai cetakan", "satellite": "✓ dari data Satellit
              "ai": "cek di kertas", "empty": "kosong"}
 REASON = {"rounding": "Pembulatan", "tolakan confirmed": "Tolakan sudah dipastikan",
           "the customer's own price": "Harga khusus pelanggan", "the document comes later": "Dokumen menyusul",
-          "other (say in the note)": "Lainnya"}
+          "copies of one document": "Salinan dokumen yang sama", "other (say in the note)": "Lainnya"}
 NONE_REASON = {"not in SAMB's order": "tidak ada di order SAMB", "a free (bonus) item": "barang gratis (bonus)",
                "another product (say in the note)": "produk lain (tulis di catatan)"}
 

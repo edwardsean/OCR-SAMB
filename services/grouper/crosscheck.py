@@ -47,7 +47,8 @@ ROUNDING = 1000.00   # rupiah, per document: the "selisih wajar" of EVERY custom
 LABEL = {"sor_in_satellite": "SO in Satellite", "docs_complete": "Documents complete",
          "vendor_is_samb": "PO addressed to SAMB", "fp_po_total": "FP ↔ PO total", "fp_po_lines": "FP ↔ PO lines",
          "received": "Received vs Satellite's CGR", "dates": "Dates in order", "fpj": "FP ↔ Faktur Pajak",
-         "calibration": "Customer calibration", "store_named": "The page's store is the order's"}
+         "calibration": "Customer calibration", "store_named": "The page's store is the order's",
+         "same_number": "Documents with one number are copies"}
 SAMB = "SARANAABADIMAKMUR"
 
 
@@ -85,6 +86,71 @@ def distinct(pages, docs, name):
         seen.add(number) if number else None
         out.append(n)
     return out
+
+
+NUMBER = {"PO": "purchase_order_no", "TTG": "document_no"}     # what makes two documents copies (distinct)
+COPY_GAP = 1.0                                                 # rupiah: one paper read twice
+
+
+def _marks(pages, span, doc_type):
+    """A document's rows as numbers, to compare two copies: each row's printed amount (its last number), sorted.
+    Never codes or prices: AEON's two copies of PO 10101000125543 were read 09768114 / 09788114 and 20,160 / 20,180,
+    and their rows' amounts agree."""
+    out = []
+    for _, _, _, text in _rows(pages, span, doc_type):
+        nums = [a for a in (verify.amount(t) for t in AMOUNT_TEXT.findall(text)) if a is not None]
+        if nums:
+            out.append(nums[-1])
+    return sorted(out)
+
+
+def _copy_of(pages, a, b, doc_type, spans):
+    """Do two documents that print one number agree, as two copies of one paper do? (agree?, what differs or None)
+    Their totals when both read one in full; else their rows' amounts; else nothing tells them apart (a terms page
+    carries only the number), and they count as copies, as before."""
+    sa, sb = spans.get(a) or [a], spans.get(b) or [b]
+    ta, tb = _read(pages, sa, doc_type, "total"), _read(pages, sb, doc_type, "total")
+    if ta and tb and ta["num"] is not None and tb["num"] is not None and not ta["cut"] and not tb["cut"]:
+        same = abs(ta["num"] - tb["num"]) <= COPY_GAP
+        return same, None if same else f"their totals differ ({_money(ta['num'])} and {_money(tb['num'])})"
+    ra, rb = _marks(pages, sa, doc_type), _marks(pages, sb, doc_type)
+    if ra and rb:
+        same = len(ra) == len(rb) and all(abs(x - y) <= COPY_GAP for x, y in zip(ra, rb))
+        return same, None if same else f"their rows differ ({len(ra)} and {len(rb)} rows, amounts " \
+                                       f"{', '.join(_money(x) for x in ra[:4])} and {', '.join(_money(x) for x in rb[:4])})"
+    return True, None
+
+
+def _same_number(pages, docs, spans, where=None):
+    """Documents of one type that print one number (the user, 2026-10-09). Copies of one paper agree and count once
+    (distinct). Two that disagree are two documents, so one number was misread: a PO whose number print backs is
+    linked by it (group.py), so a misread that is another order's Nomor CPO joins that order's bundle, and as its
+    'copy' its total was never compared with anything. Fail names the pages and what differs: a person fixes the
+    misread number (the bundle regroups) or accepts them as one document."""
+    groups = {}
+    for n, t in docs:
+        number = verify.flat(_value(pages.get(n), NUMBER[t])[0]) if t in NUMBER else None
+        if number:
+            groups.setdefault((t, number), []).append(n)
+    dup = {k: ns for k, ns in groups.items() if len(ns) > 1}
+    if not dup:
+        return result("n/a", "no two documents print one number")
+    bad, good, odd = [], [], []
+    for (t, number), ns in dup.items():
+        name = _value(pages.get(ns[0]), NUMBER[t])[0]
+        differ = [(n, why) for n in ns[1:] for same, why in [_copy_of(pages, ns[0], n, t, spans or {})] if not same]
+        if not differ:
+            good.append(f"pages {_pages(ns, where)[1:-1]} print {t} {name} and agree: copies, counted once")
+            continue
+        for n, why in differ:
+            bad.append(f"pages {_pages([ns[0], n], where)[1:-1]} both print {t} {name}, but {why}: two different "
+                       f"{t}s, so one number is probably misread")
+        odd += [{"page": n, "type": t, "label": _pages([n], where)[1:-1],
+                 "total": (lambda r: r["num"] if r else None)(_read(pages, (spans or {}).get(n) or [n], t, "total"))}
+                for n in [ns[0]] + [n for n, _ in differ]]
+    if bad:
+        return result("fail", "; ".join(bad + good), docs=odd)
+    return result("pass", "; ".join(good))
 
 
 def _percents(text):
@@ -515,6 +581,7 @@ def check_bundle(sor, docs, pages, so, so_lines, matches, expected=("FP", "TTG")
     missing = [t for t in expected if t not in by_type]
     out["docs_complete"] = result("fail" if missing else "pass", f"no {' or '.join(missing)} in the bundle" if missing
                                   else f"{', '.join(t for t in expected)} present")
+    out["same_number"] = _same_number(pages, docs, spans, where)
     if not pos:
         out["vendor_is_samb"] = result("n/a", "no PO in the bundle")
     else:           # information (verification redesign): the PO joined SAMB's SO by its number, and the AI's

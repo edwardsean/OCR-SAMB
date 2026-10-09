@@ -2207,7 +2207,7 @@ KIND = bahasa.DOC                 # document type -> its name for people
 # ---------------------------------------------------------------------------------------------- phase 7d: Review
 
 ACCEPT_REASONS = ["rounding", "tolakan confirmed", "the customer's own price", "the document comes later",
-                  "other (say in the note)"]
+                  "copies of one document", "other (say in the note)"]
 NONE_REASONS = ["not in SAMB's order", "a free (bonus) item", "another product (say in the note)"]
 
 
@@ -2293,7 +2293,8 @@ def _issues(checks, reasons, customer):
     """A bundle's open problems as short chips for the Review list: (label, 'need' | 'wait')."""
     out = []
     short = {"fp_po_total": "Total PO ≠ order SAMB", "dates": "Tanggal terima", "docs_complete": "Ada dokumen kurang",
-             "store_named": "Nama toko berbeda", "sor_in_satellite": "Tidak ada di Satellite"}
+             "store_named": "Nama toko berbeda", "sor_in_satellite": "Tidak ada di Satellite",
+             "same_number": "Nomor dokumen kembar"}
     for k, c in checks.items():
         st = c.get("status")
         if st not in ("fail", "unknown", "waiting"):
@@ -2483,6 +2484,9 @@ def _plain(k, c, refs=None):
         return "Ada halaman yang menyebut toko lain milik pelanggan ini"
     if k == "sor_in_satellite":
         return "Order ini tidak ada di Satellite"
+    if k == "same_number":
+        kinds = sorted({bahasa.DOC_SHORT.get(d["type"], d["type"]) for d in c.get("docs") or []})
+        return f"Dua {' / '.join(kinds) or 'dokumen'} bernomor sama, tapi isinya berbeda: salah satu nomornya mungkin salah baca"
     return None
 
 
@@ -2561,6 +2565,13 @@ def _open_items(batch, sor, docs, pages, checks, lines, pairs, entry, refs=None)
                                      "purchase_order_no" if t == "PO" else "document_no") if t else []
         item["fix"] = [{"page": n, "type": t, **entry(n, t, f)} for n in firsts for f in names
                        if (pages[n].get("fields") or {}).get(f) or f == "total"]
+        if k == "same_number":                                        # each page's number, to fix the misread one
+            ds = c.get("docs") or []
+            item["pair"] = [(f"Total {bahasa.DOC_SHORT.get(d['type'], d['type'])} halaman {d['label']}", d["total"])
+                            for d in ds if d.get("total") is not None] or None
+            item["gap"] = None                                        # not a rounding question
+            item["fix"] = [{"page": d["page"], "type": d["type"], **entry(d["page"], d["type"], f)} for d in ds
+                           for f in (crosscheck.NUMBER[d["type"]],) + (("total",) if d["type"] == "PO" else ())]
         if k == "fp_po_total":                                        # the rows explain where a gap comes from
             item["rows"], item["unmatched"], item["missing_lines"] = _rows_against_order(pages, firsts, lines, pairs)
             item["odd_rows"] = [x for x in item["rows"] if x["line"] is None and not x["bonus"]]

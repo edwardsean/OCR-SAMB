@@ -144,6 +144,14 @@ a rejection, a quantity crossed out or corrected): {"kind": "handwriting" | "sta
 A signature is only {"kind": "signature", "blocks": [...]}.
 Answer with ONE JSON object: {"fields": {<field>: {...} or null}, "lines": [...], "notes": [...]}."""
 
+# Pass B, the knowledge pass (the user, 2026-10-09: "asking it only for those fields would be much cheaper"): only the
+# fields its tips name, a table's rows only when a tip names a column, never notes (pass A's stand). Made from MAP, so
+# the two can't drift apart: its introduction and field task, and its line task when one is asked.
+MAP_NAMED_V = 1
+_MAP_HEAD, _MAP_REST = MAP.split("Task 2 - lines", 1)
+MAP_NAMED = _MAP_HEAD + "Only the fields listed below are asked for.\n"
+MAP_NAMED_LINES = "Task 2 - lines" + _MAP_REST.split("Task 3 - notes", 1)[0]
+
 
 # ---------------------------------------------------------------------------------------------- vlm-first
 READ_ALL = """

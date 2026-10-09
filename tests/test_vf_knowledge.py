@@ -564,3 +564,45 @@ def test_a_switched_on_tip_is_used_only_where_its_field_isnt_settled():
     assert wiki.needs_tip({"lines.qty"}, {"lines.qty"})                     # a column is never settled as a whole
     assert wiki.needs_tip({"billing_number", "sor"}, {"billing_number"})
     assert "text" not in wiki.INDEPENDENT                                    # print shows characters, not the field
+
+
+# ---------------------------------------------------------------------------------------------- pass B asks only what it names
+
+def test_the_knowledge_pass_asks_only_for_the_fields_its_tips_name(monkeypatch):
+    """The user (2026-10-09): mapping the whole list again to change one or two fields is wasted; asking only for
+    those is about half the tokens, with no rows or notes in the answer when no column is named."""
+    import numpy as np
+    from common import db, transcript
+    from worker import learn, vf
+    with db.connect() as c:
+        ctx = learn._ctx(c)
+    claims = wiki.claims_for(wiki.parse(PAGE), "1100002424")
+    fields, cols = wiki.overlay_fields("TTG", claims), wiki.line_columns(claims)
+    assert (fields, cols) == (["po_number", "posting_date", "sor"], ["qty"])
+
+    full = context.vlm_schema(ctx)
+    only = context.named_schema(full, ["po_number"])
+    assert list(only["properties"]) == ["po_number"]                    # no other field, and no rows
+    rows = context.named_schema(full, ["po_number"], ["qty"])["properties"]["lines"]["items"]["properties"]
+    assert list(rows) == ["qty", "row_text"]
+
+    blocks = [{"id": "b1", "kind": "printed", "text": "RECEIPT NO 10101000125543", "box": [10, 600, 20, 900]},
+              {"id": "b2", "kind": "printed", "text": "Kepada PT SARANA ABADI MAKMUR BERSAMA", "box": [30, 40, 40, 400]}]
+    prompt = transcript.map_named_prompt(blocks, "- po_number: the customer's PO", "", "- po_number: RECEIPT NO.")
+    assert "Task 1 - fields" in prompt and "Task 2" not in prompt and "Task 3" not in prompt and "notes" not in prompt
+    assert '"lines"' not in prompt and "RECEIPT NO 10101000125543" in prompt and "SARANA" in prompt
+    assert "Task 2 - lines" in transcript.map_named_prompt(blocks, "- po_number: x", "qty (the quantity)", "- tip")
+
+    sent = []
+
+    def call(purpose, bid, n, fn, blocks_, schema, text):
+        sent.append((purpose, fn, list(schema["properties"])))
+        return {"fields": {"po_number": {"block": "b1", "text": "10101000125543", "value": "10101000125543"}}}, {}
+    monkeypatch.setattr(vf, "ai_call", call)
+    monkeypatch.setattr(learn, "_kept", lambda *a: None)
+    monkeypatch.setattr(learn, "_keep", lambda *a, **k: None)
+    page = {"transcript": blocks, "ocr_words": None, "upright_path": None}
+    fa, _, _ = learn.pass_b("b-x", 1, page, "- po_number: RECEIPT NO.", "sha", ctx, np.full((1000, 800), 255, np.uint8),
+                            ["po_number"])
+    assert {(p, f, tuple(s)) for p, f, s in sent} == {("map_b", vf.map_named, ("po_number",))}
+    assert fa["po_number"]["value"] == "10101000125543" and "customer_name" not in fa

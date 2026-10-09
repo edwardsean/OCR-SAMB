@@ -61,9 +61,10 @@ def sim(a, b):
 
 
 def line_text(b):
-    """The copied line as it is tokenised: a table row's number (its text, when short) and then its cells."""
+    """The copied line as it is tokenised: a table row's number (its text, when short) and then its cells; its text when
+    no cell holds anything."""
     cells = b.get("cells")
-    if not cells:
+    if not cells or not any(str(c).strip() for c in cells):
         return b.get("text") or ""
     row = " ".join(str(c) for c in cells)
     head = (b.get("text") or "").strip()
