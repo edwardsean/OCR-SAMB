@@ -171,6 +171,17 @@ def vlm_schema(content):
     return {"type": "OBJECT", "properties": props, "required": list(props)}
 
 
+def named_schema(schema, fields, cols=()):
+    """vlm_schema() cut to these fields, with line items (these columns and the whole row) only when columns are
+    named: what the knowledge pass asks for (worker/learn.py pass_b)."""
+    props = {k: v for k, v in schema["properties"].items() if k in set(fields)}
+    if cols:
+        row = schema["properties"]["lines"]["items"]["properties"]
+        keep = {c: row[c] for c in [*cols, "row_text"] if c in row}
+        props["lines"] = {"type": "ARRAY", "items": {"type": "OBJECT", "properties": keep, "required": list(keep)}}
+    return {"type": "OBJECT", "properties": props, "required": list(props)}
+
+
 def jev_question(content):
     """Jev's Choice question, built from the types: what each is, its titles, and the fields it has."""
     fields = content["fields"]

@@ -109,18 +109,22 @@ def _keep(bid, n, sha, mv, raw, raw2=None):
 
 # ---------------------------------------------------------------------------------------------- applying it
 
-def pass_b(bid, n, p, text, sha, ctx, up=None):
+def pass_b(bid, n, p, text, sha, ctx, up=None, fields=(), cols=()):
     """The text model's mapping of the page's transcript with these hints: (fields_all, mapping, flips among all
-    fields). Answers are kept in staging.knowledge_map; a kept one is never asked again."""
-    schema = context.vlm_schema(ctx)
+    fields). It is asked only for the fields (and table columns) the hints name (the user, 2026-10-09: about half
+    the tokens of mapping the whole list again, and no rows or notes when no column is named). Answers are kept in
+    staging.knowledge_map; a kept one is never asked again. One kept from before (the whole list) holds every field
+    asked now, so it stays valid: wiki.PASS_B_V isn't bumped for this, or every stored page with knowledge would be
+    mapped again on its next grouping (paid)."""
+    schema = context.named_schema(context.vlm_schema(ctx), fields, cols)
     _, mv, _ = vf.two_step_versions(ctx)
     kept = _kept(bid, n, sha, mv)
     raw, raw2 = (kept or {}).get("raw"), (kept or {}).get("raw2")
     blocks = p["transcript"]
     if raw is None:
-        raw, _ = vf.ai_call("map_b", bid, n, vf.map_blocks, blocks, schema, text)
+        raw, _ = vf.ai_call("map_b", bid, n, vf.map_named, blocks, schema, text)
     if vf.MAP_TWICE and raw2 is None:
-        raw2, _ = vf.ai_call("map_b", bid, n, vf.map_blocks, blocks, schema, text)
+        raw2, _ = vf.ai_call("map_b", bid, n, vf.map_named, blocks, schema, text)
     if not kept or (vf.MAP_TWICE and kept.get("raw2") is None):
         _keep(bid, n, sha, mv, raw, raw2)
     img = up if up is not None else v1.load(p["upright_path"])
@@ -182,7 +186,7 @@ def step(bid, n, doc_type, fields_all, mapping, qr, ctx, up=None, md=None, versi
     info = {"sha": ksha, "version": version, "chain": chain, "chain_by": how, "flips": []}
     if fields or cols:
         text = wiki.hints(doc_type, claims)
-        fa_b, map_b, flips = pass_b(bid, n, p, text, wiki.hints_sha(text), ctx, up)
+        fa_b, map_b, flips = pass_b(bid, n, p, text, wiki.hints_sha(text), ctx, up, fields, cols)
         info["flips"] = [f for f in flips if f in fields]
         fa, m = wiki.overlay(fa_a, map_a, fa_b, map_b, fields, info, cols)
     else:

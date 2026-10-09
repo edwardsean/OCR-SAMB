@@ -43,6 +43,7 @@ from common.verify import flat
 
 PASS_B_V = 2              # the pass-B wrapper's version: part of every hints sha (a change re-maps, never reuses);
                           # 2: position claims reach the text model with their place (until then code picked the line)
+                          # (not bumped when pass B began asking only the named fields: learn.pass_b says why)
 ANY = "Any customer"
 KINDS = ("label", "column", "position", "visual", "not_printed")
 REGIONED = ("position", "visual")   # claims that carry where the value is printed (a region marked on the paper)

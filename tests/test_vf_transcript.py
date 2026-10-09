@@ -95,6 +95,8 @@ def test_a_prompt_change_bumps_its_version():
     version would silently keep readings made with the old one."""
     assert transcript.prompt_sha(vlm.TRANSCRIBE) == transcript.PROMPT_SHA[("TRANSCRIBE", vlm.TRANSCRIBE_V)]
     assert transcript.prompt_sha(vlm.MAP) == transcript.PROMPT_SHA[("MAP", vlm.MAP_V)]
+    assert transcript.prompt_sha(vlm.MAP_NAMED + vlm.MAP_NAMED_LINES) == \
+        transcript.PROMPT_SHA[("MAP_NAMED", vlm.MAP_NAMED_V)]
 
 
 def test_versions_separate_the_image_read_from_the_mapping():

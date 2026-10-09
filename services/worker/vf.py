@@ -977,6 +977,12 @@ def map_blocks(blocks, schema, hints=None):
     return openai_vlm.map_text(transcript.map_prompt(blocks, heads, cols, hints), AI_MAP)
 
 
+def map_named(blocks, schema, hints):
+    """Pass B (worker/learn.py): only the schema's fields (context.named_schema), with what people taught."""
+    heads, cols = openai_vlm._field_list(schema)
+    return openai_vlm.map_text(transcript.map_named_prompt(blocks, heads, cols, hints), AI_MAP)
+
+
 def mapped(raw, blocks, schema, words, img, ctx):
     """The text model's answer → (fields_all, mapping, notes), grounded, boxes snapped to print (or tightened to the
     value's ink when Tesseract didn't read it), amounts normalised."""

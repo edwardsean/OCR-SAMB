@@ -25,6 +25,7 @@ PROMPT_SHA = {            # prompt version -> sha1 of its text: tests/test_vf_tr
     ("MAP", 1): "c350a7de07e3",
     ("MAP", 2): "19451bf19327",
     ("MAP", 3): "5aecb2170711",
+    ("MAP_NAMED", 1): "c9358d6dfb4d",
 }
 KINDS = {"printed", "table_header", "table_row", "handwriting", "stamp", "mark"}
 NOTE_KINDS = {"handwriting", "stamp", "mark", "remark", "signature"}
@@ -81,14 +82,26 @@ def render(blocks):
     return "\n".join(lines)
 
 
+TAUGHT = ("LEARNED FROM PEOPLE for this document type (use each only where this page shows what it names: its label, "
+          "its column or its place):")
+
+
 def map_prompt(blocks, heads, cols, hints=None):
     """The text model's prompt: the task, the field list (heads/cols from openai_vlm._field_list), what people taught
     for this page's type and customer (pass B only), and the transcript."""
-    taught = ("\n\nLEARNED FROM PEOPLE for this document type (use each only where this page shows what it names: "
-              f"its label, its column or its place):\n{hints}") \
-        if hints else ""
+    taught = f"\n\n{TAUGHT}\n{hints}" if hints else ""
     return (f"{vlm.MAP}\n\nFIELDS (key: meaning):\n{heads}\n\nLINE ITEM COLUMNS: {cols}{taught}\n\n"
             f"TRANSCRIPT:\n{render(blocks)}")
+
+
+def map_named_prompt(blocks, heads, cols, hints):
+    """Pass B's prompt (vlm.MAP_NAMED): only the fields its tips name (heads), a table's rows only when they name a
+    column (cols), the tips, and the whole transcript (a tip says where on the page to look)."""
+    lines = vlm.MAP_NAMED_LINES if cols else ""
+    answer = 'Answer with ONE JSON object: {"fields": {<field>: {...} or null}' + (', "lines": [...]' if cols else "") + "}."
+    return (f"{vlm.MAP_NAMED}{lines}{answer}\n\nFIELDS (key: meaning):\n{heads}"
+            + (f"\n\nLINE ITEM COLUMNS: {cols}" if cols else "")
+            + f"\n\n{TAUGHT}\n{hints}\n\nTRANSCRIPT:\n{render(blocks)}")
 
 
 # ---------------------------------------------------------------------------------------------- the mapping
