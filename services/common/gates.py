@@ -32,7 +32,7 @@ PRINT = ("text", "zoom", "second_look")                                 # backed
 SETTLED = ("satellite", "person")                                       # never overruled here
 SAMB_AMOUNT = re.compile(r"^\d{1,3}(?:\.\d{3})*,\d{2}$")                 # 1.126.011,00
 ISO_DAY = re.compile(r"^\d{4}-\d{2}-\d{2}$")
-COLUMN_CELLS = ("qty", "qty_crt", "qty_pcs", "uom")
+COLUMN_CELLS = ("qty", "qty_crt", "qty_pcs", "uom", "satuan")
 
 
 def complete(source):

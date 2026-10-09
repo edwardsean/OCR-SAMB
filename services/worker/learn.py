@@ -22,11 +22,19 @@
   lint     a claim a person's later correction contradicts is taken out by itself (a 'lint' version), and what has no
            evidence is listed.
   regroup  after grouping: a page whose knowledge was chosen for another customer than its order's is done again.
+  export   every active page to <folder>/<TYPE>.md (seed/knowledge in the repo): knowledge lives in the database, so
+           this is how it travels with the code to another server.
+  install  each <folder>/<TYPE>.md made the type's active page, as written: no replay, and only pages read from then
+           on use it (the user, 2026-10-09: tips go in as written; a person runs a replay when they want one). It
+           stops, unless --force, when the file would leave out a claim the server's active page has (knowledge
+           learned there), and lists them.
 
   python -m worker.learn show <type> | draft <type> | teach [--limit N] | propose <type> <file.md> --by NAME
                          [--note …] | gate <type> <version> | approve <type> <version> --by NAME
                          | reject <type> <version> | apply <type> | lint [<type>] | backfill
+                         | export <folder> | install <folder> --by NAME [--force]
 """
+import os
 import sys
 import time
 
@@ -439,10 +447,11 @@ def _gate(doc_type, version, show=print):
     return g
 
 
-def activate(doc_type, version, by, show=print, lint=False):
+def activate(doc_type, version, by, show=print, lint=False, written=False):
     """The one active page of its type; the old one retired. Refused unless it's a proposal built on the active page
-    and its replay passed (the lint's takings-out need no replay: they only take knowledge away). Then its type's
-    pages are done again (apply)."""
+    and its replay passed (the lint's takings-out need no replay: they only take knowledge away; a page a person
+    installs as written (install) needs none either). Then its type's pages are done again (apply), except an
+    installed page: only pages read from then on use it."""
     with db.connect() as c:
         r = c.execute("SELECT * FROM staging.knowledge_page WHERE doc_type=%s AND version=%s",
                       (doc_type, version)).fetchone()
@@ -451,7 +460,8 @@ def activate(doc_type, version, by, show=print, lint=False):
         now = active(c, doc_type)
         if (now["version"] if now else None) != r["parent"]:
             raise ValueError(f"{doc_type} #{version} was built on #{r['parent']}, but #{now['version']} is active now")
-        if not (lint and r["source"] == "lint") and not (r["gate"] or {}).get("passed"):
+        if not (lint and r["source"] == "lint") and not (written and r["source"] == "person") \
+                and not (r["gate"] or {}).get("passed"):
             raise ValueError(f"{doc_type} #{version}: its replay hasn't passed")
         c.execute("UPDATE staging.knowledge_page SET status='retired' WHERE doc_type=%s AND status='active'",
                   (doc_type,))
@@ -460,7 +470,44 @@ def activate(doc_type, version, by, show=print, lint=False):
         c.execute("""UPDATE staging.extract_example SET lesson_status='learned', lesson_at=now()
                       WHERE lesson_doc=%s AND lesson_version=%s AND lesson_status='proposed'""", (doc_type, version))
     trace.event("tip.active", doc_type=doc_type, version=version, was=r["parent"], by=by, source=r["source"])
-    return apply(doc_type, show=show)
+    return None if written else apply(doc_type, show=show)
+
+
+def export(folder, show=print):
+    """Every type's active page to <folder>/<TYPE>.md."""
+    os.makedirs(folder, exist_ok=True)
+    with db.connect() as c:
+        for t in DOCS:
+            now = active(c, t)
+            if now:
+                with open(os.path.join(folder, f"{t}.md"), "w") as f:
+                    f.write(now["markdown"].rstrip() + "\n")
+                show(f"{t}: #{now['version']} → {folder}/{t}.md")
+
+
+def install(folder, by, force=False, show=print):
+    """Each <folder>/<TYPE>.md as the type's active page (see the module's note). Returns {type: what happened}."""
+    done = {}
+    for t in DOCS:
+        path = os.path.join(folder, f"{t}.md")
+        if not os.path.exists(path):
+            continue
+        md = open(path).read()
+        with db.connect() as c:
+            now = active(c, t)
+        if now and now["markdown"].strip() == md.strip():
+            done[t] = f"already active (#{now['version']})"
+        else:
+            lost = wiki.dropped(now["markdown"], md) if now else []
+            if lost and not force:
+                done[t] = "not installed: the file leaves out claims this server's page has; put them in the file " \
+                          "or use --force:\n" + "\n".join(f"    {head}: {line}" for head, line in lost)
+            else:
+                v = propose(t, md, "person", by, f"installed from {path}")
+                activate(t, v, by, written=True)
+                done[t] = f"#{v} active" + (f", {len(lost)} claims of #{now['version']} left out" if lost else "")
+        show(f"{t}: {done[t]}")
+    return done
 
 
 def reject(doc_type, version, by=None):
@@ -597,7 +644,7 @@ def lint(doc_type=None, show=print):
             for cl in s["claims"]:
                 if not cl["pages"]:
                     report["unbacked"].append(f"{t} · {s['head']} · {cl['field']}")
-            if s["chain"] and not (known.get(s["chain"]) or {}).get("names"):
+            if s["chain"] and not any((known.get(ch) or {}).get("names") for ch in s.get("chains") or [s["chain"]]):
                 report["unrecognised"].append(f"{t} · {s['head']}")
         if drop:
             v = propose(t, wiki.render(t, wiki.without(parsed, drop)), "lint", "the lint",
@@ -631,7 +678,7 @@ def _meaning(ctx, doc_type, field):
 
 def _section_text(parsed, chain):
     for s in (parsed or {}).get("sections") or []:
-        if (chain and s["chain"] == chain) or (not chain and s["chain"] is None):
+        if (chain and wiki.covers(s, chain)) or (not chain and s["chain"] is None):
             return "\n".join(s.get("prose") or []) + ("\n" if s.get("prose") else "") + \
                 "\n".join(wiki.claim_line(c) for c in s["claims"])
     return ""
@@ -862,5 +909,9 @@ if __name__ == "__main__":
     elif a[:1] == ["backfill"]:
         for x in backfill():
             print(x)
+    elif a[:1] == ["export"] and len(a) > 1:
+        export(a[1])
+    elif a[:1] == ["install"] and len(a) > 1 and opt("--by"):
+        install(a[1], opt("--by"), force="--force" in a)
     else:
         print(__doc__)

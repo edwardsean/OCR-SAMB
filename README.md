@@ -179,6 +179,31 @@ runs out first, after roughly 75 pages; real volume needs billing on in Model St
 and the batch page says which model's quota is used up. The system also stops itself at `VF_AI_OCR_DAILY_CAP` vision
 calls and `VF_AI_MAP_DAILY_CAP` text calls a day (20,000 and 40,000, in `.env`).
 
+### Customer knowledge and the satuan column (2026-10-09)
+
+The knowledge tips (Knowledge screen: where each customer prints each field) live in the database, so they don't
+arrive with `git pull`. The repo carries them as files in [services/seed/knowledge/](services/seed/knowledge/), one
+per document type, and one command makes them active on a server.
+
+1. **Get the code:** `git pull` on `main`.
+2. **Apply the new migration** (rows keep their satuan, the pieces in one pack). Safe to run twice:
+   ```bash
+   docker exec -i samb-ocr-servers-postgres-1 sh -c 'psql -U "$POSTGRES_USER" -d ocr_rtm -v ON_ERROR_STOP=1' < schema/030-satuan.sql
+   ```
+3. **Restart the Python services:** `docker compose restart rtm-api rtm-worker rtm-grouper rtm-teacher rtm-scheduler rtm-intake`.
+4. **Install the knowledge:**
+   ```bash
+   docker compose exec -e PYTHONPATH=/app rtm-api python -m worker.learn install seed/knowledge --by "<your name>"
+   ```
+   Each type's file becomes its active page, as written: no replay and no AI call. Only pages read from then on use
+   it; pages already read keep their values. It prints one line per type: `#N active`, or `already active` when run
+   again. When this server learned tips of its own that a file doesn't have, it installs nothing for that type and
+   lists them: copy them into the file and run it again (or add `--force` to drop them).
+5. **Check:** the Knowledge screen shows the new versions.
+
+To send knowledge the other way (tips people taught on a server, back into the repo):
+`python -m worker.learn export seed/knowledge` writes every active page to those files.
+
 ## Everyday commands
 
 ```bash

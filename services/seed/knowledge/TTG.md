@@ -1,0 +1,240 @@
+# TTG
+
+## Any customer
+
+## Alfamart (chain 1100002312, 1100002314, 1100002311, 1100002310)
+- document_no: printed after "No LPB" at the top left. [label · No LPB]
+- vendor_number: printed after "Kode Supplier". [label · Kode Supplier]
+- purchase_order_no: printed after "Nomor F P P". [label · Nomor F P P]
+- posting_date: printed after "Tanggal Tiba". [label · Tanggal Tiba]
+- lines.customer_item_code: the PLU column. [column · PLU]
+- lines.description: the Nama Barang column. [column · Nama Barang]
+- lines.qty: the Q_Crt column, the number of cartons. [column · Q_Crt]
+- lines.satuan: the Isi(c) column, the pieces in one carton (e.g. 72). [column · Isi(c)]
+
+## Alfamidi (chain 1100002309, 1100002308)
+- document_no: printed after "No LPB" at the top left. [label · No LPB]
+- vendor_number: printed after "Kode Supplier". [label · Kode Supplier]
+- purchase_order_no: printed after "Nomor F P P". [label · Nomor F P P]
+- posting_date: printed after "Tanggal Tiba". [label · Tanggal Tiba]
+- lines.customer_item_code: the PLU column. [column · PLU]
+- lines.description: the Nama Barang column. [column · Nama Barang]
+- lines.qty: the Q_Crt column, the number of cartons. [column · Q_Crt]
+- lines.satuan: the Isi(c) column, the pieces in one carton (e.g. 24). [column · Isi(c)]
+
+## Hari Hari (chain 1100002542)
+- document_no: printed after "No Receive". [label · No Receive]
+- vendor_number: printed after "No Supplier". [label · No Supplier]
+- purchase_order_no: printed after "No PO". [label · No PO]
+- posting_date: printed after "Tgl Terima". [label · Tgl Terima]
+- no_ref: the SOR printed after "No Ref." (SOR followed by 11 digits). [label · No Ref.]
+- lines.customer_item_code: the SKU column. [column · SKU]
+- lines.description: the Nama Barang column. [column · Nama Barang]
+- lines.qty: the quantity received with its unit, under Diterima (e.g. "6 BX"), never the case size beside it (e.g. "12.00 PC"). [column · Diterima]
+- lines.uom: the unit printed with the quantity received (e.g. BX). [column · Diterima]
+- lines.satuan: the case size, the pieces in one case (e.g. 12 in "12.00 PC"). [column · Qty/Case]
+
+## Indomaret (chain 1100002480)
+- document_no: printed after "BPB No.". [label · BPB No.]
+- vendor_number: printed after "Supplier" (e.g. 18844-SU06). [label · Supplier]
+- purchase_order_no: printed after "No. PO". [label · No. PO]
+- posting_date: the date printed after "Tgl. F/SJ/NPB". [label · Tgl. F/SJ/NPB]
+- lines.customer_item_code: the PLU column. [column · PLU]
+- lines.description: the Deskripsi column. [column · Deskripsi]
+- lines.qty: the Kts column of Kts/Frac (e.g. 2 in "2/0"). [column · Kts/Frac]
+- lines.uom: the unit in the Frac/Unit column (e.g. CTN in "72/CTN"). [column · Frac/Unit]
+- lines.satuan: the number in the Frac/Unit column, the pieces in one carton (e.g. 72 in "72/CTN"). [column · Frac/Unit]
+
+## FoodHall (chain 1100002550)
+- document_no: the number under the title "Good Receipt". [label · Good Receipt]
+- vendor_number: the number printed under SAMB's name at the top left (e.g. 13568). [label · SAMB's name]
+- purchase_order_no: printed after "Ref. PO No.". [label · Ref. PO No.]
+- posting_date: printed after "GR Date". [label · GR Date]
+- lines.customer_item_code: the Article SKU column. [column · Article SKU]
+- lines.description: the Description column. [column · Description]
+- lines.qty: the Qty column. [column · Qty]
+- lines.uom: the UoM column (e.g. EA). [column · UoM]
+
+## Farmers Market (chain 1100002547)
+- document_no: printed after "Document No.". [label · Document No.]
+- vendor_number: printed after "Vendor Number". [label · Vendor Number]
+- purchase_order_no: printed after "Purchase Order". [label · Purchase Order]
+- posting_date: printed after "Posting Date". [label · Posting Date]
+- lines.customer_item_code: the Article Number column. [column · Article Number]
+- lines.description: the Description column. [column · Description]
+- lines.qty: the Qty. column. [column · Qty.]
+- lines.uom: the unit printed beside the quantity (e.g. EA). [column · Qty.]
+
+## AEON (chain 1100002424)
+- purchase_order_no: AEON's receiving note has no field named PO; the number printed as RECEIPT NO is the PO number. [label · RECEIPT NO · pages b-c80bbbde4d/14]
+- no_ref: AEON's receiving note prints no SOR reference; leave it empty (RECEIPT NO is the PO number, not the SOR). [not_printed · pages b-c80bbbde4d/3]
+- document_no: printed after "RECEIPT NO". [label · RECEIPT NO]
+- vendor_number: printed after "SUPPLIER NO". [label · SUPPLIER NO]
+- posting_date: printed after "DATE RECEIVED". [label · DATE RECEIVED]
+- lines.customer_item_code: the ITEM NO column. [column · ITEM NO]
+- lines.description: the ITEM DESCRIPTION column. [column · ITEM DESCRIPTION]
+- lines.qty: the RECEIVED QTY column, never QTY/CASE SIZE (that is the pieces in one case). [column · RECEIVED QTY]
+- lines.uom: the word in the UOM column (e.g. CARTON). [column · UOM]
+- lines.satuan: the QTY/CASE SIZE column, the pieces in one case (e.g. 20.00). [column · QTY/CASE SIZE]
+
+## Indogrosir (chain 1100002481)
+- document_no: printed after "No." at the top. [label · No.]
+- vendor_number: printed after "Supplier". [label · Supplier]
+- purchase_order_no: printed after "PO No.". [label · PO No.]
+- posting_date: the date printed after "Tgl." beside "No.". [label · Tgl.]
+- no_ref: the SOR printed after "SJ/Fak" (11 digits starting 2611, without the letters SOR). [label · SJ/Fak]
+- lines.customer_item_code: the PLU column. [column · PLU]
+- lines.description: the Deskripsi column. [column · Deskripsi]
+- lines.qty: the Qty column. [column · Qty]
+- lines.uom: the word in the Keterangan column (e.g. CTN in "CTN / 24.00"). [column · Keterangan]
+- lines.satuan: the number in the Keterangan column, the pieces in one carton (e.g. 24 in "CTN / 24.00"). [column · Keterangan]
+
+## Tip Top (chain 1100002553)
+- document_no: printed after "No. Receiving". [label · No. Receiving]
+- vendor_number: the number in brackets after SAMB's name (e.g. 00146). [label · ( 00146 )]
+- purchase_order_no: the No. PO column, printed on every row. [label · No. PO]
+- posting_date: printed after "Tgl. Receiving". [label · Tgl. Receiving]
+- lines.customer_item_code: the SKU column. [column · SKU]
+- lines.description: the Nama Barang column. [column · Nama Barang]
+- lines.qty: the Qty Received column. [column · Qty Received]
+- lines.uom: the word in the UOM column (e.g. CTN in "CTN12"). [column · UOM]
+- lines.satuan: the number in the UOM column, the pieces in one carton (e.g. 12 in "CTN12"). [column · UOM]
+
+## Hypermart (chain 1100002499)
+- document_no: printed after "Document Ref No". [label · Document Ref No]
+- vendor_number: printed after "Suplier". [label · Suplier]
+- purchase_order_no: printed after "PO Number". [label · PO Number]
+- posting_date: the date printed at the foot of the page (e.g. "Fri, 11 Sep 2026"). [label · foot]
+- lines.customer_item_code: the SKU column. [column · SKU]
+- lines.description: the SKU Desc column. [column · SKU Desc]
+- lines.qty: the Qty Received column, in pieces as printed; not Qty Order. [column · Qty Received]
+
+## Lotte Grosir (chain 1100002495)
+- document_no: printed after "Pur slip" (e.g. 260910-06007-1-0035). Not "Reg no.": that is the store's tax number (NPWP). [label · Pur slip]
+- vendor_number: the code before SAMB's name at the top left (e.g. 039761). [label · top left]
+- purchase_order_no: printed after "Ord slip": the PO number written with dashes (e.g. 260908-06007-00103). [label · Ord slip]
+- posting_date: printed after "Date" at the bottom left. [label · Date]
+- lines.customer_item_code: the Prod cd column. [column · Prod cd]
+- lines.description: the Prod nm column. [column · Prod nm]
+- lines.qty: the Pur qty column. [column · Pur qty]
+- lines.satuan: the Uom column, the pieces in one unit (e.g. 24). [column · Uom]
+
+## Lotte Mart (chain 1100002494)
+- document_no: printed after "Pur slip" (e.g. 260912-04006-1-0025). Not "Reg no.": that is the store's tax number (NPWP). [label · Pur slip]
+- vendor_number: the code before SAMB's name at the top left (e.g. 010572). [label · top left]
+- purchase_order_no: printed after "Ord slip": the PO number written with dashes (e.g. 260910-04006-00087). [label · Ord slip]
+- posting_date: printed after "Date" at the bottom left. [label · Date]
+- lines.customer_item_code: the Prod cd column. [column · Prod cd]
+- lines.description: the Prod nm column. [column · Prod nm]
+- lines.qty: the Pur qty column. [column · Pur qty]
+- lines.satuan: the Uom column, the pieces in one unit (e.g. 24). [column · Uom]
+
+## Super Indo (chain 1100002493)
+- document_no: printed after "No:" under the title BUKTI TERIMA BARANG. [label · No:]
+- vendor_number: the code in brackets after SAMB's name (e.g. S6321). [label · (S6321)]
+- purchase_order_no: printed after "No PO". [label · No PO]
+- posting_date: printed after "Tgl:" under the receipt number. [label · Tgl:]
+- no_ref: the SOR printed after "No Faktur" (11 digits starting 2611, without the letters SOR). [label · No Faktur]
+- lines.customer_item_code: the PLU column. [column · PLU]
+- lines.description: the Produk column. [column · Produk]
+- lines.qty: the Qty column. [column · Qty]
+- lines.uom: the word in the Konversi column (e.g. CTN in "CTN/6"). [column · Konversi]
+- lines.satuan: the number in the Konversi column, the pieces in one carton (e.g. 6 in "CTN/6"). [column · Konversi]
+
+## GrandLucky (chain 1100002502, 1100002496, 1100002477, 1100002476)
+- document_no: printed after "GR ID". [label · GR ID]
+- vendor_number: printed after "Supplier Code". [label · Supplier Code]
+- purchase_order_no: printed after "Po Number". [label · Po Number]
+- posting_date: printed after "Date" under GR Status. [label · Date]
+- no_ref: the SOR at the start of the Remark (11 digits starting 2611, without the letters SOR). [label · Remark]
+- lines.customer_item_code: the SKU, the number above the barcode. [column · SKU]
+- lines.description: the Material Name column. [column · Material Name]
+- lines.qty: the Receive QTY column, in pieces. [column · Receive QTY]
+- lines.uom: the quantity counts pieces; the UOM column (e.g. CAR) names the pack, not what the quantity counts. Leave it empty. [not_printed]
+- lines.satuan: the Qty UOM column, the pieces in one carton (e.g. 24). [column · Qty UOM]
+
+## Yogya (chain 1100002428)
+- document_no: the REC NO column of the header table. [label · REC NO]
+- vendor_number: the SUPPLIER CODE column of the header table. [label · SUPPLIER CODE]
+- purchase_order_no: the ORDER NO column of the header table. [label · ORDER NO]
+- posting_date: the date printed at the top right. [label · top right]
+- lines.customer_item_code: the External Code column, not Article Code. [column · External Code]
+- lines.description: the Article Description column. [column · Article Description]
+- lines.qty: the Rec Qty column. [column · Rec Qty]
+- lines.uom: the UoM column (e.g. Piece). [column · UoM]
+
+## Hero (chain 1100002473, 1100002447)
+- document_no: printed after "Receiving No". [label · Receiving No]
+- vendor_number: printed after "Vendor" (e.g. S1006H). [label · Vendor]
+- purchase_order_no: printed after "PO Number". [label · PO Number]
+- posting_date: printed after "Receiving Date". [label · Receiving Date]
+- lines.customer_item_code: the code on top in the Product column. [column · Product]
+- lines.description: the product name under the code. [column · Product]
+- lines.qty: the number before the brackets in the Qty Ordered column (e.g. 29 in "29.000 (174)"). [column · Qty Ordered]
+- lines.uom: the Order UOM column (e.g. CT). [column · Order UOM]
+
+## Diamond (chain 1100002483)
+- document_no: the number under the title TERIMA BARANG (e.g. RC3120260031694). [label · TERIMA BARANG]
+- vendor_number: the code in brackets after "Supplier" (e.g. SH479). [label · Supplier]
+- purchase_order_no: printed after "No Po". [label · No Po]
+- posting_date: printed after "Tanggal Penerimaan". [label · Tanggal Penerimaan]
+- no_ref: the SOR printed after "No Faktur". [label · No Faktur]
+- lines.customer_item_code: the PLU column (the PO's Item ID, not the PO's PLU). [column · PLU]
+- lines.description: the Nama Barang column. [column · Nama Barang]
+- lines.qty: the Qty column (e.g. "2.00 CTN"). [column · Qty]
+- lines.uom: the unit printed in the Qty column (e.g. CTN). [column · Qty]
+
+## FamilyMart (chain 1100002458)
+- document_no: the number under the title GOODS RECEIPT NOTE. [label · GOODS RECEIPT NOTE]
+- vendor_number: printed after "Supplier". [label · Supplier]
+- purchase_order_no: printed after "PO NO". [label · PO NO]
+- posting_date: the date at the top right, under "Halaman". [label · top right]
+- no_ref: the SOR printed after "SJ Supplier" (11 digits starting 2611, without the letters SOR). [label · SJ Supplier]
+- lines.customer_item_code: the Article column. [column · Article]
+- lines.description: the Article Description column. [column · Article Description]
+- lines.qty: the Receive Qty column (e.g. "50 PCS"). [column · Receive Qty]
+- lines.uom: the unit printed in the Receive Qty column (e.g. PCS). [column · Receive Qty]
+
+## Boots (chain 1100002518)
+- document_no: the number under the title "Good Receipt". [label · Good Receipt]
+- vendor_number: the number printed under SAMB's name at the top left. [label · SAMB's name]
+- purchase_order_no: printed after "Ref. PO No.". [label · Ref. PO No.]
+- posting_date: printed after "GR Date". [label · GR Date]
+- lines.customer_item_code: the Article SKU, the code above the barcode. [column · Article SKU]
+- lines.description: the Description column. [column · Description]
+- lines.qty: the Qty column. [column · Qty]
+- lines.uom: the UoM column (e.g. EA). [column · UoM]
+
+## Megah Daya Inti Harapan (chain 1100002500)
+- document_no: printed after "No.:" beside the title (e.g. 2R02603248). Not "PB No.": that is the store's request number. [label · No.:]
+- vendor_number: printed after "Supplier" (e.g. S0666). [label · Supplier]
+- purchase_order_no: printed after "PO No.". [label · PO No.]
+- posting_date: the date printed after "Tgl.:" beside the receipt number (e.g. 10-09-2026). Not the date beside PB No. [label · Tgl.:]
+- no_ref: the SOR printed after "SJ/Fak". [label · SJ/Fak]
+- lines.customer_item_code: the PLU column. [column · PLU]
+- lines.description: the Deskripsi column. [column · Deskripsi]
+- lines.qty: the Qty column. [column · Qty]
+- lines.uom: the word in the Keterangan column (e.g. CTN in "CTN / 120.00"). [column · Keterangan]
+- lines.satuan: the number in the Keterangan column, the pieces in one carton (e.g. 120 in "CTN / 120.00"). [column · Keterangan]
+
+## Total Buah Segar (chain 1100002337, 1100002555, 1100002557, 1100002561, 1100002599, 1100002600, 1100002601, 1100002602, 1100002603, 1100002604, 1100002605, 1100002607, 1100002608, 1100002609, 1100002612, 1100002613, 1100002614, 1100002615, 1100002616, 1100002617, 1100002618)
+- document_no: printed after "Goods Received No". [label · Goods Received No]
+- vendor_number: printed after "Kode Supplier". [label · Kode Supplier]
+- purchase_order_no: printed after "PO No.". [label · PO No.]
+- posting_date: printed after "Goods Received Date". [label · Goods Received Date]
+- no_ref: the SOR printed after "Supplier invoice". [label · Supplier invoice]
+- lines.customer_item_code: the Product Code column. [column · Product Code]
+- lines.description: the Product column. [column · Product]
+- lines.qty: the Quantity(1) column (e.g. "1.00 DUS"). [column · Quantity(1)]
+- lines.uom: the unit printed in Quantity(1) (e.g. DUS). [column · Quantity(1)]
+- lines.satuan: the number in the Quantity(2) column, the pieces in one pack (e.g. 24 in "24.00 PCS"). [column · Quantity(2)]
+
+## Watsons (chain 1100002452)
+- document_no: the Receipt No. column (each row has its own; take the first row's). [label · Receipt No.]
+- vendor_number: printed after "Vendor". [label · Vendor]
+- purchase_order_no: printed after "PO No.". [label · PO No.]
+- posting_date: printed after "Last Received time". The date is written month first: 09/11/2026 is 11 September 2026. [label · Last Received time]
+- lines.customer_item_code: the SKU column. [column · SKU]
+- lines.description: the SKU description column. [column · SKU description]
+- lines.qty: the Received qty column, in pieces. [column · Received qty]
+- lines.satuan: the Pack size column, the pieces in one unit (e.g. 1). [column · Pack size]

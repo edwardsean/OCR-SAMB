@@ -80,12 +80,14 @@ CREATE TABLE satellite.doc_ttg_line (
   material_description text,
   qty                  numeric(12,3),
   uom                  text,
+  satuan               numeric(12,3),
   PRIMARY KEY (doc_id, line_no)
 );
 COMMENT ON COLUMN satellite.doc_ttg_line.item_code IS '§6.1: Item code';
 COMMENT ON COLUMN satellite.doc_ttg_line.material_description IS '§6.1: Material description';
 COMMENT ON COLUMN satellite.doc_ttg_line.qty IS '§6.1: Qty';
 COMMENT ON COLUMN satellite.doc_ttg_line.uom IS '§6.1: UOM';
+COMMENT ON COLUMN satellite.doc_ttg_line.satuan IS '§6.1: Satuan';
 
 CREATE TABLE satellite.doc_po (  -- PO: PO Customer
   id           bigserial PRIMARY KEY,
@@ -115,6 +117,7 @@ CREATE TABLE satellite.doc_po_line (
   product_description  text,
   qty                  numeric(12,3),
   uom                  text,
+  satuan               numeric(12,3),
   unit_price           numeric(18,2),
   discount             text,
   PRIMARY KEY (doc_id, line_no)
@@ -123,6 +126,7 @@ COMMENT ON COLUMN satellite.doc_po_line.product_code IS '§6.1: Product code';
 COMMENT ON COLUMN satellite.doc_po_line.product_description IS '§6.1: Product description';
 COMMENT ON COLUMN satellite.doc_po_line.qty IS '§6.1: Qty';
 COMMENT ON COLUMN satellite.doc_po_line.uom IS '§6.1: UOM';
+COMMENT ON COLUMN satellite.doc_po_line.satuan IS '§6.1: Satuan';
 COMMENT ON COLUMN satellite.doc_po_line.unit_price IS '§6.1: Unit price';
 COMMENT ON COLUMN satellite.doc_po_line.discount IS '§6.1: Discount';
 
