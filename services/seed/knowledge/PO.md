@@ -89,9 +89,9 @@
 - total: printed after "NET TOTAL WITH VAT". [label · NET TOTAL WITH VAT]
 - lines.customer_item_code: the ITEM NO column. [column · ITEM NO]
 - lines.description: the ITEM DESCRIPTION column. [column · ITEM DESCRIPTION]
-- lines.qty: the ORDER QTY column, never QTY/CASE SIZE (that is the pieces in one case). [column · ORDER QTY]
-- lines.uom: the word in the UOM column (e.g. CARTON). [column · UOM]
-- lines.satuan: the QTY/CASE SIZE column, the pieces in one case (e.g. 20.00). [column · QTY/CASE SIZE]
+- lines.qty: the ORDER QTY column (e.g. 1.00), never QTY/CASE SIZE or the number in the UOM column (those are the pieces in one carton). [column · ORDER QTY]
+- lines.uom: the word in the UOM column (e.g. CARTON in "CARTON 20"). [column · UOM]
+- lines.satuan: the number in the UOM column, the pieces in one carton (e.g. 20 in "CARTON 20"). [column · UOM]
 
 ## Indogrosir (chain 1100002481)
 - purchase_order_no: printed after "NO.PO". [label · NO.PO]
@@ -267,7 +267,7 @@
 - lines.description: the Produk column. [column · Produk]
 - lines.qty: the Qty Up column (e.g. "1 DUS"). [column · Qty Up]
 - lines.uom: the unit printed in Qty Up (e.g. DUS). [column · Qty Up]
-- lines.satuan: the number in the Qty Down column, the pieces in one pack (e.g. 24 in "24 PCS"). [column · Qty Down]
+- lines.satuan: not printed; Qty Down is the quantity counted in pieces (e.g. "24 BTL" is half of a 48-bottle DUS), not the pieces in one DUS. Leave it empty. [not_printed]
 
 ## Watsons (chain 1100002452)
 - purchase_order_no: printed after "PO No.". [label · PO No.]

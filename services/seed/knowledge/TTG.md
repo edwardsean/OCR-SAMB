@@ -73,9 +73,9 @@
 - posting_date: printed after "DATE RECEIVED". [label · DATE RECEIVED]
 - lines.customer_item_code: the ITEM NO column. [column · ITEM NO]
 - lines.description: the ITEM DESCRIPTION column. [column · ITEM DESCRIPTION]
-- lines.qty: the RECEIVED QTY column, never QTY/CASE SIZE (that is the pieces in one case). [column · RECEIVED QTY]
-- lines.uom: the word in the UOM column (e.g. CARTON). [column · UOM]
-- lines.satuan: the QTY/CASE SIZE column, the pieces in one case (e.g. 20.00). [column · QTY/CASE SIZE]
+- lines.qty: the RECEIVED QTY column (e.g. 1.00), never ORDER QTY, QTY/CASE SIZE or the number in the UOM column (those are the pieces in one carton). [column · RECEIVED QTY]
+- lines.uom: the word in the UOM column (e.g. CARTON in "CARTON 20"). [column · UOM]
+- lines.satuan: the number in the UOM column, the pieces in one carton (e.g. 20 in "CARTON 20"). [column · UOM]
 
 ## Indogrosir (chain 1100002481)
 - document_no: printed after "No." at the top. [label · No.]
@@ -206,10 +206,10 @@
 - lines.uom: the UoM column (e.g. EA). [column · UoM]
 
 ## Megah Daya Inti Harapan (chain 1100002500)
-- document_no: printed after "No.:" beside the title (e.g. 2R02603248). Not "PB No.": that is the store's request number. [label · No.:]
+- document_no: printed after "No.:" on the line just below the title BUKTI PENERIMAAN BARANG (e.g. 2R02603248). Not "PB No.": that is the store's request number. [label · No.:]
 - vendor_number: printed after "Supplier" (e.g. S0666). [label · Supplier]
 - purchase_order_no: printed after "PO No.". [label · PO No.]
-- posting_date: the date printed after "Tgl.:" beside the receipt number (e.g. 10-09-2026). Not the date beside PB No. [label · Tgl.:]
+- posting_date: the date printed after "Tgl.:" on the same line as "No.:", just below the title BUKTI PENERIMAAN BARANG (e.g. 10-09-2026). Not the Tgl. beside PB No., PO No. or SJ/Fak. [label · Tgl.:]
 - no_ref: the SOR printed after "SJ/Fak". [label · SJ/Fak]
 - lines.customer_item_code: the PLU column. [column · PLU]
 - lines.description: the Deskripsi column. [column · Deskripsi]
@@ -227,7 +227,7 @@
 - lines.description: the Product column. [column · Product]
 - lines.qty: the Quantity(1) column (e.g. "1.00 DUS"). [column · Quantity(1)]
 - lines.uom: the unit printed in Quantity(1) (e.g. DUS). [column · Quantity(1)]
-- lines.satuan: the number in the Quantity(2) column, the pieces in one pack (e.g. 24 in "24.00 PCS"). [column · Quantity(2)]
+- lines.satuan: not printed; Quantity(2) is the quantity counted in pieces (e.g. "0.50 DUS" and "24.00 BTL" are one quantity: half of a 48-bottle DUS), not the pieces in one DUS. Leave it empty. [not_printed]
 
 ## Watsons (chain 1100002452)
 - document_no: the Receipt No. column (each row has its own; take the first row's). [label · Receipt No.]
