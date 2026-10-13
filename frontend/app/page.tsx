@@ -63,7 +63,8 @@ export default async function Batches({ searchParams }: { searchParams: SearchPa
                     <td><Link href={href}><b className="mono">{u.code}</b></Link>
                       <div className="muted small">oleh {u.uploaded_by}, diunggah {tgl(u.created_at)}</div></td>
                     <td>{tgl(u.doc_date, false)}</td>
-                    <td className="num small">{u.files} file<br />{u.pages} halaman<br />{u.orders} order</td>
+                    <td className="num small">{u.files} file<br />{u.pages} halaman<br />{u.orders} order
+                      {u.efaktur > 0 && <><br />{u.efaktur} e-Faktur</>}</td>
                     <td><StepMarks steps={u.steps} href={href} /></td>
                     <td>{nx ? <Link className="ws-next" href={`${href}?step=${nx.key}`}><b>{NAME[nx.key]}</b>
                         <span>{words(nx)[0]}</span></Link>

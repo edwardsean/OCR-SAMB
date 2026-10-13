@@ -85,7 +85,7 @@ approved it). Only finished orders are published.
 | GET | `/api/v1/uploads` | every upload batch with its five steps |
 | GET | `/api/v1/uploads/{id}` | one batch: its files, its five steps, its failed and unsure pages, its orders' places |
 | GET | `/api/v1/scans` | recent scans |
-| POST | `/api/v1/scans` | upload a scanned PDF (into a batch) |
+| POST | `/api/v1/scans` | upload a scanned PDF (into a batch); an e-Faktur PDF is attached to its order instead (`efaktur` in the reply, no AI) |
 | GET | `/api/v1/scans/{batch_id}` | one scan: its pages, its orders by status, the queues |
 | GET | `/api/v1/scans/{batch_id}/pages/{page_no}` | one page: its fields, where each sits, its table rows |
 | POST | `/api/v1/scans/{batch_id}/pages/{page_no}/fixes` | correct a value on a page |

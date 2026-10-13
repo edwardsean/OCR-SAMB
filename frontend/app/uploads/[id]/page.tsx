@@ -15,6 +15,7 @@ import Jenis from "./Jenis";
 import Cocokkan from "./Cocokkan";
 import Periksa from "./Periksa";
 import Kirim from "./Kirim";
+import { EFakturList } from "@/components/EFaktur";
 
 const load = cache((id: string) => get<UploadDetail>(`/uploads/${id}`));      // once per request: title and page
 
@@ -49,7 +50,8 @@ export default async function UploadPage({ params, searchParams }: { params: Pro
               <span>Diunggah oleh <b>{u.uploaded_by}</b></span>
               <span>Tanggal scan <b>{tgl(u.doc_date, false)}</b></span>
               <span>Diunggah {tgl(u.created_at)}</span>
-              <span><b>{u.files}</b> file, <b>{u.pages}</b> halaman, <b>{u.orders}</b> order</span>
+              <span><b>{u.files}</b> file, <b>{u.pages}</b> halaman, <b>{u.orders}</b> order
+                {u.efaktur > 0 && <>, <b>{u.efaktur}</b> e-Faktur</>}</span>
             </p>
             {u.note && <p className="muted small">{u.note}</p>}
           </div>
@@ -59,13 +61,17 @@ export default async function UploadPage({ params, searchParams }: { params: Pro
         </div>
       </section>
 
-      <Stepper steps={d.steps} at={at} href={href} blockers={d.blockers} />
+      <EFakturList list={d.efaktur} />
 
-      {at === "baca" && <Baca d={d} />}
-      {at === "jenis" && <Jenis d={d} />}
-      {at === "cocokkan" && <Cocokkan d={d} />}
-      {at === "periksa" && <Periksa d={d} />}
-      {at === "kirim" && <Kirim d={d} just={one(sp.just) ?? ""} />}
+      {d.files.length > 0 && <>                {/* scans: the five steps (a batch of e-Fakturs only has none) */}
+        <Stepper steps={d.steps} at={at} href={href} blockers={d.blockers} />
+
+        {at === "baca" && <Baca d={d} />}
+        {at === "jenis" && <Jenis d={d} />}
+        {at === "cocokkan" && <Cocokkan d={d} />}
+        {at === "periksa" && <Periksa d={d} />}
+        {at === "kirim" && <Kirim d={d} just={one(sp.just) ?? ""} />}
+      </>}
     </>
   );
 }

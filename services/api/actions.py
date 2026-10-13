@@ -52,8 +52,10 @@ def new_upload(by, doc_date=None, note=None):
 
 def upload(data, filename, upload_id=None):
     """A scanned PDF: stored, recorded as 'received', and put on q.intake, where the intake worker splits it into
-    pages and queues them (common/intake.py). Returns {"batch_id"}. Refused: not a PDF, or its pages can't be read
-    (400); the same file again (409, with the earlier scan)."""
+    pages and queues them (common/intake.py). Returns {"batch_id"}. An e-Faktur PDF (its own text says so) is never
+    split nor read by the AI: it is linked to its order and attached to the order's PDF (common/efaktur.py); returns
+    {"batch_id": None, "efaktur": …}. Refused: not a PDF, or its pages can't be read (400); the same file again (409,
+    with the earlier scan or e-Faktur)."""
     if not data.startswith(b"%PDF"):
         raise ActionError(400, "File itu bukan PDF. Pilih file PDF hasil scan.")
     up = None
@@ -63,6 +65,13 @@ def upload(data, filename, upload_id=None):
             up = uploads.get(c, upload_id)
         if not up:
             raise ActionError(400, "Batch unggahan itu tidak ada. Mulai unggah lagi dari awal.")
+    from common import efaktur
+    found = efaktur.parse(efaktur.text_of(data))
+    if found:
+        out = efaktur.receive(data, filename, up, found)
+        if out.get("duplicate"):
+            raise ActionError(409, "File ini sudah pernah diunggah.", dup=out["earlier"])
+        return {"batch_id": None, "efaktur": out["efaktur"]}
     try:
         out = intake.receive(data, filename, up)
     except intake.NotReadable as e:
@@ -196,7 +205,7 @@ def save_label(batch, page, label, customer="", note="", labelled_by=""):
                      VALUES (%s, %s, %s, NULLIF(%s,''), NULLIF(%s,''), NULLIF(%s,''),
                              COALESCE(%s, CASE WHEN random() < %s THEN 'exam' ELSE 'practice' END))
                      ON CONFLICT (batch_id, page_no) DO UPDATE SET
-                       label=EXCLUDED.label, customer=EXCLUDED.customer, note=EXCLUDED.note,
+                       label=EXCLUDED.label, customer=COALESCE(EXCLUDED.customer, staging.type_label.customer), note=EXCLUDED.note,
                        labelled_by=EXCLUDED.labelled_by, labelled_at=now()""",
                   (batch, page, label, (customer or "").strip(), (note or "").strip(), (labelled_by or "").strip(),
                    v1_pile, a.EXAM_SHARE))

@@ -8,12 +8,14 @@ import { useRouter } from "next/navigation";
 import { useState, type DragEvent } from "react";
 import { api } from "@/lib/client";
 import { tgl } from "@/lib/format";
-import type { UploadRef } from "@/lib/types";
+import type { EFaktur, UploadRef } from "@/lib/types";
 import { useReviewer } from "@/components/useReviewer";
+import { EFakturStatus } from "@/components/EFaktur";
 
-type Dup = { id: string; file_name: string; received_at: string };
+type Dup = { id: string; file_name: string; received_at: string; sor_no?: string };   // sor_no: an e-Faktur
+type Ef = Pick<EFaktur, "sor_no" | "status" | "attached_version">;
 type Step = "waiting" | "sending" | "taken" | "dup" | "failed";
-type Row = { file: File; step: Step; batch_id?: string; dup?: Dup; error?: string; detail?: string };
+type Row = { file: File; step: Step; batch_id?: string; ef?: Ef; dup?: Dup; error?: string; detail?: string };
 
 const SAYS: Record<Step, [string, string]> = {          // what each step says, and its ink
   waiting: ["menunggu giliran", "chip"],
@@ -76,8 +78,8 @@ export default function UploadForm() {
       const body = new FormData();
       body.append("file", rows[i].file);
       body.append("upload", String(b.id));
-      const a = await api.post<{ batch_id: string; dup?: Dup; detail?: string }>("/scans", body);
-      if (a.ok) { taken++; mark(i, { step: "taken", batch_id: a.data.batch_id }); }
+      const a = await api.post<{ batch_id: string | null; efaktur?: Ef; dup?: Dup; detail?: string }>("/scans", body);
+      if (a.ok) { taken++; mark(i, { step: "taken", batch_id: a.data.batch_id ?? undefined, ef: a.data.efaktur }); }
       else if (a.status === 409 && a.data.dup) mark(i, { step: "dup", dup: a.data.dup });
       else mark(i, { step: "failed", error: a.data.error ?? `Gagal mengunggah (kode ${a.status}).`, detail: a.data.detail });
     }
@@ -150,7 +152,8 @@ export default function UploadForm() {
                   <td>{r.file.name}</td>
                   <td className="num muted small">{(r.file.size / 1024).toFixed(0)} KB</td>
                   <td>
-                    <span className={SAYS[r.step][1]}>{SAYS[r.step][0]}</span>
+                    {r.ef ? <><EFakturStatus e={r.ef} /> <span className="small muted">Faktur Pajak {r.ef.sor_no}</span></>
+                      : <span className={SAYS[r.step][1]}>{SAYS[r.step][0]}</span>}
                     {r.step === "failed" && (
                       <div className="small">{r.error}
                         {r.detail && <details><summary>Detail untuk tim IT</summary><code>{r.detail}</code></details>}
@@ -162,7 +165,7 @@ export default function UploadForm() {
                   </td>
                   <td>
                     {r.batch_id && <Link href={`/batches/${r.batch_id}`}>buka scan</Link>}
-                    {r.dup && <Link href={`/batches/${r.dup.id}`}>buka scan</Link>}
+                    {r.dup && !r.dup.sor_no && <Link href={`/batches/${r.dup.id}`}>buka scan</Link>}
                   </td>
                 </tr>
               ))}

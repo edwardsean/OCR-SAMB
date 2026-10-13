@@ -56,7 +56,8 @@ class Label(BaseModel):
     page: int = _page()
     label: str = Field(description="the document type: FP, TTG, PO, SJ, FPJ, PEL, CONTINUATION or OTHER (GET /words "
                                    "→ LABEL_TYPES)", examples=["TTG"])
-    customer: str = Field("", description="the customer, if known", examples=["Indomaret"])
+    customer: str = Field("", description="no longer asked or used (2026-10-09: nothing read it); accepted so older "
+                                         "callers don't fail, and kept as typed")
     note: str = Field("", description="anything worth keeping about the page")
     labelled_by: str = Field("", description="who says so", examples=["Edward"])
 
@@ -266,12 +267,14 @@ async def upload(file: UploadFile = File(...), upload: int | None = Form(None, d
                                                                                           "(POST /uploads first)")):
     """A scanned PDF: stored, recorded as 'received', and put on q.intake (the intake worker splits it into pages and
     queues them). With `upload`, it joins that batch and takes its scan date. 201 {batch_id}; 400 when it isn't a
-    readable PDF or the batch doesn't exist; 409 with the earlier scan when it's the same file."""
+    readable PDF or the batch doesn't exist; 409 with the earlier scan when it's the same file. An e-Faktur PDF (the
+    tax office's file, its text inside) is never split nor read by the AI: 201 {batch_id: null, efaktur: {sor_no,
+    billing_no, status: waiting | held | linked | attached, …}}; it is attached to its order's PDF."""
     try:
         out = actions.upload(await file.read(), file.filename, upload)
     except actions.ActionError as e:
         return JSONResponse(jsonable_encoder(e.body()), status_code=e.status)
-    return JSONResponse(out, status_code=201)
+    return JSONResponse(jsonable_encoder(out), status_code=201)        # an e-Faktur carries amounts and a time
 
 
 @router.get("/scans/{batch_id}", tags=[SCANS], summary="One scan: pages, orders, queues")
@@ -429,8 +432,11 @@ def orders(batch: str | None = None, upload: int | None = None):
         if A.VF:
             from common import notice
             fresh = notice.unseen(c)
+        from common import efaktur
+        open_ = efaktur.not_linked(c)
     return _ok({"batch": batch, "upload": upload, "uploads": A.uploads_view(100), "rows": rows, "scans": scans_,
-                "fresh": fresh, "ready": sum(1 for r in rows if r["status"] in ("auto_ok", "reviewed"))})
+                "fresh": fresh, "ready": sum(1 for r in rows if r["status"] in ("auto_ok", "reviewed")),
+                "efaktur_open": open_})
 
 
 @router.post("/notices/seen", tags=[ORDERS], summary="Mark the needs-you notices seen")

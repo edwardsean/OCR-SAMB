@@ -7,7 +7,8 @@ Three files, from the user (2026-09-25):
   ITEM-1-bulan-kebelakang.csv            one row per SO line (joined to HEADER by order_id)
   Header-1-bulan-po-customer-number.csv  SOR -> SG sales-order no -> the customer's PO number (the FP's Nomor CPO)
 Re-running replaces every SO it contains and all SO lines. SOs in the PO file but not in HEADER are skipped (no
-customer). Afterwards: python -m grouper.group <batch> --recheck.
+customer). Afterwards: python -m grouper.group <batch> --recheck, and python -m common.efaktur relink (e-Fakturs
+waiting for a billing number; the scheduler also does it every EFAKTUR_EVERY_MINUTES).
 
   docker compose run --rm -v <folder with the CSVs>:/data/so:ro -v ./scripts:/scripts:ro rtm-api \
       python /scripts/load_satellite.py /data/so

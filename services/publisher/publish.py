@@ -14,6 +14,9 @@
   One transaction per bundle: the rows, the PDF record and the bundle's status 'published' go together. A published
   bundle is never checked again, and regrouping re-attaches its pages to it instead of opening a new bundle.
 
+  An order's e-Faktur (common/efaktur.py) goes into its PDF after its pages: when the order is sent, or, when it
+  comes after, appended to the PDF already sent (attach: a new version). Nothing else is written for it.
+
   python -m publisher.publish <batch> [<SOR> …]       publish the batch's finished bundles (or these)
   python -m publisher.publish <batch> --undo <SOR> …  take a publication back (development): rows, PDF, status
 """
@@ -26,7 +29,9 @@ from decimal import Decimal
 from PIL import Image
 from psycopg.types.json import Json
 
-from common import config, db, storage, trace, verify
+from contextlib import contextmanager
+
+from common import config, db, efaktur, storage, trace, verify
 from common.fields import DOCS, column, project
 
 PREFIX = config.STORAGE_PREFIX
@@ -152,17 +157,39 @@ def pdf_bytes(paths):
     return b.getvalue()
 
 
+@contextmanager
+def pdf_lock(sor):
+    """One writer of an order's PDF at a time (publishing it, or appending an e-Faktur to it): a lock held by its own
+    connection, released when the block ends (or the process dies)."""
+    with db.connect() as lock:
+        lock.execute("SELECT pg_advisory_lock(hashtext(%s))", ("pdf:" + sor,))
+        lock.commit()
+        try:
+            yield
+        finally:
+            lock.execute("SELECT pg_advisory_unlock(hashtext(%s))", ("pdf:" + sor,))
+
+
 def publish_one(bid, sor):
     """One bundle: the PDF first (a stored file with no rows is harmless; rows without their PDF are not), then the
     rows, the PDF record and the status in one transaction. Returns what was written."""
+    with pdf_lock(sor):
+        return _publish_one(bid, sor)
+
+
+def _publish_one(bid, sor):
     with db.connect() as c:
         docs, pages, where = _inputs(c, bid, sor)
+        efs = efaktur.for_order(c, sor)
     if not docs:
         return None
     p = plan(sor, docs, pages, where)
     batches = sorted({w["batch"] for w in where.values()}) or [bid]
     key = f"{PREFIX}documents/{sor}.pdf"
     data = pdf_bytes([pages[n]["upright_path"] for n in p["pdf"]])
+    if efs:                                               # its e-Faktur after its pages, as the tax office made it
+        data = efaktur.merge(data, [efaktur.file_bytes(e["file_path"]) for e in efs])
+    page_count = len(p["pdf"]) + sum(e["pages"] for e in efs)
     storage.client().put_object(storage.bucket(), key, io.BytesIO(data), len(data), content_type="application/pdf")
     with db.connect() as c:                               # one transaction: all of it, or none of it
         b = c.execute("SELECT id, status::text AS status FROM staging.bundle WHERE sor_no=%s AND status = ANY(%s) "
@@ -179,11 +206,15 @@ def publish_one(bid, sor):
                 lc = list(line)
                 c.execute(f"INSERT INTO satellite.{d['table']}_line (doc_id, line_no, {', '.join(lc)}) VALUES "
                           f"(%s, %s, {', '.join(['%s'] * len(lc))})", [doc_id, i] + [line[k] for k in lc])
-        c.execute("""INSERT INTO satellite.sor_document (sor_no, pdf_path, page_count, source_batch)
+        version = c.execute("""INSERT INTO satellite.sor_document (sor_no, pdf_path, page_count, source_batch)
                      VALUES (%s, %s, %s, %s)
                      ON CONFLICT (sor_no) DO UPDATE SET pdf_path=EXCLUDED.pdf_path, page_count=EXCLUDED.page_count,
-                       version=satellite.sor_document.version + 1, source_batch=EXCLUDED.source_batch, updated_at=now()""",
-                  (sor, key, len(p["pdf"]), ",".join(batches)))
+                       version=satellite.sor_document.version + 1, source_batch=EXCLUDED.source_batch, updated_at=now()
+                     RETURNING version""",
+                  (sor, key, page_count, ",".join(batches))).fetchone()["version"]
+        if efs:
+            c.execute("""UPDATE staging.efaktur SET status='attached', attached_version=%s, attached_at=now(), why=NULL
+                         WHERE id = ANY(%s)""", (version, [e["id"] for e in efs]))
         c.execute("""UPDATE staging.bundle SET status='published', published_at=now(),
                        json = coalesce(json, '{}'::jsonb) || %s::jsonb WHERE id=%s""",
                   (Json({"published_from": b["status"], "published_batch": bid, "batches": batches, "pdf": key,
@@ -191,7 +222,7 @@ def publish_one(bid, sor):
                                         "source_batch": d.get("source_batch") or bid,
                                         "page_ref": d["page_ref"], "confidence": d["confidence"],
                                         "lines": len(d["lines"])} for d in p["documents"]]}), b["id"]))
-    return {"sor": sor, "pdf": key, "pages": len(p["pdf"]), "bytes": len(data),
+    return {"sor": sor, "pdf": key, "pages": page_count, "bytes": len(data), "efaktur": len(efs),
             "documents": [(d["type"], d["source_pages"], len(d["lines"]), d["confidence"]) for d in p["documents"]]}
 
 
@@ -214,6 +245,29 @@ def publish(bid, sors=None):
     return out
 
 
+def attach(sor):
+    """The e-Fakturs linked to an order already sent: their own pages appended to the PDF that was sent, as a new
+    version. Nothing else is written (the user, 2026-10-12: "just attach the faktur pajak in the document"). Returns
+    the new version, or None when there was nothing to append."""
+    with pdf_lock(sor):
+        with db.connect() as c:
+            doc = c.execute("SELECT pdf_path FROM satellite.sor_document WHERE sor_no=%s", (sor,)).fetchone()
+            efs = [e for e in efaktur.for_order(c, sor) if e["status"] == "linked"]
+        if not doc or not efs:
+            return None
+        data = efaktur.merge(efaktur.file_bytes(doc["pdf_path"]), [efaktur.file_bytes(e["file_path"]) for e in efs])
+        storage.client().put_object(storage.bucket(), doc["pdf_path"], io.BytesIO(data), len(data),
+                                    content_type="application/pdf")
+        with db.connect() as c:
+            version = c.execute("""UPDATE satellite.sor_document SET page_count = page_count + %s, version = version + 1,
+                                     updated_at = now() WHERE sor_no=%s RETURNING version""",
+                                (sum(e["pages"] for e in efs), sor)).fetchone()["version"]
+            c.execute("""UPDATE staging.efaktur SET status='attached', attached_version=%s, attached_at=now(), why=NULL
+                         WHERE id = ANY(%s)""", (version, [e["id"] for e in efs]))
+    trace.event("efaktur.attached", sor=sor, version=version, files=len(efs))
+    return version
+
+
 def undo(sor):
     """Take a publication back (development): the SOR's rows, its PDF record and file; the bundle goes back to be
     checked (its next grouping gives it its status again)."""
@@ -224,6 +278,8 @@ def undo(sor):
         c.execute("""UPDATE staging.bundle SET status='needs_review', published_at=NULL,
                        json = coalesce(json, '{}'::jsonb) - 'published_from' - 'published_batch' - 'pdf' - 'documents'
                      WHERE sor_no=%s AND status='published'""", (sor,))
+        c.execute("""UPDATE staging.efaktur SET status='linked', attached_version=NULL, attached_at=NULL
+                     WHERE sor_no=%s AND status='attached'""", (sor,))       # into the PDF again when it is sent
     if r:
         try:
             storage.client().remove_object(storage.bucket(), r["pdf_path"])

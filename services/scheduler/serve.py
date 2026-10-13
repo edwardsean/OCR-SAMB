@@ -5,6 +5,8 @@
   notify   every NOTIFY_EVERY_MINUTES   orders that newly need a person become one notice (common/notice.py)
   sweep    every SWEEP_EVERY_MINUTES    pages still waiting for the AI go back on q.pages (worker/vf.py sweep)
   lint     every LINT_EVERY_MINUTES     knowledge a person's later correction contradicts is taken out (worker/learn.py)
+  efaktur  every EFAKTUR_EVERY_MINUTES  e-Fakturs waiting for Satellite's data are decided again; one whose order is
+                                        already sent goes into its PDF (common/efaktur.py relink; no AI)
   trace    every hour                   the trace older than TRACE_KEEP_DAYS is deleted (the AI calls' payloads older
                                         than PAYLOAD_KEEP_DAYS), and a span still 'running' after two hours is closed
                                         as cut off (common/trace.py)
@@ -52,6 +54,11 @@ def job_lint():
     return learn.lint(show=lambda *a: None)
 
 
+def job_efaktur():
+    from common import efaktur
+    return efaktur.relink()
+
+
 def job_trace():
     with db.connect() as c:
         old = c.execute("DELETE FROM staging.trace WHERE at < now() - make_interval(days => %s)",
@@ -68,6 +75,7 @@ JOBS = {"intake": (lambda: config.INTAKE_RETRY_MINUTES, job_intake, False),     
         "notify": (lambda: config.NOTIFY_EVERY_MINUTES, job_notify, True),
         "sweep": (lambda: config.SWEEP_EVERY_MINUTES, job_sweep, True),
         "lint": (lambda: config.LINT_EVERY_MINUTES, job_lint, True),
+        "efaktur": (lambda: config.EFAKTUR_EVERY_MINUTES, job_efaktur, False),
         "trace": (lambda: 60, job_trace, False)}
 
 
