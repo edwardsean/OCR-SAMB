@@ -29,7 +29,8 @@ import time
 import re
 from datetime import date
 
-from common import confusions, gates
+from common import confusions, gates, tables
+from common.tables import Sor, SorItem
 
 PRINTED = ("text", "qr", "zoom", "second_look", "adds_up")    # verdicts backed by print
 NOT_PRINTED = "(not printed)"   # a person's answer: this page prints no such value (7000363700-03 p5: the AI took the
@@ -60,8 +61,10 @@ def edits(a, b):
     return prev[-1]
 
 
-SO_COLS = ("sor_no, customer_code, customer_name, cpo_no, tgl_so, dpp, ppn, total, vat_pct, billing_no, cgr_date, "
-           "order_dpp, order_ppn, order_total, customer_parent, status, cgr_no")
+# What the checks read of an SO (common/tables.py's Sor). Not every column: a bundle's fingerprint hashes the record
+# (grouper/crosscheck.py), and a reviewed bundle is reviewed only while it is unchanged, so a column added here would
+# undo every approval; loaded_at changes on every load of Satellite's data.
+SO_COLS = tables.select(Sor, without=("so_no", "posting_date", "loaded_at"))
 LINE_SUMS = """LEFT JOIN (SELECT sor_no, bool_and(invoice_qty IS NOT DISTINCT FROM qty_pcs) AS unchanged,
                                  bool_and(line_amount > 0 AND vat IS NOT NULL) AS priced,
                                  sum(line_amount) AS lines_dpp, sum(vat) AS lines_ppn
@@ -77,7 +80,7 @@ def _record(r):
     return r
 
 
-def load(conn, sors=None):
+def load(conn, sors=None) -> dict[str, Sor]:
     """{flat SOR: record}. With `sors`: only those SOs, read now. Without: every SO (~40K a month), kept for ten
     minutes per process: grouping and the near-neighbour rule need the whole CPO list. Each record carries `paper`:
     the amounts its FP printed."""
@@ -188,7 +191,7 @@ def refresh():
     _items.clear()
 
 
-def items(conn, sor):
+def items(conn, sor) -> list[SorItem]:
     """The SO's lines, in line order."""
     return [dict(r) for r in conn.execute("SELECT * FROM satellite.sor_item WHERE sor_no=%s ORDER BY line_no", (sor,))]
 
@@ -196,7 +199,7 @@ def items(conn, sor):
 _items = {}                                        # sor -> (when, lines)
 
 
-def items_for(sor):
+def items_for(sor) -> list[SorItem]:
     """items(), for callers without a connection: kept ten minutes per process, like the SO list."""
     hit = _items.get(sor)
     if not hit or time.time() - hit[0] > TTL:

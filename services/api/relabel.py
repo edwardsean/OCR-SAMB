@@ -18,6 +18,8 @@ A page's type can't be changed
   - while the page is queued: its worker would save the old type after the label (vf.handle finds the page read and
     drops the label's ticket)."""
 from api import stuck
+from common import tables
+from common.tables import Lesson
 
 PILE_EXAM = ("Jawaban ini masuk tumpukan ujian (1 dari 5 jawaban, diundi): dipakai untuk menilai pelajaran guru AI, "
              "tidak diajarkan kepadanya.")
@@ -40,7 +42,7 @@ def load(c, batch, page):
                         FROM staging.page p WHERE p.batch_id=%s AND p.page_no=%s""", (batch, page)).fetchone()
     label = c.execute("""SELECT label::text AS label, labelled_by, labelled_at, pile, note FROM staging.type_label
                           WHERE batch_id=%s AND page_no=%s""", (batch, page)).fetchone()
-    lesson = c.execute("SELECT * FROM staging.lesson WHERE batch_id=%s AND page_no=%s", (batch, page)).fetchone()
+    lesson = tables.row(c, Lesson, batch_id=batch, page_no=page)
     proposal = pending = None
     ahead = 0
     if lesson and lesson["proposal"]:

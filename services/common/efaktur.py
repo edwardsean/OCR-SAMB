@@ -28,7 +28,8 @@ from datetime import datetime, timedelta, timezone
 
 from pypdf import PdfReader, PdfWriter
 
-from common import config, db, satellite, storage, trace, verify
+from common import config, db, satellite, storage, tables, trace, verify
+from common.tables import Efaktur
 
 PREFIX = config.STORAGE_PREFIX
 TITLE = "Kode dan Nomor Seri Faktur Pajak"
@@ -136,21 +137,20 @@ def receive(data, file_name, upload=None, found=None):
         return {"efaktur": one(c, row["id"])}
 
 
-def one(c, efaktur_id):
+def one(c, efaktur_id) -> Efaktur | None:
     r = c.execute(f"SELECT {COLS} FROM staging.efaktur WHERE id=%s", (efaktur_id,)).fetchone()
     return dict(r) if r else None
 
 
-COLS = ("id, file_name, sor_no, billing_no, kode_seri, buyer, dpp, ppn, pages, status, why, attached_version, "
-        "received_at, upload_id")
+COLS = tables.select(Efaktur, without=("sha256", "file_path", "checked_at", "attached_at"))   # what the screens get
 
 
-def of_upload(c, upload_id):
+def of_upload(c, upload_id) -> list[Efaktur]:
     return [dict(r) for r in c.execute(f"SELECT {COLS} FROM staging.efaktur WHERE upload_id=%s ORDER BY file_name",
                                        (upload_id,))]
 
 
-def of_orders(c, sors):
+def of_orders(c, sors) -> dict[str, Efaktur]:
     """{SOR: the e-Faktur that counts for it}: an attached one first, then a linked one."""
     rank = {"attached": 0, "linked": 1}
     out = {}
@@ -161,13 +161,13 @@ def of_orders(c, sors):
     return out
 
 
-def not_linked(c, limit=200):
+def not_linked(c, limit=200) -> list[Efaktur]:
     """The e-Fakturs that wait for Satellite or for a person, oldest first."""
     return [dict(r) for r in c.execute(f"SELECT {COLS} FROM staging.efaktur WHERE status IN ('waiting', 'held') "
                                        "ORDER BY received_at, id LIMIT %s", (limit,))]
 
 
-def for_order(c, sor):
+def for_order(c, sor) -> list[Efaktur]:
     """The e-Fakturs an order's PDF carries (or will): linked or attached, in the order they came."""
     return [dict(r) for r in c.execute("SELECT id, file_path, pages, status FROM staging.efaktur WHERE sor_no=%s "
                                        "AND status IN ('linked', 'attached') ORDER BY received_at, id", (sor,))]

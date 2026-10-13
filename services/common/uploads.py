@@ -7,7 +7,8 @@ the date checks use). Each file is a scan (staging.scan_batch) of its batch. Scr
 """
 from datetime import date, datetime, timedelta, timezone
 
-from . import db
+from . import db, tables
+from .tables import Upload
 
 WIB = timezone(timedelta(hours=7))
 UNKNOWN = "(tidak tercatat)"      # scans uploaded before batches existed: nobody typed a name
@@ -37,8 +38,8 @@ def create(by, doc_date=None, note=None):
                               (_code(c, today), by, d, (note or "").strip() or None)).fetchone())
 
 
-def get(c, upload_id):
-    r = c.execute("SELECT * FROM staging.upload WHERE id=%s", (upload_id,)).fetchone()
+def get(c, upload_id) -> Upload | None:
+    r = tables.row(c, Upload, id=upload_id)
     return dict(r) if r else None
 
 

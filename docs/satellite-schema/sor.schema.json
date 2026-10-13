@@ -1,0 +1,150 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "satellite.sor",
+  "type": "object",
+  "properties": {
+    "sor_no": {
+      "description": "the SOR, e.g. SOR26110264726 (Satellite's export: order_no)",
+      "type": "string"
+    },
+    "customer_code": {
+      "description": "the ship-to store's id (Satellite's export: customer_id)",
+      "type": "string"
+    },
+    "customer_name": {
+      "description": "the ship-to store's name (Satellite's export: customer_name)",
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "cpo_no": {
+      "description": "the customer's PO number: the Faktur Penjualan's Nomor CPO; a PO or a receipt finds its order by it (Satellite's export: po_number, in the PO file)",
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "tgl_so": {
+      "description": "the order's date (Satellite's export: created_at)",
+      "type": [
+        "string",
+        "null"
+      ],
+      "format": "date"
+    },
+    "total": {
+      "description": "the total as invoiced, with PPN (after any tolakan; 0 before billing) (Satellite's export: inv_grand_total_amount)",
+      "type": [
+        "number",
+        "null"
+      ]
+    },
+    "so_no": {
+      "description": "Satellite's sales-order number, SG… (Satellite's export: sales_order_no, in the PO file)",
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "dpp": {
+      "description": "DPP as invoiced (Satellite's export: inv_subtotal_after_discount_amount)",
+      "type": [
+        "number",
+        "null"
+      ]
+    },
+    "ppn": {
+      "description": "PPN as invoiced (Satellite's export: inv_vat_amount)",
+      "type": [
+        "number",
+        "null"
+      ]
+    },
+    "vat_pct": {
+      "description": "the PPN rate, e.g. 11.00 (Satellite's export: vat_percentage)",
+      "type": [
+        "number",
+        "null"
+      ]
+    },
+    "billing_no": {
+      "description": "SAP's billing number, once the order is posted (Satellite's export: sap_bill_doc_no)",
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "cgr_no": {
+      "description": "the goods receipt (CGR) number (Satellite's export: cgr_doc_no)",
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "cgr_date": {
+      "description": "the goods receipt's date (Satellite's export: cgr_doc_date)",
+      "type": [
+        "string",
+        "null"
+      ],
+      "format": "date"
+    },
+    "posting_date": {
+      "description": "SAP's posting date (Satellite's export: posting_date)",
+      "type": [
+        "string",
+        "null"
+      ],
+      "format": "date"
+    },
+    "status": {
+      "description": "the order's status: INVOICE_GENERATED, CGR, … (Satellite's export: document_status)",
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "loaded_at": {
+      "description": "when this row was written here (set by us)",
+      "type": [
+        "string",
+        "null"
+      ],
+      "format": "date-time"
+    },
+    "order_dpp": {
+      "description": "DPP as ordered: what the Faktur Penjualan prints (Satellite's export: subtotal_after_discount_amount)",
+      "type": [
+        "number",
+        "null"
+      ]
+    },
+    "order_ppn": {
+      "description": "PPN as ordered (Satellite's export: vat_amount)",
+      "type": [
+        "number",
+        "null"
+      ]
+    },
+    "order_total": {
+      "description": "the total as ordered, with PPN: what the Faktur Penjualan prints (Satellite's export: grand_total_amount)",
+      "type": [
+        "number",
+        "null"
+      ]
+    },
+    "customer_parent": {
+      "description": "the parent customer id the store is under (Satellite's export: ship_to_parent_customer_id)",
+      "type": [
+        "string",
+        "null"
+      ]
+    }
+  },
+  "required": [
+    "sor_no",
+    "customer_code"
+  ],
+  "additionalProperties": false
+}

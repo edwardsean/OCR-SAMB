@@ -1,0 +1,140 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "satellite.sor_item",
+  "type": "object",
+  "properties": {
+    "sor_no": {
+      "description": "the order this line belongs to (Satellite's export: order_id, as its order's order_no)",
+      "type": "string"
+    },
+    "line_no": {
+      "description": "the line's number in the order (Satellite's export: line_no)",
+      "type": "integer"
+    },
+    "item_code": {
+      "description": "SAMB's material code (the Faktur Penjualan's Kode) (Satellite's export: item_code)",
+      "type": "string"
+    },
+    "description": {
+      "description": "the product's name (Satellite's export: item_description)",
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "uom": {
+      "description": "the unit it was ordered in: CAR, PCS, … (Satellite's export: ordered_uom_id)",
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "pcs_per_uom": {
+      "description": "pieces in one unit (Satellite's export: conversion_factor)",
+      "type": [
+        "number",
+        "null"
+      ]
+    },
+    "qty_uom": {
+      "description": "the quantity ordered, in units (Satellite's export: ordered_qty)",
+      "type": [
+        "number",
+        "null"
+      ]
+    },
+    "qty_pcs": {
+      "description": "the quantity ordered, in pieces (Satellite's export: ordered_base_qty)",
+      "type": [
+        "number",
+        "null"
+      ]
+    },
+    "price_uom": {
+      "description": "the price of one unit (Satellite's export: price_list_amount)",
+      "type": [
+        "number",
+        "null"
+      ]
+    },
+    "price_pcs": {
+      "description": "the price of one piece (the Faktur Penjualan's Harga) (Satellite's export: base_price_list_amount)",
+      "type": [
+        "number",
+        "null"
+      ]
+    },
+    "discounts": {
+      "description": "each discount given: {kind: {type, value, amount}}, kinds reg, dc, b2b, dmg, new, go, special, lsb, promo, additional (Satellite's export: disc_<kind>_type, disc_<kind>_value, disc_<kind>_amount)"
+    },
+    "discount_total": {
+      "description": "all discounts together (Satellite's export: total_discount_amount)",
+      "type": [
+        "number",
+        "null"
+      ]
+    },
+    "gross": {
+      "description": "the amount before discounts (Satellite's export: subtotal_amount)",
+      "type": [
+        "number",
+        "null"
+      ]
+    },
+    "line_amount": {
+      "description": "the net amount (the Faktur Penjualan's Jumlah) (Satellite's export: total_amount)",
+      "type": [
+        "number",
+        "null"
+      ]
+    },
+    "vat": {
+      "description": "PPN on the line (Satellite's export: vat_amount)",
+      "type": [
+        "number",
+        "null"
+      ]
+    },
+    "invoice_qty": {
+      "description": "invoiced, in pieces (Satellite's export: invoice_base_qty)",
+      "type": [
+        "number",
+        "null"
+      ]
+    },
+    "invoice_amount": {
+      "description": "the invoiced net amount (Satellite's export: invoice_nett_amount)",
+      "type": [
+        "number",
+        "null"
+      ]
+    },
+    "cgr_qty": {
+      "description": "received, in pieces (the goods receipt) (Satellite's export: cgr_base_qty)",
+      "type": [
+        "number",
+        "null"
+      ]
+    },
+    "rejected_qty": {
+      "description": "rejected by the store (tolakan), in pieces (Satellite's export: cgr_rejected_base_qty)",
+      "type": [
+        "number",
+        "null"
+      ]
+    },
+    "reject_reason": {
+      "description": "why the store rejected it (Satellite's export: cgr_reject_reason)",
+      "type": [
+        "string",
+        "null"
+      ]
+    }
+  },
+  "required": [
+    "sor_no",
+    "line_no",
+    "item_code"
+  ],
+  "additionalProperties": false
+}

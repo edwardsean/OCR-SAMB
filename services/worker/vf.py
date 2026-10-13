@@ -59,10 +59,11 @@ import psycopg
 from psycopg.rows import dict_row
 from psycopg.types.json import Json
 
-from common import config, context, db, gates, satellite, settings, trace, transcript, verify, wiki
+from common import config, context, db, gates, satellite, settings, tables, trace, transcript, verify, wiki
 from common import keys as keymod
 from common.fields import DECIDES, DOCS, TYPE_MAP, decides, lift, project
 from common.models import openai_vlm, vlm
+from common.tables import Page
 from worker import boxes as pickboxes, classify, enhance, layout, trace_io, zoom
 from worker import main as v1
 
@@ -531,7 +532,7 @@ def recompute(bid, n):
     answers), with today's rules, Satellite records and people's confirmations. No model call, no new whole-page
     Tesseract reading, nothing written. None for a page that can't be checked (not read, or waiting for a label)."""
     with db.connect() as c:
-        p = c.execute("SELECT * FROM staging.page WHERE batch_id=%s AND page_no=%s", (bid, n)).fetchone()
+        p = tables.row(c, Page, batch_id=bid, page_no=n)
         if (not p or p["type_status"] not in ("decided", "labelled") or p["fields_all"] is None
                 or p["classical_text"] is None):
             return None
@@ -696,7 +697,7 @@ def handle(ticket, v1_reading=None, second_look=True):
 
 def _handle(ticket, bid, n, run, v1_reading, second_look):
     with db.connect() as c:
-        prev = c.execute("SELECT * FROM staging.page WHERE batch_id=%s AND page_no=%s", (bid, n)).fetchone()
+        prev = tables.row(c, Page, batch_id=bid, page_no=n)
         ctx_v, ctx = context.ensure(c)
     fv = context.fields_version(ctx) + "@" + AI_OCR           # a reading belongs to the list AND the model that made it
     if READER == "two_step":                                   # … and, read then mapped, to the transcript and mapper
@@ -1171,7 +1172,7 @@ def read_fields(bid, n, ctx):
     """A page's reading with a given context (the teacher's new-field trial): one step, the AI OCR reads the image
     again; two steps, the stored transcript is mapped again (a text call, no image)."""
     with db.connect() as c:
-        prev = c.execute("SELECT * FROM staging.page WHERE batch_id=%s AND page_no=%s", (bid, n)).fetchone()
+        prev = tables.row(c, Page, batch_id=bid, page_no=n)
     up = v1.load(prev["upright_path"])
     if READER != "two_step":
         return ai_call("read_all", bid, n, read_all, v1.png_bytes(up), context.vlm_schema(ctx))[0]
@@ -1199,7 +1200,7 @@ def evaluate_reading(bid, n, fields_all):
     """The page's checks on a given reading (the trial's, or its own first one): what recompute() would say with no
     look-again, no store answer, nothing stored. For the trial report."""
     with db.connect() as c:
-        p = c.execute("SELECT * FROM staging.page WHERE batch_id=%s AND page_no=%s", (bid, n)).fetchone()
+        p = tables.row(c, Page, batch_id=bid, page_no=n)
         if (not p or p["type_status"] not in ("decided", "labelled") or p["classical_text"] is None
                 or fields_all is None):
             return None
