@@ -219,8 +219,21 @@ tax office's PDF. Upload it with **Unggah batch** like any file:
   order was already sent, as a new version of that PDF (`satellite.sor_document.version`).
 - The **Order** tab shows each order's Faktur Pajak and its PDF version, and lists the e-Fakturs not attached yet.
 
-On a server: apply `schema/031-efaktur.sql` (safe to run twice) and restart the Python services and the web app
-(`docker compose up -d --build rtm-web`).
+On a server, once this is merged:
+
+1. **Get the code:** `git pull` on `main`.
+2. **Apply the new migration** (the table that keeps each e-Faktur). Safe to run twice:
+   ```bash
+   docker exec -i samb-ocr-servers-postgres-1 sh -c 'psql -U "$POSTGRES_USER" -d ocr_rtm -v ON_ERROR_STOP=1' < schema/031-efaktur.sql
+   ```
+3. **Restart the Python services:** `docker compose restart rtm-api rtm-worker rtm-grouper rtm-teacher rtm-scheduler rtm-intake`.
+   A page worker finishes the pages it is reading before it stops.
+4. **Rebuild the web app** (the Order tab and the e-Faktur lists are new): `docker compose up -d --build rtm-web`.
+5. **Check:**
+   - the top bar has an **Order** tab;
+   - upload one e-Faktur PDF with **Unggah batch**: the batch's page lists it under "Faktur Pajak", as "Terlampir di
+     PDF" or "Ikut saat order dikirim", or "Menunggu data Satellite" while Satellite doesn't have its billing number
+     yet.
 
 ## Everyday commands
 
