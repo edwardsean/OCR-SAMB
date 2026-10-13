@@ -133,6 +133,16 @@ docker compose run --rm -v <folder with the CSVs>:/data/so:ro -v ./scripts:/scri
     python /scripts/load_satellite.py /data/so
 ```
 
+A load updates every order the files contain and replaces those orders' lines; orders it doesn't contain keep
+theirs. **Writing Satellite's data another way** (a script, a database view, a feed): the tables are
+`satellite.sor` (one row per order) and `satellite.sor_item` (one row per order line), described column by column in
+[docs/satellite-schema/sor.schema.json](docs/satellite-schema/sor.schema.json) and
+[docs/satellite-schema/sor_item.schema.json](docs/satellite-schema/sor_item.schema.json): each column's type, whether it is
+required, what it means and which field of Satellite's export it comes from. The code that does the same is
+[services/common/satellite_feed.py](services/common/satellite_feed.py).
+The database carries the same descriptions as column comments ([schema/032-satellite-comments.sql](schema/032-satellite-comments.sql),
+comments only: safe to run twice on a server).
+
 ### Next to the main branch's stack (Edward's laptop)
 
 The servers already run from the main branch's stack, so skip `docker-compose.servers.yml`. This stack joins their
@@ -145,6 +155,16 @@ network (`DOCKER_NETWORK`) and keeps its own database, vhost and storage prefix 
 
 ```bash
 docker exec -i <postgres container> sh -c 'psql -U "$POSTGRES_USER" -d <PIPELINE_DB> -v ON_ERROR_STOP=1' < schema/0NN-….sql
+```
+
+**When you write a migration,** also regenerate the table models: every table of the pipeline's database is a typed
+model in [services/common/tables.py](services/common/tables.py), generated from the database itself, and
+`tests/test_tables.py` fails while the two differ:
+
+```bash
+docker compose exec -e PYTHONPATH=/app rtm-api python -m common.tablegen write        # services/common/tables.py
+docker compose exec -e PYTHONPATH=/app rtm-api python -m common.tablegen check        # do they agree?
+python -m common.tablegen jsonschema      # from services/, with the database reachable: docs/satellite-schema/*.schema.json
 ```
 
 ### Updating a running server (for the mentor)

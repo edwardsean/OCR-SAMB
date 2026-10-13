@@ -40,8 +40,9 @@ import time
 
 from psycopg.types.json import Json
 
-from common import config, context, customer, db, knowledge, satellite, settings, trace, transcript, wiki
+from common import config, context, customer, db, knowledge, satellite, settings, tables, trace, transcript, wiki
 from common.fields import DOCS, TYPE_MAP
+from common.tables import KnowledgePage, Page
 from common.verify import flat
 from worker import classify, vf
 from worker import main as v1
@@ -327,8 +328,7 @@ def _gate(doc_type, version, show=print):
     can't be proven yet, and nothing is mapped. A marked proposal that passes becomes active (and is applied).
     Returns the gate."""
     with db.connect() as c:
-        row = c.execute("SELECT * FROM staging.knowledge_page WHERE doc_type=%s AND version=%s",
-                        (doc_type, version)).fetchone()
+        row = tables.row(c, KnowledgePage, doc_type=doc_type, version=version)
         if not row or row["status"] != "proposed":
             raise ValueError(f"{doc_type} #{version} is not a proposal")
         now = active(c, doc_type)
@@ -453,8 +453,7 @@ def activate(doc_type, version, by, show=print, lint=False, written=False):
     installs as written (install) needs none either). Then its type's pages are done again (apply), except an
     installed page: only pages read from then on use it."""
     with db.connect() as c:
-        r = c.execute("SELECT * FROM staging.knowledge_page WHERE doc_type=%s AND version=%s",
-                      (doc_type, version)).fetchone()
+        r = tables.row(c, KnowledgePage, doc_type=doc_type, version=version)
         if not r or r["status"] != "proposed":
             raise ValueError(f"{doc_type} #{version} is not a proposal")
         now = active(c, doc_type)
@@ -738,7 +737,7 @@ def _teach_one(e, ask=None, show=print):
     ask = ask or (lambda prompt: teacher.ask_text(prompt, TEACH_MODEL))
     bid, n, t = e["batch_id"], e["page_no"], e["doc_type"]
     with db.connect() as c:
-        p = c.execute("SELECT * FROM staging.page WHERE batch_id=%s AND page_no=%s", (bid, n)).fetchone()
+        p = tables.row(c, Page, batch_id=bid, page_no=n)
         now = active(c, t)
         pending = c.execute("SELECT version FROM staging.knowledge_page WHERE doc_type=%s AND status='proposed'",
                             (t,)).fetchone()
