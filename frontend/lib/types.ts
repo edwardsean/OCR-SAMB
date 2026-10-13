@@ -59,6 +59,8 @@ export type UploadRef = { id: number; code: string; uploaded_by: string; doc_dat
 export type Upload = UploadRef & {
   created_at: string; note: string | null; files: number; pages: number; read: number; busy: number;
   need: number; waiting: number; ready: number; published: number; orders: number;
+  /** its e-Faktur PDFs: how many, attached to their order's PDF, waiting (for Satellite, or a person) */
+  efaktur: number; efaktur_attached: number; efaktur_open: number;
   steps: Step[]; next: StepKey | null; finished: boolean;
 };
 
@@ -92,6 +94,15 @@ export type UploadDetail = {
   orders: Record<string, OrderStep>; failed: StuckPage[]; unsure: PageRef[];
   failed_files: FailedFile[]; not_now: string | null;
   activity: Activity;
+  efaktur: EFaktur[];
+};
+/** An e-Faktur PDF (services/common/efaktur.py): the tax office's file for one order, attached to the order's PDF and
+ * never read by the AI. waiting: Satellite doesn't have its SOR or billing number yet · held: Satellite's billing
+ * number is another one · linked: goes into the order's PDF when the order is sent · attached: in the PDF sent. */
+export type EFaktur = {
+  id: number; file_name: string; sor_no: string; billing_no: string; kode_seri: string | null; buyer: string | null;
+  dpp: number | null; ppn: number | null; pages: number; status: "waiting" | "held" | "linked" | "attached";
+  why: string | null; attached_version: number | null; received_at: string; upload_id: number | null;
 };
 /** What each page of a batch is doing now (services/api/activity.py): one state per page. */
 export type PageState = "queued" | "reading" | "waiting" | "waiting_ai" | "failed" | "idle" | "done";
@@ -154,12 +165,17 @@ export type OrderRow = {
   uploads: UploadRef[];
   /** with a batch chosen: where it stands in that batch's step 4 */
   step?: OrderStep | null;
+  /** its e-Faktur (attached, or going in when it is sent), and the version of the PDF sent */
+  efaktur: { status: EFaktur["status"]; attached_version: number | null; file_name: string } | null;
+  pdf_version: number | null;
 };
 export type ReviewScan = { id: string; file_name: string; received_at: string; need: number };
 export type Notice = { sor: string; batch: string; customer: string | null };
 export type OrderList = {
   batch: string | null; upload: number | null; uploads: Upload[]; rows: OrderRow[]; scans: ReviewScan[]; fresh: Notice[];
   ready: number;
+  /** e-Fakturs not linked to their order yet (waiting for Satellite, or a different billing number) */
+  efaktur_open: EFaktur[];
 };
 
 export type Suggest = [string, string];
@@ -292,10 +308,9 @@ export type LabelData = {
   p?: { page_no: number; upright_path: string | null; original_path: string | null; quality_flags: string[] | null } | null;
   page?: number | null;
   total?: number;
-  existing?: { label: string; customer: string | null; note: string | null; labelled_by: string | null } | null;
+  existing?: { label: string; note: string | null; labelled_by: string | null } | null;
   near?: { page_no: number; thumb: string | null; full: string | null; type: string | null }[];
   types?: { key: string; name: string; what: string }[];
-  customers?: string[];
   prog?: { unsure: number; unsure_done: number; labelled: number; practice: number; exam: number };
   /** opened from a batch's step 2: that batch, and how many of its pages are still unsure */
   upload?: UploadRef | null;

@@ -204,6 +204,24 @@ per document type, and one command makes them active on a server.
 To send knowledge the other way (tips people taught on a server, back into the repo):
 `python -m worker.learn export seed/knowledge` writes every active page to those files.
 
+### Faktur Pajak as e-Faktur PDFs (2026-10-12)
+
+A Faktur Pajak exists only after its order was posted in SAP, so it comes later than the order's other papers, as the
+tax office's PDF. Upload it with **Unggah batch** like any file:
+
+- Its text is inside the file, so it is **never read by the AI**. Its last line says which order it belongs to:
+  `7000363545/SOR26110267792` (billing number / SOR).
+- It is attached only when Satellite has that SOR **and** the same billing number. Until then it waits
+  ("Menunggu data Satellite") and attaches by itself: the scheduler tries every `EFAKTUR_EVERY_MINUTES` (30), and
+  `python -m common.efaktur relink` tries now (run it after loading Satellite's data). A different billing number is
+  held for a person ("Nomor billing berbeda").
+- Nothing else is sent for it. **Its own pages are appended to the order's PDF:** when the order is sent, or, if the
+  order was already sent, as a new version of that PDF (`satellite.sor_document.version`).
+- The **Order** tab shows each order's Faktur Pajak and its PDF version, and lists the e-Fakturs not attached yet.
+
+On a server: apply `schema/031-efaktur.sql` (safe to run twice) and restart the Python services and the web app
+(`docker compose up -d --build rtm-web`).
+
 ## Everyday commands
 
 ```bash

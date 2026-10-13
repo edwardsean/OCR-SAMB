@@ -731,7 +731,7 @@
             "description": "Labels a page whose type is unsure (`labelPage`, from \"Jenis halaman\"). `label`: FP, TTG, PO, SJ, FPJ, PEL, CONTINUATION or OTHER. The page then resumes reading. **Writes to the database.**",
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"batch\": \"{{batch}}\",\n  \"page\": \"{{labelPage}}\",\n  \"label\": \"TTG\",\n  \"customer\": \"\",\n  \"note\": \"\",\n  \"labelled_by\": \"{{by}}\"\n}",
+              "raw": "{\n  \"batch\": \"{{batch}}\",\n  \"page\": \"{{labelPage}}\",\n  \"label\": \"TTG\",\n  \"note\": \"\",\n  \"labelled_by\": \"{{by}}\"\n}",
               "options": {
                 "raw": {
                   "language": "json"

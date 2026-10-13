@@ -9,7 +9,7 @@ import { api } from "@/lib/client";
 import type { Session } from "@/lib/types";
 
 const ALL: [string, string][] = [                   // this app's screens over every batch (a batch's steps are the way in)
-  ["/review", "Periksa order"], ["/label", "Jenis halaman"], ["/bundles", "Berkas per SOR"], ["/published", "Data terkirim"],
+  ["/label", "Jenis halaman"], ["/bundles", "Berkas per SOR"], ["/published", "Data terkirim"],
 ];
 const TECH: [string, string][] = [
   ["/status", "Status sistem"], ["/teknis/jejak", "Jejak (trace)"], ["/teknis/metrik", "Metrik"],
@@ -39,7 +39,8 @@ export default function TopBar({ initial }: { initial: Session | null }) {
   }, []);
 
   const upload = path === "/upload" || path.startsWith("/upload/");
-  const batch = !upload && path !== "/cari" && !ALL.some(([h]) => path === h);
+  const orders = path === "/review" || path.startsWith("/review/");   // every order, over all batches (2026-10-12)
+  const batch = !upload && !orders && path !== "/cari" && !ALL.some(([h]) => path === h);
   const n = s?.batches_need ?? 0;
   return (
     <header className="top">
@@ -47,6 +48,7 @@ export default function TopBar({ initial }: { initial: Session | null }) {
       <nav className="main" aria-label="Menu utama">
         <Link href="/" className={batch ? "on" : undefined} aria-current={batch ? "page" : undefined}>
           Batch{n ? <span className="nbadge" title="batch yang menunggu Anda">{n}</span> : null}</Link>
+        <Link href="/review" className={orders ? "on" : undefined} aria-current={orders ? "page" : undefined}>Order</Link>
         <Link href="/upload" className={upload ? "on" : undefined} aria-current={upload ? "page" : undefined}>Unggah batch</Link>
         <Suspense fallback={null}><Find /></Suspense>
       </nav>

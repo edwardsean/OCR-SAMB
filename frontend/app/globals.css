@@ -815,3 +815,7 @@ h2.sect { margin: 32px 0 12px; }
 .rv-pair .prow .fixrow { margin-top: 6px; }
 .ai-pair { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; margin: 8px 0 2px; font-size: 13.5px; }
 .ai-pair > span:first-child::before { content: "✦ "; color: var(--biru-pulpen); }
+
+/* e-Faktur PDFs (components/EFaktur.tsx): a batch's page and the Order tab */
+.efaktur { margin: 14px 0 20px; }
+.efaktur h2 small { font-weight: 400; margin-left: 6px; }

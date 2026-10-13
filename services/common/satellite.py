@@ -82,11 +82,11 @@ def load(conn, sors=None):
     minutes per process: grouping and the near-neighbour rule need the whole CPO list. Each record carries `paper`:
     the amounts its FP printed."""
     if sors is not None:
-        return {flat(r["sor_no"]): _record(r) for r in conn.execute(
-            f"SELECT {SO_COLS}, l.* FROM satellite.sor {LINE_SUMS} WHERE sor_no = ANY(%s)", (list(sors),))}
+        return {flat(r["sor_no"]): _record(r) for r in conn.execute(      # l.* first: an SO with no lines has a
+            f"SELECT l.*, {SO_COLS} FROM satellite.sor {LINE_SUMS} WHERE sor_no = ANY(%s)", (list(sors),))}   # NULL l.sor_no
     if _cache["sos"] is None or time.time() - _cache["at"] > TTL:
         _cache.update(sos={flat(r["sor_no"]): _record(r) for r in conn.execute(
-            f"SELECT {SO_COLS}, l.* FROM satellite.sor {LINE_SUMS}")}, at=time.time())
+            f"SELECT l.*, {SO_COLS} FROM satellite.sor {LINE_SUMS}")}, at=time.time())
         _index.clear()
     return _cache["sos"]
 

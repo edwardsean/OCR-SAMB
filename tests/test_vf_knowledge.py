@@ -152,9 +152,16 @@ def test_a_drafted_claim_replaces_its_sections_claim_on_the_same_field():
 DUTA = "1100002339"
 
 
+def only_batch(monkeypatch, learn, bid):
+    """The gate's stored pages kept to one batch: these tests are about Duta Buah's receipt there, and other batches
+    on the live database may hold more Duta Buah receipts (BATCH-20261008-03 p28 since 2026-10-09)."""
+    real = learn._scope
+    monkeypatch.setattr(learn, "_scope", lambda c, t, b=None: [p for p in real(c, t, b) if p["batch_id"] == bid])
+
+
 @pytest.mark.skipif(not os.environ.get("DATABASE_URL"), reason="needs the database")
 def test_the_gate_replays_a_proposal_with_kept_answers_and_touches_only_the_pages_it_changes(monkeypatch):
-    """A person's claim for Duta Buah's receipt (b-c80bbbde4d p5, its only one) on top of whatever TTG page is active.
+    """A person's claim for Duta Buah's receipt (b-c80bbbde4d p5, its batch's only one) on top of whatever TTG page is active.
     Pass B's answer is seeded (no model call): the PO number from the block printing PO.2026.09.32029. The claim cites
     no page (a person's), so p5 counts: Edward confirmed PO.2026.09.32029 where the reading had PO.RCV-14905/IX/2026.
     Other customers' pages are untouched (their knowledge doesn't change). A tip that passes is switched on at once
@@ -162,6 +169,7 @@ def test_the_gate_replays_a_proposal_with_kept_answers_and_touches_only_the_page
     that is no longer active is rejected instead."""
     from common import db
     from worker import learn, vf
+    only_batch(monkeypatch, learn, "b-c80bbbde4d")
     with db.connect() as c:
         if c.execute("SELECT 1 FROM staging.knowledge_page WHERE doc_type='TTG' AND status='proposed'").fetchone():
             pytest.skip("a TTG proposal waits for a person")
@@ -352,11 +360,12 @@ def test_the_teachers_claim_is_checked_by_code():
 
 @pytest.mark.skipif(not os.environ.get("DATABASE_URL"), reason="needs the database")
 def test_a_lesson_whose_claim_no_other_page_can_prove_waits_for_pages_without_a_mapping(monkeypatch):
-    """Duta Buah's receipt (b-c80bbbde4d p5): the only Duta Buah receipt stored, so a claim learned from it can't be
+    """Duta Buah's receipt (b-c80bbbde4d p5): the only Duta Buah receipt in its batch (the gate kept to it), so a claim learned from it can't be
     proven anywhere else. The teacher (faked) writes one; the gate sees before any call that nothing can score it:
     the lesson needs pages, the proposal is rejected, nothing was mapped. The lesson is put back after."""
     from common import db
     from worker import learn, vf
+    only_batch(monkeypatch, learn, "b-c80bbbde4d")
     with db.connect() as c:
         e = c.execute("""SELECT e.*, NULL::bigint AS bundle_id FROM staging.extract_example e
                           WHERE batch_id='b-c80bbbde4d' AND page_no=5 AND field='purchase_order_no' AND status='active'

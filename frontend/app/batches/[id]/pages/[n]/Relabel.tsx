@@ -26,7 +26,7 @@ export default function Relabel({ batch, d }: { batch: string; d: PageDetail }) 
   async function save(e: React.FormEvent) {
     e.preventDefault();
     setBusy(true); setError(null);
-    const a = await api.post("/labels", { batch, page, label, note, labelled_by: by, customer: "" });
+    const a = await api.post("/labels", { batch, page, label, note, labelled_by: by });
     setBusy(false);
     if (!a.ok) { setError(why(a)); return; }
     setOpen(false); setLabel(""); setNote("");

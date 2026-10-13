@@ -14,14 +14,13 @@
   {% endif %}
   <section>
     <table class="grid small">
-      <thead><tr><th></th><th>Halaman</th><th>Jawaban</th><th>Pelanggan</th><th>Catatan</th><th>Tumpukan</th><th>Tebakan sistem</th><th>Oleh</th><th></th></tr></thead>
+      <thead><tr><th></th><th>Halaman</th><th>Jawaban</th><th>Catatan</th><th>Tumpukan</th><th>Tebakan sistem</th><th>Oleh</th><th></th></tr></thead>
       <tbody>
       {% for r in rows %}
         <tr>
           <td><img class="mini" src="/img/{{ r.thumb_upright_path }}" alt=""></td>
           <td><a href="/batches/{{ r.batch_id }}/pages/{{ r.page_no }}">{{ r.page_no }}</a></td>
           <td><span class="tchip t-{{ r.label }}">{{ DOC_SHORT.get(r.label, r.label) }}</span></td>
-          <td>{{ r.customer or '' }}</td>
           <td class="muted">{{ r.note or '' }}</td>
           <td><span class="pill {{ 'exam' if r.pile == 'exam' else '' }}">{{ 'ujian' if r.pile == 'exam' else 'latihan' }}</span></td>
           <td class="muted">{% if r.type_status == 'decided' %}{{ DOC_SHORT.get(r.doc_type, r.doc_type) }}{% else %}belum pasti (tebakan {{ r.type_guess or '—' }}){% endif %}</td>

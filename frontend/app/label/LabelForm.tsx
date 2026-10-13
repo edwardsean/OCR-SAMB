@@ -14,7 +14,6 @@ export default function LabelForm({ d }: { d: LabelData }) {
   const router = useRouter();
   const p = d.p!, page = d.page!, near = d.near ?? [], types = d.types ?? [];
   const [label, setLabel] = useState(d.existing?.label ?? "");
-  const [customer, setCustomer] = useState(d.existing?.customer ?? "");
   const [note, setNote] = useState(d.existing?.note ?? "");
   const [who, setWho] = useState(d.existing?.labelled_by ?? "");
   const [busy, setBusy] = useState(false);
@@ -57,7 +56,7 @@ export default function LabelForm({ d }: { d: LabelData }) {
     if (!label) return;
     setBusy(true); setError(null);
     try { localStorage.setItem("labeller", who); } catch { /* not kept */ }
-    const a = await api.post("/labels", { batch: d.batch, page, label, customer, note, labelled_by: who });
+    const a = await api.post("/labels", { batch: d.batch, page, label, note, labelled_by: who });
     if (!a.ok) { setBusy(false); setError(why(a)); return; }
     router.push(d.upload ? `/label?upload=${d.upload.id}&batch=${encodeURIComponent(d.batch!)}&after=${page}&saved=${page}`
       : `/label?batch=${encodeURIComponent(d.batch!)}&saved=${page}`);
@@ -101,11 +100,7 @@ export default function LabelForm({ d }: { d: LabelData }) {
                 </label>
               ))}
             </div>
-            <h2>2. Pelanggan</h2>
-            <p className="muted small">Boleh dikosongkan.</p>
-            <input className="txt" list="customers" placeholder="mis. Indomaret" value={customer} onChange={(e) => setCustomer(e.target.value)} />
-            <datalist id="customers">{(d.customers ?? []).map((c) => <option key={c} value={c} />)}</datalist>
-            <h2>3. Catatan</h2>
+            <h2>2. Catatan</h2>
             <p className="muted small">Boleh dikosongkan. Mis. &quot;tanpa judul; SAMB sebagai pemasok&quot;.</p>
             <textarea className="txt" rows={2} value={note} onChange={(e) => setNote(e.target.value)} />
             <h2>Nama Anda</h2>

@@ -1,13 +1,15 @@
-// Periksa order over every batch (under Teknis since 2026-10-05: a batch's own step 4 is where the work is done):
-// every order (SOR) once, grouped by what it needs. The batch picker only narrows to the orders with a document in it.
+// Order: every order (SOR) once, over every batch, grouped by what it needs (a main tab since 2026-10-12, the user:
+// "we need to have a tab to keep track of all the bundles"; a batch's own step 4 is still where its work is done). The
+// batch picker only narrows to the orders with a document in it. e-Fakturs not linked yet are listed on top.
 import Link from "next/link";
 import { need, one, type SearchParams } from "@/lib/api";
 import type { OrderList } from "@/lib/types";
 import { BatchPicker } from "@/components/Batch";
-import Row from "@/components/OrderRow";
+import Row, { hasFpj } from "@/components/OrderRow";
 import { NoticesSeen, PublishForm } from "./ListParts";
+import { EFakturList } from "@/components/EFaktur";
 
-export const metadata = { title: "Periksa order" };
+export const metadata = { title: "Order" };
 
 export default async function Review({ searchParams }: { searchParams: SearchParams }) {
   const sp = await searchParams;
@@ -19,7 +21,7 @@ export default async function Review({ searchParams }: { searchParams: SearchPar
   return (
     <>
       <section className="head head-row">
-        <h1>Periksa order</h1>
+        <h1>Order</h1>
         {d.uploads.length > 0 && <BatchPicker path="/review" value={d.upload} options={d.uploads} />}
       </section>
 
@@ -29,11 +31,14 @@ export default async function Review({ searchParams }: { searchParams: SearchPar
       )}
       {published !== undefined && <p className="o-terkirim">{published} order terkirim ke Satellite.</p>}
 
+      <EFakturList list={d.efaktur_open} title="Faktur Pajak belum terhubung" />
+
       <nav className="seg" aria-label="Kelompok order">
         <a href="#need" className={needs.length ? "on" : undefined}>Perlu dicek <b>{needs.length}</b></a>
         <a href="#wait">Menunggu sistem <b>{wait.length}</b></a>
         <a href="#ready">Siap dikirim <b>{ok.length}</b></a>
-        <a href="#published">Terkirim <b>{pubd.length}</b></a>
+        <a href="#published">Terkirim <b>{pubd.length}</b>{pubd.some((r) => !hasFpj(r))
+          && <small className="muted"> · {pubd.filter((r) => !hasFpj(r)).length} tanpa Faktur Pajak</small>}</a>
       </nav>
 
       {ok.length > 0 && <PublishForm batch={batch} upload={d.upload} n={ok.length} />}

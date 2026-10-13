@@ -132,6 +132,7 @@ if VF:
     EXPECTED_TABLES += 1   # + upload (026): upload batches
     EXPECTED_TABLES += 1   # + setting (027): models and API keys saved from the Teknis screen
     EXPECTED_TABLES += 2   # + trace, ai_payload (028): what happened, when, how long; each AI call's request and response
+    EXPECTED_TABLES += 1   # + efaktur (031): e-Faktur PDFs attached to their order's PDF
 
 SVC = config.SERVICE_PREFIX                  # this stack's service names: vf-* on main, rtm-* in the worktree
 HEALTH_PORT = config.HEALTH_PORT             # where each worker answers /health
@@ -281,6 +282,10 @@ def uploads_view(limit=100, only=None):
                                 JOIN staging.scan_batch s ON s.id = d.batch_id
                                WHERE s.upload_id IS NOT NULL GROUP BY 1, 2"""):
             orders.setdefault(r["upload_id"], {})[r["status"]] = r["n"]
+        efs = {r["upload_id"]: r for r in c.execute(
+            """SELECT upload_id, count(*) AS n, count(*) FILTER (WHERE status = 'attached') AS attached,
+                      count(*) FILTER (WHERE status IN ('waiting', 'held')) AS open
+                 FROM staging.efaktur WHERE upload_id IS NOT NULL GROUP BY 1""")}
         work = steps.of_uploads(c, [u["id"] for u in rows])
     for u in rows:
         o = orders.get(u["id"], {})
@@ -289,6 +294,8 @@ def uploads_view(limit=100, only=None):
                  orders=sum(o.values()))
         w = work.get(u["id"]) or {}
         u.update(steps=w.get("steps") or [], next=w.get("next"), finished=w.get("finished", False))
+        e = efs.get(u["id"]) or {}
+        u.update(efaktur=e.get("n", 0), efaktur_attached=e.get("attached", 0), efaktur_open=e.get("open", 0))
     return rows
 
 
@@ -342,7 +349,7 @@ def upload_view(upload_id):
     person may try it again), those whose type is unsure; the files that couldn't be split; and why nothing can be
     tried right now (a model not set, a limit), if so. `activity`: what each page is doing now (api/activity.py)."""
     from api import activity, stuck
-    from common import uploads
+    from common import efaktur, uploads
     from worker import vf
     blocked = vf.blocked()
     with db.connect() as c:
@@ -363,17 +370,19 @@ def upload_view(upload_id):
                  WHERE s.upload_id = %s AND ({stuck.STUCK} OR (p.type_status = 'unsure' AND l.page_no IS NULL))
                  ORDER BY s.file_name, p.page_no""", (upload_id,))]
         work = steps.of_uploads(c, [upload_id])[upload_id]
+        efs = efaktur.of_upload(c, upload_id)
     summary = next(iter(uploads_view(10_000, only=upload_id)), {})
     page = lambda p: {"batch_id": p["batch_id"], "page_no": p["page_no"], "file_name": p["file_name"],
                       "thumb": _thumb(p), "error": p["error"]}
     return {"upload": {**u, **{k: summary.get(k) for k in ("files", "pages", "read", "busy", "need", "waiting",
-                                                             "ready", "published", "orders")}},
+                                                             "ready", "published", "orders", "efaktur",
+                                                             "efaktur_attached", "efaktur_open")}},
             "files": files, "steps": work["steps"], "next": work["next"], "blockers": work["blockers"],
             "finished": work["finished"], "orders": work["orders"],
             "failed": [{**page(p), **stuck.view(p)} for p in pages if p["stuck"]],
             "failed_files": [{"batch_id": f["id"], "file_name": f["file_name"], "error": f["error"]}
                              for f in files if f["status"] == "failed"],
-            "not_now": stuck.blocked_text(blocked), "activity": live,
+            "not_now": stuck.blocked_text(blocked), "activity": live, "efaktur": efs,
             "unsure": [page(p) for p in pages if p["type_status"] == "unsure" and not p["labelled"]
                        and not p["stuck"]]}
 
@@ -810,14 +819,6 @@ def _label_progress(batch_id):
             WHERE p.batch_id=%s""", (batch_id,) * 4).fetchone()
 
 
-def _customers():
-    with db.connect() as c:
-        seen = [r["customer"] for r in c.execute(
-            "SELECT DISTINCT customer FROM staging.type_label WHERE customer IS NOT NULL AND customer <> '' ORDER BY 1")]
-    starters = ["Hari Hari", "Boots", "Hero / DFI Retail", "Indomaret", "MM2", "TIP TOP", "Ranch Market", "Farmers Market"]
-    return seen + [x for x in starters if x not in seen]
-
-
 def _unsure_in_upload(c, upload):
     """An upload batch's pages whose type is unsure and nobody has labelled: [(scan, page)] in file order."""
     return [(r["batch_id"], r["page_no"]) for r in c.execute(
@@ -868,7 +869,7 @@ def label_data(batch=None, page=None, after=0, upload=None):
                             WHERE batch_id=%s AND page_no BETWEEN %s AND %s ORDER BY page_no""",
                          (batch, (page or 1) - 2, (page or 1) + 2)).fetchall() if page else []
     return {"batch": batch, "p": p, "page": page, "total": total, "existing": existing, "near": near,
-            "types": LABEL_TYPES, "customers": _customers(), "prog": _label_progress(batch), "left": left}
+            "types": LABEL_TYPES, "prog": _label_progress(batch), "left": left}
 
 
 @app.get("/labels", response_class=HTMLResponse, include_in_schema=False)
@@ -2268,6 +2269,11 @@ def review_list(batch=None, upload=None):
                               FROM staging.bundle b LEFT JOIN satellite.sor s ON s.sor_no = b.sor_no
                              WHERE b.id = ANY(%s)""", (ids,)).fetchall()
         docs = _order_docs(c, ids)
+        from common import efaktur
+        sors = [r["sor_no"] for r in rows]
+        efs = efaktur.of_orders(c, sors)
+        pdfs = {r["sor_no"]: r["version"] for r in c.execute(
+            "SELECT sor_no, version FROM satellite.sor_document WHERE sor_no = ANY(%s)", (sors,))}
     order = {"needs_review": 0, "grouping": 1, "reviewed": 2, "auto_ok": 3, "published": 4}
     out = []
     for r in rows:
@@ -2285,6 +2291,8 @@ def review_list(batch=None, upload=None):
                     "docs": chips, "thumb": _thumb(fp) if fp else None,
                     "batch": fp["batch_id"] if fp else batch, "scans": len({d["batch_id"] for d in ds}),
                     "uploads": _uploads_of(ds), "step": states.get(r["sor_no"]),
+                    "efaktur": {k: efs[r["sor_no"]][k] for k in ("status", "attached_version", "file_name")}
+                    if r["sor_no"] in efs else None, "pdf_version": pdfs.get(r["sor_no"]),
                     "issues": _issues(checks, (r["checks"] or {}).get("reasons") or [], r.get("customer_name"))})
     return sorted(out, key=lambda r: (order.get(r["status"], 9), r["sor_no"]))
 
