@@ -42,7 +42,7 @@
       <form method="post" action="/settings/thinking" class="inl thinkf" title="sends enable_thinking=false with every call of this row">
         <input type="hidden" name="kind" value="{{ r.kind }}"><input type="hidden" name="by" class="js-by">
         <label><input type="checkbox" name="off" value="1" class="js-think"{{ ' checked' if r.no_thinking }}> Matikan thinking</label>
-        <span class="small muted js-think-by">{% if r.thinking_saved %}diatur {{ r.thinking_by }}{% else %}otomatis: {{ 'mati di Alibaba' if r.alibaba else 'bawaan model' }}{% endif %}</span>
+        <span class="small muted js-think-by">{% if r.thinking_saved %}diatur {{ r.thinking_by }}{% else %}otomatis: {{ r.auto }}{% endif %}</span>
       </form>
     </div>
     <p class="rowmsg js-msg{{ ' bad' if bad and at == r.kind }}" aria-live="polite"{{ ' hidden' if not (msg and at == r.kind) }}>{{ msg if at == r.kind else '' }}</p>

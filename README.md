@@ -178,11 +178,11 @@ For a server set up with the steps above, updating to the version with many page
 2. **Get the code:** `git pull` on `main`.
 3. **Size it for the server's memory** in `.env`: `WORKER_REPLICAS` (the number of page workers), from the table in
    [How many pages at once](#how-many-pages-at-once). A worker needs about 1 GB.
-4. **Apply the two new migrations.** Both are safe to run twice. The container is `samb-ocr-servers-postgres-1` when
+4. **Apply the two new migrations.** Both are safe to run twice. The container is `samb-ocr-postgres-1` when
    the servers came from `docker-compose.servers.yml`:
    ```bash
    for f in schema/028-trace.sql schema/029-throughput.sql; do
-     docker exec -i samb-ocr-servers-postgres-1 sh -c 'psql -U "$POSTGRES_USER" -d ocr_rtm -v ON_ERROR_STOP=1' < $f
+     docker exec -i samb-ocr-postgres-1 sh -c 'psql -U "$POSTGRES_USER" -d ocr_rtm -v ON_ERROR_STOP=1' < $f
    done
    ```
 5. **Restart everything on the new code:** `docker compose up -d --build --force-recreate`. This touches only this
@@ -208,7 +208,7 @@ per document type, and one command makes them active on a server.
 1. **Get the code:** `git pull` on `main`.
 2. **Apply the new migration** (rows keep their satuan, the pieces in one pack). Safe to run twice:
    ```bash
-   docker exec -i samb-ocr-servers-postgres-1 sh -c 'psql -U "$POSTGRES_USER" -d ocr_rtm -v ON_ERROR_STOP=1' < schema/030-satuan.sql
+   docker exec -i samb-ocr-postgres-1 sh -c 'psql -U "$POSTGRES_USER" -d ocr_rtm -v ON_ERROR_STOP=1' < schema/030-satuan.sql
    ```
 3. **Restart the Python services:** `docker compose restart rtm-api rtm-worker rtm-grouper rtm-teacher rtm-scheduler rtm-intake`.
 4. **Install the knowledge:**
@@ -244,7 +244,7 @@ On a server, once this is merged:
 1. **Get the code:** `git pull` on `main`.
 2. **Apply the new migration** (the table that keeps each e-Faktur). Safe to run twice:
    ```bash
-   docker exec -i samb-ocr-servers-postgres-1 sh -c 'psql -U "$POSTGRES_USER" -d ocr_rtm -v ON_ERROR_STOP=1' < schema/031-efaktur.sql
+   docker exec -i samb-ocr-postgres-1 sh -c 'psql -U "$POSTGRES_USER" -d ocr_rtm -v ON_ERROR_STOP=1' < schema/031-efaktur.sql
    ```
 3. **Restart the Python services:** `docker compose restart rtm-api rtm-worker rtm-grouper rtm-teacher rtm-scheduler rtm-intake`.
    A page worker finishes the pages it is reading before it stops.

@@ -5,7 +5,10 @@
 # Skip this file where the main branch's stack already runs these servers (they are the same three, on the same
 # Docker network). Settings come from .env (.env.example lists them); data lives in Docker volumes and survives
 # restarts.
-name: samb-ocr-servers
+# The project is named samb-ocr, as on the mentor's server (its volumes are samb-ocr_pgdata …; another name would
+# start empty servers beside them). On Edward's laptop the old samb-ocr containers already run: don't use this file
+# there, it would take them over and may recreate RabbitMQ (its vhosts would be lost).
+name: samb-ocr
 
 services:
   postgres:
@@ -26,7 +29,7 @@ services:
     image: rabbitmq:3.13-management
     hostname: rabbitmq                     # fixed: RabbitMQ keeps its data per host name, so a new container keeps it
     environment:
-      RABBITMQ_DEFAULT_USER: ${RABBITMQ_USER}
+      RABBITMQ_DEFAULT_USER: ${RABBITMQ_USER:-guest}
       RABBITMQ_DEFAULT_PASS: ${RABBITMQ_PASSWORD}
     ports: ["${RABBITMQ_HOST_PORT:-5672}:5672", "${RABBITMQ_CONSOLE_PORT:-15672}:15672"]
     volumes: [rabbitdata:/var/lib/rabbitmq]
@@ -37,15 +40,22 @@ services:
     restart: unless-stopped
 
   minio:
-    image: quay.io/minio/minio:latest
-    command: server /data --console-address ":9001"
+    # local adaptation: quay.io is blocked from this box (401 anonymous token) and Docker Hub removed
+    # minio/minio; using the bitnami mirror with its env/command conventions, retagged to the
+    # expected image name is NOT needed because compose uses this image directly.
+    image: bitnamilegacy/minio:2025.4.22
     environment:
       MINIO_ROOT_USER: ${MINIO_ROOT_USER}
       MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD}
+      MIO_ROOT_USER: ${MINIO_ROOT_USER}
+      MIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD}
+      MIO_MODE: standalone
+      MIO_DEFAULT_BUCKETS: ${MINIO_BUCKET:-scans}
+      MIO_CONSOLE_PORT_NUMBER: "9001"
     ports: ["${MINIO_HOST_PORT:-9000}:9000", "${MINIO_CONSOLE_PORT:-9001}:9001"]
-    volumes: [miniodata:/data]
+    volumes: [miniodata:/bitnami/minio/data]
     healthcheck:
-      test: ["CMD", "curl", "-fsS", "http://localhost:9000/minio/health/live"]
+      test: ["CMD-SHELL", "mc ready local || curl -fsS http://localhost:9000/minio/health/live || wget -qO- http://localhost:9000/minio/health/live >/dev/null"]
       interval: 5s
       retries: 20
     restart: unless-stopped

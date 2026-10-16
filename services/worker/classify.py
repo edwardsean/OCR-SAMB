@@ -171,7 +171,7 @@ def llm_ask(state, questions, url, key, model, extra=None):
     prompt, keys = llm_prompt(state, questions)
     body = {"model": model, "temperature": 0, "max_tokens": 1, "logprobs": True, "top_logprobs": 5,
             "messages": [{"role": "user", "content": prompt}], **(extra or {})}   # extra: the row's thinking switch
-    headers = {"Authorization": f"Bearer {key}"} if key else {}
+    headers = settings.headers(url, key)              # the key, and a gateway's own headers (opencode)
     t0 = time.time()
     trace.ai_request(body)                           # the exact payload, for Jejak (common/trace.py)
     for attempt in range(5):

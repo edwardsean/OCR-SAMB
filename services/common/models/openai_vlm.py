@@ -67,7 +67,7 @@ def _post(spec, content, max_tokens=4096):
     base, key, model = settings.endpoint(spec)
     if not key and settings.needs_key(base):
         raise RuntimeError(f"no API key for {spec}: set it on Teknis → Model & kunci API")
-    headers = {"Authorization": f"Bearer {key}"} if key else {}
+    headers = settings.headers(base, key)             # the key, and a gateway's own headers (opencode: from the server)
     body = {"model": model, "temperature": 0, "max_tokens": max_tokens, "response_format": {"type": "json_object"},
             "messages": [{"role": "user", "content": content}]}
     # the row's "Matikan thinking" switch (common/settings.py THINKING): a call with an image goes through the vision

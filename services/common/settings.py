@@ -56,9 +56,9 @@ ROWS = {
 FIELDS = {k: (f"{k.upper()}_BASE_URL", f"{k.upper()}_API_KEY", f"{k.upper()}_MODEL") for k in ROWS}
 # "Matikan thinking", per row (the user, 2026-10-16: "add the non enable thinking button for each step, so it will be
 # flexible"): "off" sends enable_thinking=false with every call of the row, "on" sends nothing (the model's own
-# default). Until saved: off at Alibaba's endpoints (Model Studio, its Token Plan), where Qwen 3.5+ think by default
-# (a page-type answer took ~600 hidden tokens and 7 s, and often came back without probabilities), nothing elsewhere
-# (another endpoint may refuse a field it doesn't know).
+# default). Until saved: off for Qwen models at Alibaba's endpoints (Model Studio, its Token Plan), where Qwen 3.5+
+# think by default (a page-type answer took ~600 hidden tokens and 7 s, and often came back without probabilities);
+# nothing for other models or endpoints (they may refuse a field they don't know).
 THINKING = {k: f"{k.upper()}_THINKING" for k in ROWS}
 ALIBABA = ("aliyuncs.com", "dashscope")
 # numbers set on the same screen (the user, 2026-10-08: "make this a setting in the teknis side that we can modify
@@ -115,17 +115,33 @@ def needs_key(url):
     return bool(host) and host not in LOCAL and "." in host
 
 
+def route_headers(url):
+    """Headers some public gateways demand beyond the key. opencode's Go plan answers HTTP 400 (MissingSessionID) to
+    any call that doesn't say which client/session is asking; harmless to every other endpoint. (From the server,
+    2026-10-16: proven there before it reached the repo.)"""
+    host = (urlparse(norm(url)).hostname or "").lower()
+    if host.endswith("opencode.ai"):
+        return {"x-opencode-session": "samb-rtm", "x-opencode-client": "samb-rtm"}
+    return {}
+
+
+def headers(url, key):
+    """A call's headers: its key, and the gateway's own (route_headers)."""
+    return {**({"Authorization": f"Bearer {key}"} if key else {}), **route_headers(url)}
+
+
 def alibaba(url):
     """An Alibaba endpoint (Model Studio, its Token Plan): where enable_thinking is understood."""
     host = (urlparse(norm(url)).hostname or "").lower()
     return any(a in host for a in ALIBABA)
 
 
-def no_thinking(saved_value, url):
-    """Pure: does the row send enable_thinking=false? Its saved switch ("off" / "on"), else off at Alibaba's."""
+def no_thinking(saved_value, url, model=""):
+    """Pure: does the row send enable_thinking=false? Its saved switch ("off" / "on"), else off for a Qwen model at
+    Alibaba's (the server's rule: other models there, and other endpoints, may refuse a field they don't know)."""
     if saved_value in ("off", "on"):
         return saved_value == "off"
-    return alibaba(url)
+    return alibaba(url) and (model or "").lower().startswith("qwen")
 
 
 def _resolve(kind, got):
@@ -133,7 +149,7 @@ def _resolve(kind, got):
     url_n, key_n, model_n = FIELDS[kind]
     url, key, model = norm(got.get(url_n)), (got.get(key_n) or "").strip(), (got.get(model_n) or "").strip()
     return {"kind": kind, "url": url, "key": key, "model": model, "ident": ident(url, model),
-            "no_thinking": no_thinking(got.get(THINKING[kind]), url)}
+            "no_thinking": no_thinking(got.get(THINKING[kind]), url, model)}
 
 
 def _apply(got):
@@ -295,7 +311,7 @@ def view(c):
                     "key_by": rows.get(key_n) and rows[key_n]["updated_by"],
                     "no_thinking": r["no_thinking"], "thinking_saved": THINKING[kind] in rows,
                     "thinking_by": rows.get(THINKING[kind]) and rows[THINKING[kind]]["updated_by"],
-                    "alibaba": alibaba(r["url"])})
+                    "auto": "mati untuk Qwen di Alibaba" if alibaba(r["url"]) else "bawaan model"})
     nums = [{"name": n, "title": t, "does": d, "lo": lo, "hi": hi, "value": number(got, n), "saved": n in rows,
              "by": rows[n]["updated_by"] if n in rows else None, "at": rows[n]["updated_at"] if n in rows else None}
             for n, (t, d, lo, hi) in NUMBERS.items()]
@@ -350,7 +366,7 @@ def list_models(url, api_key):
     if not u.startswith(("https://", "http://")):
         return [], "the endpoint must start with https:// (or http:// for a model on this network)"
     try:
-        r = httpx.get(f"{u}/models", headers={"Authorization": f"Bearer {api_key}"} if api_key else {}, timeout=20)
+        r = httpx.get(f"{u}/models", headers=headers(u, api_key), timeout=20)
     except Exception as e:
         return [], f"can't reach the endpoint ({type(e).__name__})"
     if r.status_code in (401, 403):
@@ -419,10 +435,10 @@ def test_row(kind):
         ask.update({"max_tokens": 1, "logprobs": True, "top_logprobs": 5})
     else:
         content, want = "What is 17 + 25? Answer with the number only.", "42"
-    headers = {"Authorization": f"Bearer {row['key']}"} if row["key"] else {}
+    hdr = headers(row["url"], row["key"])
     t0 = time.time()
     try:
-        r = httpx.post(f"{row['url']}/chat/completions", headers=headers, timeout=120,
+        r = httpx.post(f"{row['url']}/chat/completions", headers=hdr, timeout=120,
                        json={"model": row["model"], "max_tokens": 200, "temperature": 0,
                              "messages": [{"role": "user", "content": content}], **ask})
     except Exception as e:
