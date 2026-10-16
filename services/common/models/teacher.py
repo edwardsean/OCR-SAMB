@@ -48,7 +48,7 @@ def _post(messages, model=None, role="TEACHER_MODEL"):
     url, key, name = _where(model or MODEL)
     if not key and settings.needs_key(url):
         raise RuntimeError(f"no API key for {role} ({model or MODEL}): set it on Teknis → Model & kunci API")
-    headers = {"Authorization": f"Bearer {key}"} if key else {}
+    headers = settings.headers(url, key)              # the key, and a gateway's own headers (opencode)
     t0 = time.time()
     body = {"model": name, "messages": messages, "temperature": 0.2,      # + the row's thinking switch (settings.THINKING)
             **settings.extra(settings.row_of(model or MODEL, "vision" if settings.has_image(messages) else "text"))}

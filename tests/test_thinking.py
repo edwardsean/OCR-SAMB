@@ -12,14 +12,15 @@ PLAN = "https://token-plan.ap-southeast-1.maas.aliyuncs.com/compatible-mode/v1"
 GROQ = "https://api.groq.com/openai/v1"
 
 
-def test_until_saved_thinking_is_off_only_at_alibabas_endpoints():
-    assert settings.no_thinking(None, MS) and settings.no_thinking(None, PLAN)
-    assert not settings.no_thinking(None, GROQ)                 # another endpoint may refuse a field it doesn't know
+def test_until_saved_thinking_is_off_only_for_qwen_at_alibabas_endpoints():
+    assert settings.no_thinking(None, MS, "qwen-flash") and settings.no_thinking(None, PLAN, "qwen3.8-flash")
+    assert not settings.no_thinking(None, PLAN, "deepseek-v4-flash")    # another model may refuse the field
+    assert not settings.no_thinking(None, GROQ, "qwen/qwen3.8-27b")     # and another endpoint
 
 
 def test_the_saved_switch_wins_either_way():
     assert not settings.no_thinking("on", PLAN)
-    assert settings.no_thinking("off", GROQ)
+    assert settings.no_thinking("off", GROQ) and settings.no_thinking("off", PLAN, "glm-5.3")
 
 
 def test_a_row_carries_its_switch():
@@ -61,3 +62,10 @@ def test_the_classification_call_sends_the_switch(monkeypatch):
     sent.clear()
     classify.llm_ask({"page_text": "x"}, None, GROQ, "k", "m")
     assert "enable_thinking" not in sent
+
+
+def test_a_gateway_gets_its_own_headers_with_the_key():
+    """opencode's Go plan answers 400 (MissingSessionID) without them (the server's change, 2026-10-16)."""
+    h = settings.headers("https://opencode.ai/zen/go/v1", "k")
+    assert h["Authorization"] == "Bearer k" and h["x-opencode-session"] == "samb-rtm"
+    assert settings.headers(PLAN, "") == {} and settings.headers(MS, "k") == {"Authorization": "Bearer k"}
