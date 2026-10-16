@@ -395,7 +395,13 @@ form.inl { display: inline; margin: 0; }
   padding: 14px 14px 14px 0; border-bottom: 1px solid var(--garis); white-space: nowrap; }
 .mrow .set tr:first-child :is(th, td) { border-top: 1px solid var(--garis); }
 .mrow .acts { margin: 6px 0; }
-.mrow .acts form + form { margin-left: 10px; }
+.mrow .acts { display: flex; flex-wrap: wrap; gap: 8px 18px; align-items: center; }
+.mrow .acts form + form { margin-left: 0; }
+.thinkf { display: inline-flex; gap: 10px; align-items: center; }
+/* what a Test, a switch or a save did, said under its own row (2026-10-16: the page used to reload at the top) */
+.rowmsg { margin: 8px 0 4px; padding: 7px 10px; font-size: 13px; border-left: 3px solid var(--cap-hijau); background: var(--meja-muda); }
+.rowmsg.bad { border-left-color: var(--cap-merah); color: var(--cap-merah); }
+.thinkf label { display: inline-flex; gap: 6px; align-items: center; font-size: 13.5px; font-weight: 600; cursor: pointer; }
 .mrow details { margin: 4px 0 0; }
 .mrow summary { cursor: pointer; font-size: 13.5px; }
 .rowf { display: grid; gap: 8px; max-width: 720px; margin: 10px 0 4px; }

@@ -503,13 +503,18 @@ def product_codes_delete(customer_code: str = Form(...), customer_item_code: str
 
 # ---------------------------------------------------------------------------------------------- Model & kunci API
 
-def _s_back(msg, name="", bad=False):
+def _s_back(msg, name="", bad=False, request=None):
+    """Back to the screen with what happened, said in the row it is about (at=). A button the screen sends in place
+    (Test, Matikan thinking: header x-inplace) gets it as JSON instead, so the page doesn't reload and jump."""
     from urllib.parse import quote
-    return RedirectResponse(f"/settings?msg={quote(msg[:300])}&bad={int(bad)}#{quote(name)}", status_code=303)
+    if request is not None and request.headers.get("x-inplace"):
+        return JSONResponse({"ok": not bad, "msg": msg[:300], "name": name})
+    return RedirectResponse(f"/settings?msg={quote(msg[:300])}&bad={int(bad)}&at={quote(name)}#{quote(name)}",
+                            status_code=303)
 
 
 @app.get("/settings", response_class=HTMLResponse, include_in_schema=False)
-def page_settings(request: Request, msg: str | None = None, bad: int = 0):
+def page_settings(request: Request, msg: str | None = None, bad: int = 0, at: str = ""):
     """The three models (vision, text, classification): each an endpoint, its API key and a model from that endpoint's
     list, set only here, never in .env (common/settings.py). Keys are only ever shown masked."""
     try:
@@ -517,7 +522,8 @@ def page_settings(request: Request, msg: str | None = None, bad: int = 0):
             v = settings.view(c)
     except Exception as e:                       # before migration 027
         v, msg, bad = None, f"Settings can't be read: {type(e).__name__} (apply schema/027-setting.sql)", 1
-    return templates.TemplateResponse("settings.html", ctx(request, v=v, msg=msg, bad=bad, missing=settings.missing()))
+    return templates.TemplateResponse("settings.html", ctx(request, v=v, msg=msg, bad=bad, at=at,
+                                                           missing=settings.missing()))
 
 
 @app.post("/settings/number", include_in_schema=False)
@@ -556,6 +562,20 @@ def save_model_row(kind: str = Form(...), url: str = Form(""), model: str = Form
                    kind)
 
 
+@app.post("/settings/thinking", include_in_schema=False)
+def save_thinking_setting(request: Request, kind: str = Form(...), off: str = Form(""), by: str = Form("")):
+    """A row's "Matikan thinking" switch (settings.THINKING): every call of the row sends enable_thinking=false, or not."""
+    try:
+        with db.connect() as c:
+            settings.save_thinking(c, kind, bool(off), by)
+    except ValueError as e:
+        return _s_back(f"{_row_title(kind)} not saved: {e}", kind, bad=True, request=request)
+    settings.refresh(force=True)
+    trace.event("person.settings", "ok", who=by.strip() or None, row=kind, thinking="off" if off else "on")
+    return _s_back(f"Thinking {'off (enable_thinking=false)' if off else 'as the model likes'}, saved by {by.strip()}. "
+                   "Every service uses it within seconds. Press Test to check it.", kind, request=request)
+
+
 @app.post("/settings/models", include_in_schema=False)
 def endpoint_models(kind: str = Form(...), url: str = Form(""), key: str = Form("")):
     """For the screen's dropdown: the endpoint's model list (GET /models: no tokens), the model it suggests, and the
@@ -571,10 +591,10 @@ def endpoint_models(kind: str = Form(...), url: str = Form(""), key: str = Form(
 
 
 @app.post("/settings/test", include_in_schema=False)
-def test_model_row(kind: str = Form(...)):
+def test_model_row(request: Request, kind: str = Form(...)):
     """The row's model list, then one tiny call (a few tokens): the vision model reads a number from an image."""
     ok, said = settings.test_row(kind)
-    return _s_back(f"{_row_title(kind)}: {said}", kind, bad=not ok)
+    return _s_back(("✓ " if ok else "✗ ") + said, kind, bad=not ok, request=request)
 
 
 @app.get("/status", response_class=HTMLResponse, include_in_schema=False)

@@ -54,11 +54,18 @@ ROWS = {
         "the page-type teacher's test: asks it again about the labelled pages before a better description is kept"]),
 }
 FIELDS = {k: (f"{k.upper()}_BASE_URL", f"{k.upper()}_API_KEY", f"{k.upper()}_MODEL") for k in ROWS}
+# "Matikan thinking", per row (the user, 2026-10-16: "add the non enable thinking button for each step, so it will be
+# flexible"): "off" sends enable_thinking=false with every call of the row, "on" sends nothing (the model's own
+# default). Until saved: off at Alibaba's endpoints (Model Studio, its Token Plan), where Qwen 3.5+ think by default
+# (a page-type answer took ~600 hidden tokens and 7 s, and often came back without probabilities), nothing elsewhere
+# (another endpoint may refuse a field it doesn't know).
+THINKING = {k: f"{k.upper()}_THINKING" for k in ROWS}
+ALIBABA = ("aliyuncs.com", "dashscope")
 # numbers set on the same screen (the user, 2026-10-08: "make this a setting in the teknis side that we can modify
 # without touching the code"): name -> (title, what it does, lowest, highest); until saved, config's own value
 NUMBERS = {"WORKER_CONCURRENCY": ("Pages per worker", "Pages each worker reads at once. More is faster; each worker "
                                   "needs about 1 GB of memory at 4.", 1, 16)}
-NAMES = {n for f in FIELDS.values() for n in f} | set(NUMBERS)
+NAMES = {n for f in FIELDS.values() for n in f} | set(THINKING.values()) | set(NUMBERS)
 
 # models the system has been measured with, best first: the screen pre-selects the first one an endpoint lists
 RECOMMENDED = {
@@ -108,11 +115,25 @@ def needs_key(url):
     return bool(host) and host not in LOCAL and "." in host
 
 
+def alibaba(url):
+    """An Alibaba endpoint (Model Studio, its Token Plan): where enable_thinking is understood."""
+    host = (urlparse(norm(url)).hostname or "").lower()
+    return any(a in host for a in ALIBABA)
+
+
+def no_thinking(saved_value, url):
+    """Pure: does the row send enable_thinking=false? Its saved switch ("off" / "on"), else off at Alibaba's."""
+    if saved_value in ("off", "on"):
+        return saved_value == "off"
+    return alibaba(url)
+
+
 def _resolve(kind, got):
-    """The row in effect, from the saved settings `got` only: {kind, url, key, model, ident}."""
+    """The row in effect, from the saved settings `got` only: {kind, url, key, model, ident, no_thinking}."""
     url_n, key_n, model_n = FIELDS[kind]
     url, key, model = norm(got.get(url_n)), (got.get(key_n) or "").strip(), (got.get(model_n) or "").strip()
-    return {"kind": kind, "url": url, "key": key, "model": model, "ident": ident(url, model)}
+    return {"kind": kind, "url": url, "key": key, "model": model, "ident": ident(url, model),
+            "no_thinking": no_thinking(got.get(THINKING[kind]), url)}
 
 
 def _apply(got):
@@ -126,7 +147,8 @@ def _apply(got):
     EFFECTIVE.clear()
     EFFECTIVE.update(rows)
     _state["saved"] = dict(got)
-    now = sorted((k, r["url"], r["key"], r["model"]) for k, r in rows.items()) + [("pages", config.WORKER_CONCURRENCY)]
+    now = sorted((k, r["url"], r["key"], r["model"], r["no_thinking"]) for k, r in rows.items()) + \
+        [("pages", config.WORKER_CONCURRENCY)]
     changed = now != _state["effective"]
     _state["effective"] = now
     return changed
@@ -220,6 +242,31 @@ def endpoint(spec):
                        f"the model isn't set: set the vision and text models on {WHERE}")
 
 
+def row_of(spec, prefer=None):
+    """The row a model as the system names it is called through: the `prefer` row ("vision" for a call with an
+    image, "text" without) when its model is `spec`, else the first whose model it is. Two rows may hold the same
+    model at the same endpoint and still differ in their thinking switch."""
+    rows = [r for r in EFFECTIVE.values() if r["ident"] and r["ident"] == spec]
+    return next((r for r in rows if r["kind"] == prefer), rows[0] if rows else None)
+
+
+def extra(row):
+    """What a call through this row adds to its request body: {"enable_thinking": False} when its thinking is off."""
+    return {"enable_thinking": False} if row and row.get("no_thinking") else {}
+
+
+def has_image(content):
+    """Does a message's content (or a list of messages) send an image?"""
+    items = content if isinstance(content, list) else [content]
+    for x in items:
+        if isinstance(x, dict) and "content" in x:              # a message
+            if has_image(x["content"]):
+                return True
+        elif isinstance(x, dict) and x.get("type") == "image_url":
+            return True
+    return False
+
+
 def key(name):
     """The API key a row calls with ("vision", "text", "classify"). "" when there is none."""
     return EFFECTIVE[name]["key"] if name in EFFECTIVE else ""
@@ -245,7 +292,10 @@ def view(c):
                     "ident": r["ident"], "key": masked(r["key"]), "has_key": bool(r["key"]),
                     "needs_key": needs_key(r["url"]), "set": bool(r["ident"]) and (bool(r["key"]) or not needs_key(r["url"])),
                     "by": who and who["updated_by"], "at": who and who["updated_at"],
-                    "key_by": rows.get(key_n) and rows[key_n]["updated_by"]})
+                    "key_by": rows.get(key_n) and rows[key_n]["updated_by"],
+                    "no_thinking": r["no_thinking"], "thinking_saved": THINKING[kind] in rows,
+                    "thinking_by": rows.get(THINKING[kind]) and rows[THINKING[kind]]["updated_by"],
+                    "alibaba": alibaba(r["url"])})
     nums = [{"name": n, "title": t, "does": d, "lo": lo, "hi": hi, "value": number(got, n), "saved": n in rows,
              "by": rows[n]["updated_by"] if n in rows else None, "at": rows[n]["updated_at"] if n in rows else None}
             for n, (t, d, lo, hi) in NUMBERS.items()]
@@ -256,6 +306,16 @@ def _put(c, name, value, by):
     c.execute("""INSERT INTO staging.setting (name, value, updated_by) VALUES (%s, %s, %s)
                  ON CONFLICT (name) DO UPDATE SET value=EXCLUDED.value, updated_by=EXCLUDED.updated_by,
                    updated_at=now()""", (name, value, by))
+
+
+def save_thinking(c, kind, off, by):
+    """Save a row's thinking switch: off (enable_thinking=false with every call) or on (the model's own default)."""
+    if kind not in ROWS:
+        raise ValueError(f"{kind} isn't a model row")
+    if not (by or "").strip():
+        raise ValueError("say who you are")
+    _put(c, THINKING[kind], "off" if off else "on", by.strip())
+    _state["checked"] = 0.0
 
 
 def save_row(c, kind, url, model, api_key, by):
@@ -346,7 +406,7 @@ def test_row(kind):
     tails = {i.split("/")[-1] for i in ids}
     if ids and row["model"] not in ids and row["model"].split("/")[-1] not in tails:
         return False, f"the key works, but {row['model']} isn't in this endpoint's model list"
-    extra = {}
+    ask = dict(extra(row))                    # the row's thinking switch, as every real call of the row sends it
     if kind == "vision":
         url = "data:image/png;base64," + base64.b64encode(_probe_png()).decode()
         content = [{"type": "text", "text": "Which number is printed in this image? Answer with the number only."},
@@ -355,7 +415,8 @@ def test_row(kind):
     elif kind == "classify":                 # one option number, with the endpoint's probability of each option
         content = ("Which kind of document is a page titled GOODS RECEIVE NOTE, listing the quantities received?\n"
                    "1. a sales invoice\n2. a goods receipt\n3. a purchase order\nAnswer with the number only.")
-        want, extra = "2", {"max_tokens": 1, "logprobs": True, "top_logprobs": 5}
+        want = "2"
+        ask.update({"max_tokens": 1, "logprobs": True, "top_logprobs": 5})
     else:
         content, want = "What is 17 + 25? Answer with the number only.", "42"
     headers = {"Authorization": f"Bearer {row['key']}"} if row["key"] else {}
@@ -363,22 +424,28 @@ def test_row(kind):
     try:
         r = httpx.post(f"{row['url']}/chat/completions", headers=headers, timeout=120,
                        json={"model": row["model"], "max_tokens": 200, "temperature": 0,
-                             "messages": [{"role": "user", "content": content}], **extra})
+                             "messages": [{"role": "user", "content": content}], **ask})
     except Exception as e:
         return False, f"the call failed ({type(e).__name__})"
     if r.status_code >= 400:
         return False, f"the call failed: HTTP {r.status_code} {r.text[:160]}"
     choice = (r.json().get("choices") or [{}])[0]
     answer = (choice.get("message") or {}).get("content") or ""
+    secs = time.time() - t0
+    mode = "thinking off" if row["no_thinking"] else "thinking as the model likes"
+    think = ("" if row["no_thinking"] else
+             f" It took {secs:.1f} s and {((r.json().get('usage') or {}).get('completion_tokens') or '?')} answer "
+             "tokens: it may be thinking first. Try Matikan thinking.")
     if want not in str(answer):
         return False, (f"{row['model']} answered {str(answer)[:60]!r}: "
                        + {"vision": "it doesn't seem to read images", "classify": "not the expected 2"}.get(kind,
-                                                                                                    "not the expected 42"))
+                                                                                                    "not the expected 42")
+                       + (think if not str(answer).strip() else ""))
     if kind == "vision":
-        return True, f"{row['model']} works and reads images"
+        return True, f"{row['model']} works and reads images ({mode}, {secs:.1f} s)"
     if kind == "classify":
         if not ((choice.get("logprobs") or {}).get("content")):
             return False, (f"{row['model']} answers, but this endpoint gives no token probabilities (logprobs): "
-                           "the classification needs them to know when it isn't sure")
-        return True, f"{row['model']} works, gives probabilities, and answered in {time.time() - t0:.1f} s"
-    return True, f"{row['model']} works"
+                           "the classification needs them to know when it isn't sure." + think)
+        return True, f"{row['model']} works, gives probabilities, and answered in {secs:.1f} s ({mode})"
+    return True, f"{row['model']} works ({mode}, {secs:.1f} s)"

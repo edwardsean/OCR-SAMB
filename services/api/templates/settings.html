@@ -6,13 +6,15 @@
     <p class="lede">Three models do the AI work: the <strong>vision model</strong> for every call that sends a page image,
       the <strong>text model</strong> for every call that sends only text, and the <strong>classification model</strong>
       that decides each page's type. Each is an endpoint (any OpenAI-compatible API) and its API key, then a model
-      chosen from that endpoint's list. Choose instruct (non-thinking) models: a thinking model writes a long hidden
-      reasoning first, slow and paid for. They are set only here, never in <code>.env</code>:
+      chosen from that endpoint's list. Choose instruct (non-thinking) models, or tick <b>Matikan thinking</b> on the
+      row: a thinking model writes a long hidden reasoning first, slow and paid for, and the classification then often
+      gets no probabilities. They are set only here, never in <code>.env</code>:
       while one isn't set, no page is read (pages wait, then go on by themselves once it is). Saved here, used within
       seconds.</p>
   </section>
 
-  {% if msg %}<div class="alert {{ 'bad' if bad else 'warn' }}" style="padding:10px 14px;margin:10px 0">{{ msg }}</div>{% endif %}
+  <style>html { scroll-behavior: auto; }</style>  {# back at a row after a save: no scroll from the top #}
+  {% if msg and not at %}<div class="alert {{ 'bad' if bad else 'warn' }}" style="padding:10px 14px;margin:10px 0">{{ msg }}</div>{% endif %}
   {% if v and missing %}<div class="alert bad" style="padding:10px 14px;margin:10px 0">Not set: {{ missing|join(', ') }}.
     No page is read until {{ 'it is' if missing|length == 1 else 'they are' }} set below.</div>{% endif %}
 
@@ -34,10 +36,16 @@
           {% else %}<span class="bad">—</span>{% endif %}</td></tr>
       </tbody>
     </table>
-    {% if r.set %}<p class="small acts">
-      <form method="post" action="/settings/test" class="inl"><input type="hidden" name="kind" value="{{ r.kind }}">
-        <button type="submit" title="its model list, then one tiny call (a few tokens)">Test</button></form>
-    </p>{% endif %}
+    <div class="acts">
+      {% if r.set %}<form method="post" action="/settings/test" class="inl"><input type="hidden" name="kind" value="{{ r.kind }}">
+        <button type="submit" title="its model list, then one tiny call (a few tokens)">Test</button></form>{% endif %}
+      <form method="post" action="/settings/thinking" class="inl thinkf" title="sends enable_thinking=false with every call of this row">
+        <input type="hidden" name="kind" value="{{ r.kind }}"><input type="hidden" name="by" class="js-by">
+        <label><input type="checkbox" name="off" value="1" class="js-think"{{ ' checked' if r.no_thinking }}> Matikan thinking</label>
+        <span class="small muted js-think-by">{% if r.thinking_saved %}diatur {{ r.thinking_by }}{% else %}otomatis: {{ 'mati di Alibaba' if r.alibaba else 'bawaan model' }}{% endif %}</span>
+      </form>
+    </div>
+    <p class="rowmsg js-msg{{ ' bad' if bad and at == r.kind }}" aria-live="polite"{{ ' hidden' if not (msg and at == r.kind) }}>{{ msg if at == r.kind else '' }}</p>
     <details{% if not r.set %} open{% endif %}><summary>{{ 'Change the endpoint, key or model' if r.set else 'Set it: endpoint, key, then the model' }}</summary>
       <form method="post" action="/settings/row" class="rowf" data-kind="{{ r.kind }}">
         <input type="hidden" name="kind" value="{{ r.kind }}"><input type="hidden" name="by" class="js-by">
@@ -64,6 +72,7 @@
       <input type="number" name="value" min="{{ n.lo }}" max="{{ n.hi }}" value="{{ n.value }}" style="width:5em">
       <button type="submit">Save</button>
     </form>
+    {% if msg and at == n.name %}<p class="rowmsg{{ ' bad' if bad }}">{{ msg }}</p>{% endif %}
   </section>
   {% endfor %}
 
@@ -88,6 +97,39 @@
           var who = (input && input.value.trim()) || '';
           if (!who) { e.preventDefault(); if (input) { input.focus(); input.placeholder = 'type your name first'; } return; }
           f.querySelectorAll('.js-by').forEach(function (b) { b.value = who; });
+        });
+      });
+
+      // Test and Matikan thinking answer in place: the row says what happened, the page doesn't reload or move
+      document.querySelectorAll('form[action="/settings/test"], form.thinkf').forEach(function (f) {
+        f.addEventListener('submit', function (e) {
+          if (e.defaultPrevented) return;                 // no name yet: the check above stopped it
+          e.preventDefault();
+          var row = f.closest('section'), msg = row && row.querySelector('.js-msg'),
+              btn = f.querySelector('button'), test = f.getAttribute('action') === '/settings/test';
+          if (btn) { btn.disabled = true; btn.dataset.label = btn.textContent; btn.textContent = 'Testing…'; }
+          if (msg && test) { msg.hidden = false; msg.className = 'rowmsg js-msg'; msg.textContent = 'asking the model (a few tokens)…'; }
+          fetch(f.action, {method: 'POST', body: new FormData(f), headers: {'x-inplace': '1'}})
+            .then(function (r) { return r.json(); })
+            .then(function (d) {
+              if (msg) { msg.hidden = false; msg.className = 'rowmsg js-msg' + (d.ok ? '' : ' bad'); msg.textContent = d.msg; }
+              if (!test && d.ok) {
+                var who = f.querySelector('.js-by'), by = f.querySelector('.js-think-by');
+                if (by && who) by.textContent = 'diatur ' + who.value;
+              }
+              if (!test && !d.ok) { var box = f.querySelector('.js-think'); if (box) box.checked = !box.checked; }
+            })
+            .catch(function () { if (msg) { msg.hidden = false; msg.className = 'rowmsg js-msg bad'; msg.textContent = 'the screen could not reach the server'; } })
+            .finally(function () { if (btn) { btn.disabled = false; btn.textContent = btn.dataset.label; } });
+        });
+      });
+
+      // a row's thinking switch saves as soon as it is ticked (signed with the name, like every change here)
+      document.querySelectorAll('.js-think').forEach(function (box) {
+        box.addEventListener('change', function () {
+          var who = (input && input.value.trim()) || '';
+          if (!who) { box.checked = !box.checked; if (input) { input.focus(); input.placeholder = 'type your name first'; } return; }
+          box.form.requestSubmit();
         });
       });
 
