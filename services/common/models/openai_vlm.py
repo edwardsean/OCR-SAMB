@@ -70,8 +70,9 @@ def _post(spec, content, max_tokens=4096):
     headers = {"Authorization": f"Bearer {key}"} if key else {}
     body = {"model": model, "temperature": 0, "max_tokens": max_tokens, "response_format": {"type": "json_object"},
             "messages": [{"role": "user", "content": content}]}
-    if "dashscope" in base:      # Model Studio's qwen3.5–3.8 think by default (hidden reasoning: slower, more tokens);
-        body["enable_thinking"] = False                   # from the one-call trial branch (2026-10-10)
+    # the row's "Matikan thinking" switch (common/settings.py THINKING): a call with an image goes through the vision
+    # row, one without through the text row, when both hold this model
+    body.update(settings.extra(settings.row_of(spec, "vision" if settings.has_image(content) else "text")))
     t0 = time.time()
     trace.ai_request(body)                           # the exact payload, for Jejak (common/trace.py)
     for attempt in range(6):

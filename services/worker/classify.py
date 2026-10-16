@@ -129,7 +129,7 @@ def jev_ask(state, questions=None):
     row = settings.row("classify")
     if not row["ident"]:
         return {"skipped": "the classification model isn't set on Teknis → Model & kunci API"}
-    out = llm_ask(state, questions, row["url"], row["key"], row["model"])
+    out = llm_ask(state, questions, row["url"], row["key"], row["model"], settings.extra(row))
     return {**out, "model": row["ident"]} if "choice" in out else out
 
 
@@ -164,13 +164,13 @@ def llm_prompt(state, questions):
     return "\n".join(lines), keys
 
 
-def llm_ask(state, questions, url, key, model):
+def llm_ask(state, questions, url, key, model, extra=None):
     """Jev's question to an instruct (non-thinking) text model at an OpenAI-compatible endpoint, with Jev's answer
     shape. The model answers one number (one token, no reasoning); the probability of each option is read from the
     endpoint's token log-probabilities, never from a number the model writes (that one is always ~0.95)."""
     prompt, keys = llm_prompt(state, questions)
     body = {"model": model, "temperature": 0, "max_tokens": 1, "logprobs": True, "top_logprobs": 5,
-            "messages": [{"role": "user", "content": prompt}]}
+            "messages": [{"role": "user", "content": prompt}], **(extra or {})}   # extra: the row's thinking switch
     headers = {"Authorization": f"Bearer {key}"} if key else {}
     t0 = time.time()
     trace.ai_request(body)                           # the exact payload, for Jejak (common/trace.py)
