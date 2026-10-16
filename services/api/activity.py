@@ -38,7 +38,7 @@ SELECT p.batch_id, p.page_no, s.file_name, s.status::text AS scan_status, s.stop
        l.page_no IS NOT NULL AS labelled, {stuck.STUCK} AS stuck, {stuck.PUBLISHED} AS published,
        run.at AS reading_since, st.kind AS stage, st.at AS stage_since,
        q.at AS queued_at, q.detail->>'why' AS queued_why, pk.at AS parked_at, pk.detail->>'why' AS parked_why,
-       last.ms AS last_ms
+       last.ms AS last_ms, p.keys, p.fields->'customer_name'->>'value' AS customer, ord.sor_no AS sor
   FROM staging.page p JOIN staging.scan_batch s ON s.id = p.batch_id
   LEFT JOIN staging.type_label l ON l.batch_id = p.batch_id AND l.page_no = p.page_no
   LEFT JOIN LATERAL (SELECT at FROM staging.trace t WHERE t.batch_id = p.batch_id AND t.page_no = p.page_no
@@ -53,6 +53,9 @@ SELECT p.batch_id, p.page_no, s.file_name, s.status::text AS scan_status, s.stop
   LEFT JOIN LATERAL (SELECT ms FROM staging.trace t WHERE t.batch_id = p.batch_id AND t.page_no = p.page_no
                         AND t.kind = 'page' AND t.status <> 'running' AND t.status <> 'skip'
                       ORDER BY at DESC LIMIT 1) last ON true
+  LEFT JOIN LATERAL (SELECT b.sor_no FROM staging.document d JOIN staging.bundle_document bd ON bd.document_id = d.id
+                       JOIN staging.bundle b ON b.id = bd.bundle_id
+                      WHERE d.batch_id = p.batch_id AND p.page_no BETWEEN d.page_from AND d.page_to LIMIT 1) ord ON true
  WHERE s.upload_id = %s
  ORDER BY s.file_name, p.page_no"""
 
@@ -110,6 +113,13 @@ def state(p, blocked=None):
     return {"state": "done", "ms": p.get("last_ms")}
 
 
+def _find(r):
+    """What a person may search a page by besides its number and type (Baca ulang's search): its order's SOR, the
+    numbers read on it (SOR, PO, receipt and billing numbers), its customer as read."""
+    keys = [k.get("value") for k in (r.get("keys") or {}).values() if isinstance(k, dict)]
+    return " ".join(str(v) for v in [r.get("sor"), r.get("customer"), *keys] if v)
+
+
 def _cant_restart(r, s):
     """Why a page can't be read again from scratch now (api/actions.why_not_restart's words)."""
     if r["published"]:
@@ -160,6 +170,7 @@ def of_upload(c, upload_id, blocked=None, now=None):
                     "doc_type": r["doc_type"] if r["type_status"] in ("decided", "labelled") else None,
                     "unsure": r["type_status"] == "unsure" and not r["labelled"],
                     "thumb": r["thumb_upright_path"] or r["thumb_path"], "published": bool(r["published"]),
+                    "sor": r["sor"], "outcome": r["outcome"], "find": _find(r),
                     "restart": None if r["scan_status"] != "stopped" and not r["published"] and s["state"] in
                     ("done", "waiting_ai", "failed") else _cant_restart(r, s), **s})
     files = [dict(f) for f in c.execute("""SELECT id AS batch_id, file_name, status::text AS status, page_total, error

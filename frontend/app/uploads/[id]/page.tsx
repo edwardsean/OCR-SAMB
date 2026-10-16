@@ -16,6 +16,7 @@ import Cocokkan from "./Cocokkan";
 import Periksa from "./Periksa";
 import Kirim from "./Kirim";
 import Stop from "./Stop";
+import DeleteBatch from "./DeleteBatch";
 import { EFakturList } from "@/components/EFaktur";
 
 const load = cache((id: string) => get<UploadDetail>(`/uploads/${id}`));      // once per request: title and page
@@ -76,6 +77,8 @@ export default async function UploadPage({ params, searchParams }: { params: Pro
         {at === "periksa" && <Periksa d={d} />}
         {at === "kirim" && <Kirim d={d} just={one(sp.just) ?? ""} />}
       </>}
+
+      <DeleteBatch upload={u.id} info={d.delete} />
     </>
   );
 }

@@ -4,7 +4,7 @@ ActionError, which the API turns into its status and reason.
 
 Moved here from app.py's form handlers on 2026-10-02 (the user: "lets make it using react and next js where it talks
 with REST API"), unchanged in what it writes."""
-from common import db, intake, stopping, trace, verify
+from common import db, deleting, intake, stopping, trace, verify
 
 
 class ActionError(Exception):
@@ -300,6 +300,18 @@ def restart_scan(batch, by, pages=None):
     if pages is None:
         return _restart("p.batch_id = %s", (batch,), by)
     return _restart("p.batch_id = %s AND p.page_no = ANY(%s)", (batch, [int(n) for n in pages]), by)
+
+
+def delete_upload(upload_id, by, code):
+    """Delete a whole batch so its files can be uploaded again (common/deleting.py): refused (409) while something of
+    it runs or an order made from it was sent to Satellite; 400 unless `code` is the batch's code."""
+    _need(by)
+    try:
+        out = deleting.delete(upload_id, by, code)
+    except deleting.Refused as e:
+        raise ActionError(e.status, e.why)
+    print(f"deleted upload {upload_id} ({out['code']}) by {by.strip()}: {out}", flush=True)
+    return out
 
 
 def _files(upload_id):

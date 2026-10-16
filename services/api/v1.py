@@ -398,6 +398,21 @@ class Restart(BaseModel):
                                                   'none: every page')
 
 
+class Delete(BaseModel):
+    by: str = _by()
+    code: str = Field(description="the batch's code (BATCH-…), typed by the person: the confirmation")
+
+
+@router.post("/uploads/{upload_id}/delete", tags=[UPLOADS], summary="Delete a batch, so its files can be uploaded again")
+def delete_upload(upload_id: int, body: Delete):
+    """The batch goes whole: its files, pages, documents, readings, and the labels and corrections made on its pages;
+    its PDFs and page images leave storage. An order made only of its documents goes; an order with documents from
+    other batches too loses this batch's and is regrouped. Kept: what was learned from it, Jejak and the AI-call
+    ledger. 409 while something of it runs or waits for the AI (stop it first), or when an order made from it was
+    sent to Satellite; 400 unless `code` is the batch's code. GET /uploads/{id} says beforehand (`delete`)."""
+    return _run(actions.delete_upload, upload_id, body.by, body.code)
+
+
 @router.post("/uploads/{upload_id}/restart", tags=[UPLOADS], summary="Read pages of a batch again from scratch")
 def restart_all(upload_id: int, body: Restart):
     """Each page gets a new AI OCR copy and every AI step after it (mapping, page type, look-again, store question):

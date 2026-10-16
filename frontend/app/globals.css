@@ -871,8 +871,29 @@ h2.sect { margin: 32px 0 12px; }
 
 /* Baca ulang: pick pages to read again from scratch (2026-10-15) */
 .rs .rs-bar { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; margin: 8px 0; }
-.rs .rs-grid { list-style: none; padding: 0; margin: 6px 0; display: grid; grid-template-columns: repeat(auto-fill, minmax(110px, 1fr)); gap: 4px; }
-.rs .rs-grid li { border: 1px solid var(--garis); padding: 3px 6px; font-size: 13px; }
-.rs .rs-grid li.on { border-color: var(--biru-pulpen); background: var(--meja-muda); }
-.rs .rs-grid li.off { color: var(--pensil); opacity: .55; }
-.rs .rs-grid label { display: flex; gap: 6px; align-items: center; cursor: pointer; }
+/* the pages as small tiles, per file (2026-10-16: the file name in every cell made a big file unreadable) */
+.rs .rs-find { flex: 1 1 320px; max-width: 520px; }
+.rs .rs-go { margin-top: 14px; padding-top: 12px; border-top: 1px solid var(--garis); }
+.rs .rs-file h4 { margin: 14px 0 6px; font-size: 13px; font-weight: 700; }
+.rs .rs-grid { list-style: none; padding: 0; margin: 0; display: grid; grid-template-columns: repeat(auto-fill, minmax(64px, 1fr)); gap: 8px; }
+.rs .rs-grid button { position: relative; display: block; width: 100%; padding: 0; border: 1px solid var(--garis-tebal); border-radius: 2px;
+  background: var(--kertas); cursor: pointer; aspect-ratio: 210/297; overflow: hidden; }
+.rs .rs-grid button img, .rs .rs-grid button i { display: block; width: 100%; height: 100%; object-fit: cover; }
+.rs .rs-grid button:hover:not([disabled]) { border-color: var(--tinta); }
+.rs .rs-grid button.on { border-color: var(--biru-pulpen); box-shadow: 0 0 0 2px var(--biru-pulpen); }
+.rs .rs-grid button.off { opacity: .4; cursor: not-allowed; }
+.rs .rs-no { position: absolute; left: 0; bottom: 0; background: rgba(26, 29, 34, .78); color: #fff; font-size: 11.5px; font-weight: 700; padding: 0 5px; }
+.rs .rs-grid .tchip { position: absolute; left: 0; top: 0; font-size: 10px; padding: 0 4px; border-radius: 0; }
+.rs .rs-flag { position: absolute; right: 0; bottom: 0; background: var(--cap-merah); color: #fff; font-size: 10px; font-weight: 700; padding: 0 4px; }
+.rs .rs-tick { position: absolute; right: 3px; top: 3px; width: 18px; height: 18px; border-radius: 50%; background: var(--biru-pulpen);
+  color: #fff; font-size: 11px; line-height: 18px; text-align: center; }
+/* Hapus batch (2026-10-16): quiet, at the end of the batch page */
+.del { margin: 48px 0 0; border-top: 1px solid var(--garis); padding-top: 10px; }
+.del > summary { cursor: pointer; color: var(--pensil); font-size: 13px; font-weight: 600; }
+.del > summary:hover { color: var(--cap-merah); }
+.del .del-body { margin: 10px 0 0; max-width: 640px; }
+.del ul { margin: 6px 0 10px; padding-left: 18px; font-size: 13.5px; }
+.del .del-row { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+.del .del-row input.mono { min-width: 230px; font-family: var(--mono); }
+.btn.danger { background: var(--cap-merah); border-color: var(--cap-merah); color: #fff; }
+.btn.danger:hover:not([disabled]) { background: #8E1D17; border-color: #8E1D17; color: #fff; }
