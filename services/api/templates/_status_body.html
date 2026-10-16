@@ -15,10 +15,10 @@
     {% for r in s.services %}
       <tr class="{{ 'ok' if r.ok else 'bad' }}">
         <td><span class="dot"></span></td>
-        <td><strong>{{ r.name }}</strong></td>
+        <td class="nowrap"><strong>{{ r.name }}</strong></td>
         <td class="muted">{{ r.role }}</td>
         <td class="mono">{{ r.detail }}</td>
-        <td>{% if r.link %}<a href="{{ r.link }}" target="_blank" rel="noopener">buka ↗</a>{% endif %}</td>
+        <td class="nowrap">{% if r.link %}<a href="{{ r.link }}" target="_blank" rel="noopener">buka ↗</a>{% endif %}</td>
       </tr>
     {% endfor %}
     </tbody>

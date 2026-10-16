@@ -49,7 +49,8 @@ def listing(c, limit=100):
         """SELECT u.id, u.code, u.uploaded_by, u.doc_date, u.created_at, u.note,
                   count(s.id) AS files, coalesce(sum(s.page_total), 0) AS pages,
                   coalesce(sum(s.page_done), 0) AS read,
-                  count(s.id) FILTER (WHERE s.status IN ('received', 'splitting', 'queued', 'reading')) AS busy
+                  count(s.id) FILTER (WHERE s.status IN ('received', 'splitting', 'queued', 'reading')) AS busy,
+                  count(s.id) FILTER (WHERE s.status = 'stopped') AS stopped
              FROM staging.upload u LEFT JOIN staging.scan_batch s ON s.upload_id = u.id
             GROUP BY u.id ORDER BY u.created_at DESC, u.id DESC LIMIT %s""", (limit,))]
 

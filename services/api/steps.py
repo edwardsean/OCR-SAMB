@@ -76,10 +76,13 @@ def build(scan, page, held, orders):
     failed = page.get("failed", 0) + page.get("call_failed", 0) + scan.get("failed", 0)   # stuck (api/stuck.py)
     busy = page.get("busy", 0) + scan.get("splitting", 0)
     done = page.get("done", 0)
+    # a stopped file's pages not read yet (common/stopping.py): a person goes on with it ("Lanjutkan membaca")
+    stopped = max(0, scan.get("stopped_pages", 0) - page.get("stopped_done", 0))
     baca = {"key": "baca", "pages": total, "done": done, "read": done, "failed": failed, "busy": busy,
             "again": page.get("again", 0), "waiting_ai": page.get("waiting_ai", 0),
-            "unscheduled": page.get("unscheduled", 0), "splitting": scan.get("splitting", 0)}
-    baca["state"] = ("need" if failed else "sys" if busy or baca["waiting_ai"] or baca["unscheduled"]
+            "unscheduled": page.get("unscheduled", 0), "splitting": scan.get("splitting", 0),
+            "stopped": stopped, "stopped_files": scan.get("stopped_files", 0)}
+    baca["state"] = ("need" if failed or stopped else "sys" if busy or baca["waiting_ai"] or baca["unscheduled"]
                      else "done" if total else "none")
 
     unsure = page.get("unsure", 0)
@@ -116,7 +119,7 @@ def earlier_open(baca, jenis, coc):
     """Steps 1–3 a missing document may still be waiting in: a page that failed or is being read, a page whose type is
     unsure, a document whose number a person has to confirm. Pages never scheduled don't count: nothing would ever
     finish them."""
-    return [k for k, open_ in (("baca", baca["failed"] or baca["busy"]), ("jenis", jenis["unsure"]),
+    return [k for k, open_ in (("baca", baca["failed"] or baca["busy"] or baca.get("stopped")), ("jenis", jenis["unsure"]),
                                ("cocokkan", coc["block"])) if open_]
 
 
@@ -131,21 +134,26 @@ def of_uploads(c, ids=None):
         """SELECT upload_id, count(*) AS files, coalesce(sum(page_total), 0) AS pages,
                   count(*) FILTER (WHERE status IN ('received', 'splitting')) AS splitting,
                   count(*) FILTER (WHERE status = 'failed') AS failed,
-                  coalesce(sum(page_total) FILTER (WHERE status = 'failed'), 0) AS failed_pages
+                  coalesce(sum(page_total) FILTER (WHERE status = 'failed'), 0) AS failed_pages,
+                  count(*) FILTER (WHERE status = 'stopped') AS stopped_files,
+                  coalesce(sum(page_total) FILTER (WHERE status = 'stopped'), 0) AS stopped_pages
              FROM staging.scan_batch WHERE upload_id = ANY(%s) GROUP BY 1""", (ids,))}
     page = {r["upload_id"]: dict(r) for r in c.execute(
         f"""SELECT s.upload_id,
                   count(*) FILTER (WHERE p.status = 'read' AND p.outcome IS DISTINCT FROM 'waiting_ai'
                                      AND NOT {stuck.CALL_FAILED}) AS done,
-                  count(*) FILTER (WHERE p.status IN ('dead_letter', 'failed')) AS failed,
-                  count(*) FILTER (WHERE {stuck.CALL_FAILED}) AS call_failed,
-                  count(*) FILTER (WHERE p.status = 'queued'
-                                     OR (p.status = 'rendered' AND s.status IN ('received', 'splitting'))) AS busy,
-                  count(*) FILTER (WHERE p.status = 'queued' AND p.fields_all IS NOT NULL) AS again,
+                  count(*) FILTER (WHERE p.status IN ('dead_letter', 'failed') AND s.status <> 'stopped') AS failed,
+                  count(*) FILTER (WHERE {stuck.CALL_FAILED} AND s.status <> 'stopped') AS call_failed,
+                  count(*) FILTER (WHERE s.status <> 'stopped' AND (p.status = 'queued'
+                                     OR (p.status = 'rendered' AND s.status IN ('received', 'splitting')))) AS busy,
+                  count(*) FILTER (WHERE p.status = 'queued' AND p.fields_all IS NOT NULL
+                                     AND s.status <> 'stopped') AS again,
                   count(*) FILTER (WHERE p.status = 'rendered'          -- a split's pages are sent within ms
-                                     AND s.status NOT IN ('received', 'splitting')) AS unscheduled,
+                                     AND s.status NOT IN ('received', 'splitting', 'stopped')) AS unscheduled,
                   count(*) FILTER (WHERE p.status = 'read' AND p.outcome = 'waiting_ai'
-                                     AND NOT {stuck.CALL_FAILED}) AS waiting_ai,
+                                     AND NOT {stuck.CALL_FAILED} AND s.status <> 'stopped') AS waiting_ai,
+                  count(*) FILTER (WHERE s.status = 'stopped' AND p.status = 'read'
+                                     AND p.outcome IS DISTINCT FROM 'waiting_ai' AND NOT {stuck.CALL_FAILED}) AS stopped_done,
                   count(*) FILTER (WHERE p.type_status = 'unsure' AND l.page_no IS NULL) AS unsure,
                   count(*) FILTER (WHERE p.type_status IN ('decided', 'labelled')
                                      OR (p.type_status = 'unsure' AND l.page_no IS NOT NULL)) AS classified,

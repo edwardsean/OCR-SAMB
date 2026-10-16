@@ -14,7 +14,19 @@
   </details>
 
   <form class="jj-filter" method="get">
-    <input name="q" value="{{ f.q }}" placeholder="Batch, file, scan id, SOR, or a person's name" size="34">
+    <div class="jj-pick" id="jj-pick">
+      <div class="jj-kinds" role="tablist" aria-label="Ikuti">
+        {% for k, name in [('batch', 'Batch'), ('file', 'File'), ('sor', 'SOR'), ('scan', 'Scan id'), ('who', 'Orang'), ('any', 'Teks bebas')] %}
+        <button type="button" role="tab" data-kind="{{ k }}">{{ name }}{% if picks.get(k) %} <small>{{ picks[k]|length }}</small>{% endif %}</button>
+        {% endfor %}
+      </div>
+      <div class="jj-box">
+        <input name="q" value="{{ f.q }}" autocomplete="off" aria-label="Cari" placeholder="Batch, file, scan id, SOR, atau nama">
+        {% if f.q %}<a class="jj-clear" href="?step={{ f.step }}&status={{ f.status }}&hours={{ f.hours }}" title="Hapus">×</a>{% endif %}
+        <ul class="jj-list" role="listbox" hidden></ul>
+      </div>
+    </div>
+    <div class="jj-when">
     <select name="step" aria-label="Step">
       <option value="">Every step</option>
       {% for key, name, about in steps %}<option value="{{ key }}"{{ ' selected' if f.step == key }}>{{ name }}</option>{% endfor %}
@@ -24,12 +36,14 @@
       <option value="">Any result</option>
       {% for s in ['fail', 'wait', 'running', 'ok', 'skip'] %}<option value="{{ s }}"{{ ' selected' if f.status == s }}>{{ words[s] }}</option>{% endfor %}
     </select>
-    <label>Around <input type="datetime-local" name="around" value="{{ f.around }}" step="60"></label>
+    <span class="sep" aria-hidden="true"></span>
     <select name="hours" aria-label="Or the last">
       {% for h, label in [(1, 'last hour'), (6, 'last 6 hours'), (24, 'last day'), (72, 'last 3 days'), (168, 'last week')] %}
       <option value="{{ h }}"{{ ' selected' if f.hours == h }}>{{ label }}</option>{% endfor %}
     </select>
-    <button type="submit">Show</button> <a href="/teknis/jejak">Reset</a>
+    <label>or around <input type="datetime-local" name="around" value="{{ f.around }}" step="60"></label>
+    <button type="submit" class="primary">Show</button> <a href="/teknis/jejak">Reset</a>
+    </div>
   </form>
   <p class="small muted">{{ rows|length }} lines · {{ f.since|jam(true) }} – {{ f.until|jam(true) }} WIB
     {%- if f.step != 'jobs' %} · scheduled jobs that found nothing to do are hidden (choose Scheduled jobs){% endif %}
@@ -49,4 +63,51 @@
     <li class="tl tl-gap">Nothing in this window. Widen it, or clear the search.</li>
   {% endfor %}
   </ol>
+<script id="jj-data" type="application/json">{{ picks|tojson }}</script>
+<script>
+(() => {   // Jejak's picker: a kind, then its existing values, filtered as you type; picking one applies it
+  const data = JSON.parse(document.getElementById("jj-data").textContent || "{}");
+  const root = document.getElementById("jj-pick"), form = root.closest("form");
+  const input = root.querySelector("input[name=q]"), list = root.querySelector(".jj-list");
+  const tabs = [...root.querySelectorAll("[data-kind]")];
+  const HINT = {batch: "Pilih batch…", file: "Pilih nama file…", sor: "Pilih SOR…", scan: "Pilih scan id…", who: "Pilih orang…",
+                any: "Ketik apa saja: batch, file, SOR, nama…"};
+  let kind = "batch", at = -1, shown = [];
+  try { kind = localStorage.getItem("jj-kind") || "batch"; } catch (e) {}
+  const esc = (t) => String(t).replace(/[&<>"]/g, (c) => ({"&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;"}[c]));
+  function setKind(k) {
+    kind = k; try { localStorage.setItem("jj-kind", k); } catch (e) {}
+    tabs.forEach((t) => t.setAttribute("aria-selected", String(t.dataset.kind === k)));
+    input.placeholder = HINT[k]; render();
+  }
+  function render() {
+    const items = data[kind] || [], q = input.value.trim().toLowerCase();
+    shown = (q ? items.filter((x) => (x.v + " " + x.d).toLowerCase().includes(q)) : items).slice(0, 50);
+    at = -1;
+    list.innerHTML = shown.length ? shown.map((x, i) => `<li role="option" data-i="${i}"><b>${esc(x.v)}</b><span>${esc(x.d)}</span></li>`).join("")
+      : `<li class="none">${kind === "any" ? "Tekan Enter untuk mencari teks ini" : "Tidak ada yang cocok"}</li>`;
+    list.hidden = document.activeElement !== input || (kind === "any" && !q);
+  }
+  function pick(i) { if (shown[i]) { input.value = shown[i].v; list.hidden = true; form.submit(); } }
+  // a tab keeps the focus in the box (no blur, so the list doesn't close under the click that opened it)
+  tabs.forEach((t) => {
+    t.addEventListener("mousedown", (e) => e.preventDefault());
+    t.addEventListener("click", () => { setKind(t.dataset.kind); input.focus(); render(); });
+  });
+  input.addEventListener("focus", render);
+  input.addEventListener("input", render);
+  input.addEventListener("blur", () => setTimeout(() => { if (document.activeElement !== input) list.hidden = true; }, 150));
+  input.addEventListener("keydown", (e) => {
+    const lis = list.querySelectorAll("li[data-i]");
+    if (e.key === "ArrowDown" || e.key === "ArrowUp") {
+      e.preventDefault(); if (!lis.length) return;
+      at = (at + (e.key === "ArrowDown" ? 1 : -1) + lis.length) % lis.length;
+      lis.forEach((li, i) => li.classList.toggle("on", i === at)); lis[at].scrollIntoView({block: "nearest"});
+    } else if (e.key === "Enter" && at >= 0) { e.preventDefault(); pick(at); }
+    else if (e.key === "Escape") { list.hidden = true; }
+  });
+  list.addEventListener("mousedown", (e) => { const li = e.target.closest("li[data-i]"); if (li) { e.preventDefault(); pick(+li.dataset.i); } });
+  setKind(data[kind] || kind === "any" ? kind : "batch");
+})();
+</script>
 {% endblock %}

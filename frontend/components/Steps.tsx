@@ -25,7 +25,11 @@ export function words(s: Step, blockers: StepKey[] = []): [string, string] {
   const wait = s.after ? `Menunggu langkah ${n(s.after)}` : null;
   switch (s.key) {
     case "baca":
-      if (s.state === "need") return [`${s.failed} gagal dibaca`, `${s.done} dari ${s.pages} halaman selesai`];
+      if (s.state === "need") {
+        const stop = s.stopped ? `${s.stopped} dihentikan` : "";
+        return [s.failed ? `${s.failed} gagal dibaca${stop ? ` · ${stop}` : ""}` : stop || "Dihentikan",
+          `${s.done} dari ${s.pages} halaman selesai`];
+      }
       if (s.state === "sys") {
         if (!s.pages) return ["Menyiapkan file", "dipecah menjadi halaman"];
         if (s.busy) return ["Sedang dibaca", `${s.done} dari ${s.pages} halaman selesai`];
@@ -61,7 +65,7 @@ export function words(s: Step, blockers: StepKey[] = []): [string, string] {
 /** The count a step's mark and button show: what needs you there. */
 export function count(s: Step): number {
   switch (s.key) {
-    case "baca": return s.failed;
+    case "baca": return s.failed + (s.stopped || 0);
     case "jenis": return s.unsure;
     case "cocokkan": return s.block;
     case "periksa": return s.need;

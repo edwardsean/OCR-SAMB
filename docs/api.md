@@ -92,6 +92,11 @@ approved it). Only finished orders are published.
 | POST | `/api/v1/scans/{batch_id}/pages/{page_no}/retry` | try a stuck page again (calls the AI) |
 | POST | `/api/v1/scans/{batch_id}/retry` | split a file that couldn't be split again |
 | POST | `/api/v1/uploads/{upload_id}/retries` | try everything stuck in a batch again |
+| POST | `/api/v1/uploads/{upload_id}/stop` | stop a batch's AI work (no new AI call for it) |
+| POST | `/api/v1/uploads/{upload_id}/resume` | go on with a stopped batch |
+| POST | `/api/v1/scans/{batch_id}/stop` · `/resume` | the same for one file |
+| POST | `/api/v1/uploads/{upload_id}/restart` | read chosen pages (or all) again from scratch (calls the AI) |
+| POST | `/api/v1/scans/{batch_id}/restart` | the same for one file |
 | GET | `/api/v1/scans/{batch_id}/pages/{page_no}/region` | what a region marked on the paper holds |
 | GET | `/api/v1/keycheck` | does Satellite know this SOR / PO number? |
 | GET | `/api/v1/lessons` | what a fix is doing now (kept as a lesson, the teacher writing a tip, …) |
@@ -108,6 +113,7 @@ approved it). Only finished orders are published.
 | POST | `/api/v1/orders/{sor}/approval` | approve an order |
 | POST | `/api/v1/publications` | publish the scan's finished orders to Satellite |
 | GET | `/api/v1/bundles` | a scan's orders with their documents; what is held and why |
+| GET | `/api/v1/bundles/closest?batch=&page=` | the orders in Satellite closest to a held document's number |
 | POST | `/api/v1/bundles/confirmations` | confirm a held document's number |
 | GET | `/api/v1/published` | orders published to Satellite |
 | GET | `/api/v1/published/{sor}` | one published order, as Satellite stores it |
@@ -285,6 +291,45 @@ themselves), or (a dead page) another page of the same file is still queued.
 `{"by": "…"}`. Every file of the batch that couldn't be split and every stuck page, except pages of orders already
 sent to Satellite. `result`: `{"pages": n, "files": n, "left": [{"batch_id", "page_no", "why"}]}`. `409` while a model
 isn't set or a limit holds every page.
+
+### `POST /api/v1/uploads/{upload_id}/stop`
+`{"by": "…"}`. No new AI call is made for the batch's files that still run (services/common/stopping.py):
+- pages waiting for a worker are marked stopped at once (`status` `failed`, `error` "Stopped on purpose by …");
+- a page being read stops at its **next** AI call. A call already under way finishes: it is paid for, and what it saved
+  (the AI OCR copy, learned answers) is kept, so going on doesn't pay for it twice;
+- nothing sends the pages again by itself: not the sweep, an order's look-again, a label, or the learning step;
+- a file not split yet is never split; a file being split finishes rendering (no AI) and is never queued.
+
+Pages already read stay read; grouping, checks and sending complete orders go on; a sent order is never touched.
+`result`: `{"stopped": [{"batch_id", "file_name", "was", "stopped": [pages marked], "finishing": [pages a worker
+holds], "waiting_ai": n}], "left": [{"batch_id", "file_name", "why"}]}`. `409` when no file of the batch runs (every
+page read and nothing waiting for the AI), every file is already stopped or couldn't be split, or the batch has no
+file the AI reads (e-Fakturs only).
+
+### `POST /api/v1/uploads/{upload_id}/resume`
+`{"by": "…"}`. Every stopped file goes on: its stopped pages back on `q.pages` under a new `run` (a stray ticket of the
+stop is then stale), its pages waiting for a look-again sent, a file stopped before it was split split again.
+`result`: `{"resumed": [{"batch_id", "file_name", "split", "pages", "sent"}], "left": [{"batch_id", "file_name",
+"why"}]}`. `409` when no file is stopped, or while a page still finishes its last AI call (try again in a moment).
+`POST /api/v1/scans/{batch_id}/stop` and `/resume` do the same for one file. A stopped file's page refuses
+`…/pages/{n}/retry` (409: go on with the file instead).
+
+`GET /api/v1/uploads/{id}` says whether the batch can be stopped now: `stop`: `{"can", "why_not", "finishing",
+"stopped": [{"batch_id", "file_name", "by", "at", "finishing"}]}`; its pages' `activity` states add `stopping` (a
+worker still has it: it ends at its next AI call) and `stopped`; step 1 (`baca`) adds `stopped` (pages of stopped files
+not read yet) and `stopped_files`, and is `need` while a file is stopped.
+
+### `POST /api/v1/uploads/{upload_id}/restart`
+`{"by": "…", "pages": [{"batch_id", "page_no"}]}` (omit `pages`: every page). Each page is read again **from
+scratch**: its AI OCR copy is dropped (a retry after a failed call reuses the new copy, never the old one) and every AI
+step after it is redone (mapping, page type, look-again, store question): about 5 AI calls a page. Its reading stays
+until the new one is saved; its prepared image and people's labels and corrections stay and still win; its order is
+checked again. No new run: the file's other pages being read go on.
+`result`: `{"restarted": n, "pages": [{"batch_id", "page_no"}], "calls": n × 5, "left": [{"batch_id", "page_no",
+"file_name", "why"}]}`; left: its order is already sent to Satellite, it is queued or being read, its file is stopped
+(go on with it first), or it isn't read yet. `409` while a model isn't set or a limit holds every page, or when no page
+may be read again. `POST /api/v1/scans/{batch_id}/restart` does the same for one file (`pages`: page numbers).
+`activity.pages[].restart` says why a page can't be restarted now (`null`: it can).
 
 ### `GET /api/v1/scans/{batch_id}/pages/{page_no}/region?box=ymin,xmin,ymax,xmax`
 `{"words": "…Tesseract's words there…", "blocks": [{"id", "kind", "text"}], "suggest": "…", "region": [y0, x0, y1, x1]}`.
@@ -495,6 +540,15 @@ it), `wait` (the AI or SAP will settle it), `later` (never blocks sending, e.g. 
                     "confirm": {"field": "purchase_order_no", "read": "4505832724", "value": "4505832724", "done": null}}],
           "unplaced": [{"page": 15, "type": null, "thumb": "/img/…", "why": "belum dibaca AI"}]}}
 ```
+
+### `GET /api/v1/bundles/closest?batch=<scan>&page=<n>`
+
+A held document's number matched no order: up to 5 orders whose Nomor CPO (an FP: its SOR) is closest, best first:
+the same number, then the number inside Satellite's (Lotte's Ord slip `260909-04006-00226` is the tail of
+`012474 2609090400600226`; `mark` is where), then up to 3 characters different. Each says its customer, date, total,
+status, the other orders sharing its CPO (`shared`), and whether its order here still lacks this kind of document
+(`lacks`). Choosing one posts its `pick` (`{field, value}`: an FP's `sor`, a receipt's `no_ref` = the SOR, a PO's
+`purchase_order_no` = that order's CPO; `null` when the CPO is shared and the document is a PO) to the endpoint below.
 
 ### `POST /api/v1/bundles/confirmations`
 `{"batch", "page", "field", "value", "by"}`: `field` is the held document's `confirm.field`, `value` the number as

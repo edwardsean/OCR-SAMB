@@ -105,6 +105,34 @@ h2 { font-size: 18px; font-weight: 700; margin: 0 0 12px; letter-spacing: -.01em
 .linkbtn { background: none; border: 0; padding: 0; color: var(--biru-pulpen); font: inherit; font-size: 13.5px; font-weight: 600;
            cursor: pointer; text-decoration: underline; text-underline-offset: 2px; }
 
+/* form controls (2026-10-16): every plain button, box and list gets the .btn look, one height, so a row of them lines
+   up and nothing is drawn in the browser's grey. :where() keeps this at zero weight: any screen's own rule still wins. */
+:where(button, input:not([type=checkbox], [type=radio], [type=hidden], [type=file], [type=range], [type=color]), select, textarea) {
+  font: inherit; font-size: 13.5px; line-height: 1.4; color: var(--tinta); background: var(--kertas);
+  border: 1px solid var(--garis-tebal); border-radius: var(--radius-sm); padding: 7px 10px; margin: 0;
+  transition: border-color .15s, background .15s, box-shadow .15s; }
+:where(button, input[type=submit], input[type=button]) { padding: 7px 14px; font-weight: 600; cursor: pointer; white-space: nowrap; }
+:where(button, input[type=submit], input[type=button]):hover:not([disabled]) { border-color: var(--tinta); }
+:where(button, input[type=submit], input[type=button]):active:not([disabled]) { background: var(--meja-muda); }
+:where(button, input, select, textarea)[disabled] { opacity: .45; cursor: not-allowed; }
+:where(input, select, textarea):hover:not([disabled]) { border-color: var(--pensil); }
+:where(input, select, textarea):focus { outline: none; border-color: var(--biru-pulpen); box-shadow: 0 0 0 3px rgba(31, 63, 143, .14); }
+:where(input, textarea)::placeholder { color: #8E959E; }
+/* a list's own arrow, not the browser's grey one: weighted as select:not(), so a screen's `background:` can't drop it */
+select:not([multiple]) { appearance: none; -webkit-appearance: none; padding-right: 30px; cursor: pointer;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6' viewBox='0 0 10 6'%3E%3Cpath d='M1 1l4 4 4-4' fill='none' stroke='%235C636D' stroke-width='1.6'/%3E%3C/svg%3E");
+  background-repeat: no-repeat; background-position: right 11px center; }
+/* Chrome pads a date box's fields and calendar icon, which made it 2px taller than the boxes beside it */
+:where(input[type=date], input[type=datetime-local])::-webkit-datetime-edit,
+:where(input[type=date], input[type=datetime-local])::-webkit-datetime-edit-fields-wrapper { padding: 0; }
+:where(input[type=date], input[type=datetime-local])::-webkit-calendar-picker-indicator { padding: 0; margin: 0 0 0 6px; cursor: pointer; }
+:where(input[type=checkbox], input[type=radio]) { accent-color: var(--biru-pulpen); }
+/* a submit that is the screen's main action */
+:where(button.primary, button[type=submit].primary) { background: var(--biru-pulpen); border-color: var(--biru-pulpen); color: #fff; }
+:where(button.primary):hover:not([disabled]) { background: var(--biru-tekan); border-color: var(--biru-tekan); }
+/* a register followed by the next heading needs air */
+:is(table.reg, .grid) + h2 { margin-top: 34px; }
+
 /* the technical fold: closed, at the end of a screen */
 details.tech { margin-top: 40px; border-top: 1px solid var(--garis); padding-top: 12px; }
 details.tech > summary { cursor: pointer; color: var(--pensil); font-size: 13.5px; font-weight: 600; padding: 4px 0 10px; }
@@ -192,7 +220,7 @@ pre.mono { background: var(--bg); border: 1px solid var(--line); border-radius: 
 .flow.five { grid-template-columns: repeat(5, 1fr); }
 @media (max-width: 900px) { .flow.five { grid-template-columns: 1fr 1fr; } }
 .actions { display: flex; justify-content: space-between; align-items: center; margin: -4px 0 16px; }
-button.ghost { background: var(--panel); color: var(--text); border: 1px solid var(--line); border-radius: 6px; padding: 6px 12px; font: inherit; cursor: pointer; }
+button.ghost { background: var(--kertas); }
 .grid.small td, .grid.small th { padding: 5px 8px; font-size: 12.5px; }
 .grid tr.ok td:first-child { color: var(--ok); } .grid tr.bad td:first-child { color: var(--bad); } .grid tr.warn td:first-child { color: var(--warn); }
 .badge { display: inline-block; font-size: 11px; font-weight: 600; padding: 1px 7px; border-radius: 10px; margin-left: 6px; border: 1px solid; vertical-align: middle; }
@@ -275,15 +303,18 @@ details { margin-top: 8px; } summary { cursor: pointer; color: var(--muted); }
 .tp:has(input:checked) { border-color: var(--accent); background: var(--bg); }
 .tp em { font-style: normal; color: var(--muted); font-size: 12px; }
 .tp .num { color: var(--muted); font-family: var(--mono); font-size: 12px; } .tp .tchip { justify-self: start; }
-.txt { width: 100%; font: inherit; padding: 7px 9px; border: 1px solid var(--line); border-radius: 6px; background: var(--panel); color: var(--text); margin-bottom: 12px; }
-.ghostbtn { border: 1px solid var(--line); border-radius: 6px; padding: 8px 14px; text-decoration: none; color: var(--text); }
-.actions button { background: var(--accent); color: #fff; border: 0; border-radius: 6px; padding: 8px 16px; font: inherit; cursor: pointer; }
+.txt { width: 100%; margin-bottom: 12px; }
+.ghostbtn { display: inline-block; border: 1px solid var(--garis-tebal); border-radius: var(--radius-sm); padding: 7px 14px;
+  font-size: 13.5px; font-weight: 600; text-decoration: none; color: var(--tinta); }
+.ghostbtn:hover { border-color: var(--tinta); color: var(--tinta); }
+.actions button { background: var(--biru-pulpen); border-color: var(--biru-pulpen); color: #fff; }
+.actions button:hover { background: var(--biru-tekan); border-color: var(--biru-tekan); }
 img.mini { width: 44px; border: 1px solid var(--line); background: #fff; }
 .pill.exam { color: var(--warn); border-color: var(--warn); }
 @media (max-width: 900px) { .labelv { grid-template-columns: 1fr; } }
 
 /* phase 4 */
-.rerunf { display: flex; gap: 6px; } .rerunf input { font: inherit; padding: 5px 8px; border: 1px solid var(--line); border-radius: 6px; background: var(--panel); color: var(--text); }
+.rerunf { display: flex; gap: 6px; }
 .keys2 { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 10px; }
 .keychip { font-family: var(--mono); font-size: 12px; border: 1px solid var(--line); border-radius: 6px; padding: 2px 8px; }
 .keychip.ok { border-color: var(--ok); } .keychip.bad { border-color: var(--bad); color: var(--bad); }
@@ -349,7 +380,6 @@ td s { color: var(--bad); }
 /* Model & kunci API (2026-10-06) */
 .set td { vertical-align: middle; }
 .setf { display: inline-flex; gap: 6px; align-items: center; margin: 0 8px 4px 0; }
-.setf input { padding: 5px 8px; border: 1px solid var(--garis-tebal); border-radius: 4px; font-size: 13px; background: #fff; }
 .nowrap { white-space: nowrap; }
 span.bad { color: var(--cap-merah); }
 .set td { padding-top: 14px; padding-bottom: 14px; }
@@ -361,24 +391,26 @@ form.inl { display: inline; margin: 0; }
 .mrow h2 { margin: 0 0 4px; }
 .mrow h2 .small { font-weight: 400; margin-left: 6px; }
 .mrow .jobs { margin: 0 0 10px; padding-left: 18px; }
-.mrow .set th { width: 110px; text-align: left; font-weight: 600; vertical-align: top; padding-top: 14px; }
+.mrow .set th { width: 110px; text-align: left; font-size: 13px; font-weight: 600; color: var(--pensil); vertical-align: top;
+  padding: 14px 14px 14px 0; border-bottom: 1px solid var(--garis); white-space: nowrap; }
+.mrow .set tr:first-child :is(th, td) { border-top: 1px solid var(--garis); }
 .mrow .acts { margin: 6px 0; }
 .mrow .acts form + form { margin-left: 10px; }
 .mrow details { margin: 4px 0 0; }
 .mrow summary { cursor: pointer; font-size: 13.5px; }
 .rowf { display: grid; gap: 8px; max-width: 720px; margin: 10px 0 4px; }
 .rowf label { display: grid; gap: 3px; font-size: 13px; }
-.rowf input, .rowf select { padding: 6px 8px; border: 1px solid var(--garis-tebal); border-radius: 4px; font-size: 13px;
-  background: #fff; width: 100%; box-sizing: border-box; }
+.rowf input, .rowf select { width: 100%; }
 .rowf .pick { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
 .rowf .pick select { width: auto; min-width: 280px; }
 
 /* Jejak and Metrik (api/observe.py): the trace for developers. A row's result is ink, never a fill (DESIGN.md);
    the timeline's stages reuse the type colours only as a key, never as a state. */
 .nowrap { white-space: nowrap; }
-.jj-filter { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin: 4px 0 10px; }
-.jj-filter input, .jj-filter select { font: inherit; font-size: 13.5px; padding: 5px 8px; border: 1px solid var(--garis-tebal);
-  border-radius: var(--radius-sm); background: var(--kertas); }
+.jj-filter { display: flex; flex-direction: column; gap: 12px; margin: 8px 0 14px; }
+.jj-when { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+.jj-when .sep { width: 1px; align-self: stretch; background: var(--garis); margin: 2px 6px; }
+.jj-when a { font-size: 13.5px; margin-left: 4px; }
 .jj-filter label { font-size: 13px; color: var(--pensil); display: flex; gap: 6px; align-items: center; }
 table.jj td { vertical-align: top; }
 .jj-st { font-size: 12.5px; font-weight: 600; color: var(--pensil); }
@@ -456,3 +488,25 @@ tr.jj-attempt td { border-top: 1.5px solid var(--garis-tebal); }
 .pay .io-text { max-height: 420px; margin-bottom: 6px; }
 .pay-role { margin: 8px 0 2px; font-size: 11.5px; color: var(--pensil); text-transform: uppercase; letter-spacing: .04em; }
 .pay-img { font-size: 12px; color: var(--pensil); font-style: italic; margin: 4px 0; }
+
+/* Jejak's picker (2026-10-16): a kind, then its existing values (app.py _jejak_picks) */
+.jj-pick { display: flex; flex-direction: column; gap: 8px; max-width: 760px; }
+.jj-kinds { display: flex; gap: 0; border-bottom: 1px solid var(--garis); }
+.jj-kinds button { font: inherit; font-size: 13px; font-weight: 600; color: var(--pensil); background: none; border: 0;
+  border-bottom: 2px solid transparent; padding: 6px 12px; margin-bottom: -1px; cursor: pointer; }
+.jj-kinds button small { font-weight: 500; color: var(--garis-tebal); margin-left: 2px; }
+.jj-kinds button:hover { color: var(--tinta); }
+.jj-kinds button[aria-selected="true"] { color: var(--tinta); border-bottom-color: var(--biru-pulpen); }
+.jj-box { position: relative; }
+.jj-filter .jj-box input { width: 100%; font-size: 15px; padding: 10px 36px 10px 12px; }
+.jj-clear { position: absolute; right: 10px; top: 50%; transform: translateY(-50%); color: var(--pensil); text-decoration: none; font-size: 18px; }
+.jj-list { position: absolute; z-index: 20; left: 0; right: 0; top: calc(100% + 4px); margin: 0; padding: 4px 0; list-style: none;
+  background: var(--kertas); border: 1px solid var(--garis-tebal); border-radius: var(--radius-sm); box-shadow: var(--kertas-bayang);
+  max-height: 340px; overflow-y: auto; }
+.jj-list li { display: flex; justify-content: space-between; gap: 16px; padding: 7px 12px; cursor: pointer; font-size: 13.5px; }
+.jj-list li b { font-family: var(--mono, ui-monospace, monospace); font-weight: 600; color: var(--tinta); white-space: nowrap; }
+.jj-list li span { color: var(--pensil); text-align: right; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.jj-list li:hover, .jj-list li.on { background: var(--meja-muda); }
+.jj-list li.none { color: var(--pensil); cursor: default; }
+/* a one-box form (Model & kunci API's numbers): the box and its button side by side */
+form.pick { display: flex; gap: 8px; align-items: center; }

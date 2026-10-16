@@ -356,6 +356,63 @@ def retry_all(upload_id: int, body: Retry):
     return _run(actions.retry_upload, upload_id, body.by)
 
 
+class Who(BaseModel):
+    by: str = _by()
+
+
+@router.post("/uploads/{upload_id}/stop", tags=[UPLOADS], summary="Stop a batch's AI work")
+def stop_all(upload_id: int, body: Who):
+    """No new AI call is made for the batch's files that still run. Pages waiting for a worker are marked stopped at
+    once; a page being read stops at its next AI call (a call under way finishes: it is paid for, and what it saved
+    is kept); nothing sends the pages again by itself (the sweep, an order's look-again, a label, the learning step).
+    Pages already read stay read; grouping, checks and sending complete orders go on; a sent order is never touched.
+    Returns the files stopped (pages marked, pages finishing) and those left with why. 409 when no file of the batch
+    runs, or it has no file the AI reads."""
+    return _run(actions.stop_upload, upload_id, body.by)
+
+
+@router.post("/uploads/{upload_id}/resume", tags=[UPLOADS], summary="Go on with a stopped batch")
+def resume_all(upload_id: int, body: Who):
+    """Every stopped file of the batch goes on: its stopped pages back on the queue (under a new run), its pages
+    waiting for a look-again sent, a file stopped before it was split split. 409 when no file is stopped, or while a
+    page still finishes its last AI call (try again in a moment)."""
+    return _run(actions.resume_upload, upload_id, body.by)
+
+
+@router.post("/scans/{batch_id}/stop", tags=[SCANS], summary="Stop one file's AI work")
+def stop_file(batch_id: str, body: Who):
+    """See POST /uploads/{id}/stop. 409 when nothing of the file runs (every page read, nothing waiting for the AI),
+    when it is already stopped, or when it couldn't be split."""
+    return _run(actions.stop_scan, batch_id, body.by)
+
+
+@router.post("/scans/{batch_id}/resume", tags=[SCANS], summary="Go on with one stopped file")
+def resume_file(batch_id: str, body: Who):
+    """See POST /uploads/{id}/resume."""
+    return _run(actions.resume_scan, batch_id, body.by)
+
+
+class Restart(BaseModel):
+    by: str = _by()
+    pages: list | None = Field(None, description='[{"batch_id", "page_no"}] (a batch) or [page_no] (a file); '
+                                                  'none: every page')
+
+
+@router.post("/uploads/{upload_id}/restart", tags=[UPLOADS], summary="Read pages of a batch again from scratch")
+def restart_all(upload_id: int, body: Restart):
+    """Each page gets a new AI OCR copy and every AI step after it (mapping, page type, look-again, store question):
+    about 5 AI calls a page (`calls`). People's labels and corrections stay and still win; the page's order is checked
+    again. Never a page of an order already sent to Satellite, one queued or being read, or one of a stopped file
+    (listed in `left` with why). 409 while a model isn't set or a limit holds every page, or when no page may be."""
+    return _run(actions.restart_upload, upload_id, body.by, body.pages)
+
+
+@router.post("/scans/{batch_id}/restart", tags=[SCANS], summary="Read pages of a file again from scratch")
+def restart_file(batch_id: str, body: Restart):
+    """See POST /uploads/{id}/restart; `pages` are page numbers."""
+    return _run(actions.restart_scan, batch_id, body.by, body.pages)
+
+
 @router.post("/scans/{batch_id}/pages/{page_no}/fixes", tags=[SCANS], summary="Correct a value on a page")
 def page_fix(batch_id: str, page_no: int, body: Fix):
     """A correction made on the page viewer: the value as printed, and where it was marked (0-1000)."""
@@ -560,6 +617,13 @@ def bundles(batch: str | None = None, upload: int | None = None):
     A = _a()                                            # no scan chosen: every order, each whole
     return _ok({"batch": batch or None, "upload": upload, "scans": A._recent_batches(), "uploads": A.uploads_view(100),
                 "view": A.bundles_screen(batch or None, upload)})
+
+
+@router.get("/bundles/closest", tags=[BERKAS], summary="The orders closest to a held document's number")
+def bundles_closest(batch: str, page: int):
+    """A held document's number matched no order: the orders in Satellite whose Nomor CPO (an FP: SOR) is closest, for
+    a person to choose from. Choosing one posts its `pick` ({field, value}) to POST /bundles/confirmations."""
+    return _ok(_a().held_closest(batch, page))
 
 
 @router.post("/bundles/confirmations", tags=[BERKAS], summary="Confirm a held document's key")

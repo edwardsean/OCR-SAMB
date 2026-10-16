@@ -142,9 +142,10 @@ def split(batch_id):
                     conn.execute("UPDATE staging.scan_batch SET status='failed', error=%s WHERE id=%s",
                                  (f"{type(e).__name__}: {e}"[:500], batch_id))
                 raise
-        with db.connect() as conn:
-            conn.execute("UPDATE staging.scan_batch SET status='split' WHERE id=%s", (batch_id,))
-    return {"batch_id": batch_id, "page_total": page_total, "status": "split"}
+        with db.connect() as conn:                      # a file stopped meanwhile stays stopped: never queued
+            done = conn.execute("UPDATE staging.scan_batch SET status='split' WHERE id=%s AND status='splitting' "
+                                "RETURNING id", (batch_id,)).fetchone()
+    return {"batch_id": batch_id, "page_total": page_total, "status": "split" if done else "stopped"}
 
 
 def waiting(minutes):

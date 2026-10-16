@@ -8,6 +8,8 @@ list can never disagree:
   reading    a page worker has it; `stage` = what it is doing (worker/vf.py's trace.stage names), `since` = start
   waiting    stopped until a limit ends or a model is set (vf.blocked); it goes on by itself
   waiting_ai read; the AI still has to look again at a few values (an order asked for it, or its own look-again)
+  stopping   its file was stopped while a worker had it: it ends at its next AI call (common/stopping.py)
+  stopped    its file was stopped before it was read (or before its look-again): it goes on with the file
   failed     stuck (api/stuck.py): a person may try it again
   idle       never sent to be read (a clone's page, whose stand-in image no worker reads)
   done       read
@@ -28,7 +30,8 @@ DEFAULT_PAGE_S = 90              # a page's usual time before anything was measu
 DEFAULT_WORKERS = 3
 
 PAGES = f"""
-SELECT p.batch_id, p.page_no, s.file_name, s.status::text AS scan_status, p.status::text AS status, p.extract_status,
+SELECT p.batch_id, p.page_no, s.file_name, s.status::text AS scan_status, s.stopped_by, p.status::text AS status,
+       p.extract_status,
        p.extract_error, p.error,
        p.outcome, p.type_status, p.doc_type::text AS doc_type, p.fields_all IS NOT NULL AS was_read, p.read_at,
        p.second_look->>'waiting' AS waits, p.thumb_upright_path, p.thumb_path,
@@ -60,6 +63,7 @@ SELECT p.batch_id, p.page_no,
                     AND t.kind = 'page.queued'), s.received_at) AS since
   FROM staging.page p JOIN staging.scan_batch s ON s.id = p.batch_id
  WHERE (p.status = 'queued' OR (p.status = 'rendered' AND s.status IN ('received', 'splitting')))
+   AND s.status <> 'stopped'
    AND NOT EXISTS (SELECT 1 FROM staging.trace t WHERE t.batch_id = p.batch_id AND t.page_no = p.page_no
                       AND t.kind = 'page' AND t.status = 'running')
  ORDER BY since, p.batch_id, p.page_no"""
@@ -73,6 +77,16 @@ SELECT ms, service, at > now() - interval '2 hours' AS recent FROM staging.trace
 def state(p, blocked=None):
     """Pure: one page's state, and the sentence for people. p: a row of PAGES (+ `ahead`); blocked: vf.blocked()."""
     again = bool(p.get("was_read"))
+    if p.get("scan_status") == "stopped":
+        if p.get("reading_since"):
+            return {"state": "stopping", "since": p["reading_since"],
+                    "text": "Menyelesaikan panggilan AI terakhir, lalu berhenti."}
+        unread = p["status"] != "read" or p.get("outcome") == "waiting_ai" or stuck.kind(
+            p["status"], p.get("extract_status"), p.get("waits")) == "call_failed"
+        if unread:
+            return {"state": "stopped", "again": again,
+                    "text": f"Dihentikan oleh {p.get('stopped_by') or 'seseorang'}. Lanjut saat file diteruskan."}
+        return {"state": "done", "ms": p.get("last_ms")}
     if p.get("stuck"):
         v = stuck.view(p)
         return {"state": "failed", "text": v["reason"], **{k: v[k] for k in ("kind", "cause", "can_retry", "published",
@@ -94,6 +108,15 @@ def state(p, blocked=None):
     if p["status"] == "read" and p.get("outcome") == "waiting_ai":
         return {"state": "waiting_ai", "text": "Menunggu AI melihat ulang beberapa nilai. Berjalan sendiri."}
     return {"state": "done", "ms": p.get("last_ms")}
+
+
+def _cant_restart(r, s):
+    """Why a page can't be read again from scratch now (api/actions.why_not_restart's words)."""
+    if r["published"]:
+        return "ordernya sudah dikirim ke Satellite"
+    if r["scan_status"] == "stopped":
+        return "filenya dihentikan: Lanjutkan membaca dulu"
+    return "sedang dibaca atau antre" if s["state"] in ("queued", "reading", "waiting", "stopping") else "belum dibaca"
 
 
 def pace(rows, per_worker=1):
@@ -136,10 +159,17 @@ def of_upload(c, upload_id, blocked=None, now=None):
         out.append({"batch_id": r["batch_id"], "page_no": r["page_no"], "file_name": r["file_name"],
                     "doc_type": r["doc_type"] if r["type_status"] in ("decided", "labelled") else None,
                     "unsure": r["type_status"] == "unsure" and not r["labelled"],
-                    "thumb": r["thumb_upright_path"] or r["thumb_path"], **s})
+                    "thumb": r["thumb_upright_path"] or r["thumb_path"], "published": bool(r["published"]),
+                    "restart": None if r["scan_status"] != "stopped" and not r["published"] and s["state"] in
+                    ("done", "waiting_ai", "failed") else _cant_restart(r, s), **s})
     files = [dict(f) for f in c.execute("""SELECT id AS batch_id, file_name, status::text AS status, page_total, error
                                              FROM staging.scan_batch WHERE upload_id=%s
                                               AND status IN ('received', 'splitting')
                                             ORDER BY file_name""", (upload_id,))]
-    return {"pages": out, "splitting": files, "eta_s": eta(out, page_s, workers, now) if not blocked else None,
+    stopped = [dict(f) for f in c.execute("""SELECT id AS batch_id, file_name, page_total, stopped_by, stopped_at,
+                                                    stopped_from IN ('received', 'splitting') AS before_split
+                                               FROM staging.scan_batch WHERE upload_id=%s AND status='stopped'
+                                              ORDER BY file_name""", (upload_id,))]
+    return {"pages": out, "splitting": files, "stopped": stopped,
+            "eta_s": eta(out, page_s, workers, now) if not blocked else None,
             "page_s": round(page_s), "workers": workers}

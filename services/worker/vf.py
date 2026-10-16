@@ -59,7 +59,7 @@ import psycopg
 from psycopg.rows import dict_row
 from psycopg.types.json import Json
 
-from common import config, context, db, gates, satellite, settings, tables, trace, transcript, verify, wiki
+from common import config, context, db, gates, satellite, settings, stopping, tables, trace, transcript, verify, wiki
 from common import keys as keymod
 from common.fields import DECIDES, DOCS, TYPE_MAP, decides, lift, project
 from common.models import openai_vlm, vlm
@@ -208,6 +208,7 @@ def ai_call(purpose, bid, n, call, *args):
     """One model call, counted in the ledger and stopped at vlm-first's daily cap for its model (reserved before the
     call: several page workers share the cap). While the model's last refusal still says to wait, the page waits
     without a call: its worker parks it on q.pages.wait (park)."""
+    stopping.check(bid)                      # its file was stopped: no new call (a call under way finishes)
     spec = spec_for(purpose)
     unset = not_set()
     if unset:
@@ -686,19 +687,36 @@ def handle(ticket, v1_reading=None, second_look=True):
             if p and p["status"] == "read":
                 trace.event("page", "skip", batch=bid, page=n, why="read meanwhile by another ticket")
                 return "done"                         # another ticket's worker finished it meanwhile
+            if stopping.is_stopped(bid):
+                stopping.mark_page(bid, n)
+                trace.event("page", "skip", batch=bid, page=n, why="its file was stopped")
+                return "stopped"
             trace.cut_off(bid, n)                     # spans a stopped worker left 'running'
             with trace.span("page", batch=bid, page=n, run=run, tries=ticket.get("tries"),
                             back_from_waiting=bool(ticket.get("parked")) or None,
                             **{"in": {"message taken off the queue (q.pages)": ticket}}):
-                return _handle(ticket, bid, n, run, v1_reading, second_look)
+                try:
+                    return _handle(ticket, bid, n, run, v1_reading, second_look)
+                except stopping.Stopped:              # its file was stopped: ended at its next AI call
+                    trace.set_status("skip", "its file was stopped (at its next AI call)")
+                    stopping.mark_page(bid, n)
+                    return "stopped"
         finally:
             lock.execute("SELECT pg_advisory_unlock(hashtext(%s), %s)", (f"page:{bid}", n))
+
+
+# what a person's restart (restart) reads again: every AI step's answer; the prepared image (no AI), Tesseract's
+# title witness, and people's labels and corrections (their own tables) stay
+FRESH = ("fields_all", "fields_version", "mapping", "notes", "type_votes", "second_look", "ship_to")
 
 
 def _handle(ticket, bid, n, run, v1_reading, second_look):
     with db.connect() as c:
         prev = tables.row(c, Page, batch_id=bid, page_no=n)
         ctx_v, ctx = context.ensure(c)
+    fresh = bool(ticket.get("fresh"))
+    if fresh and prev:                   # restarted by a person: nothing an AI answered before is reused. The copy was
+        prev = {**prev, **dict.fromkeys(FRESH)}   # dropped by restart(); a retry reuses the NEW copy, if one was saved
     fv = context.fields_version(ctx) + "@" + AI_OCR           # a reading belongs to the list AND the model that made it
     if READER == "two_step":                                   # … and, read then mapped, to the transcript and mapper
         fv = two_step_versions(ctx)[2]
@@ -726,7 +744,7 @@ def _handle(ticket, bid, n, run, v1_reading, second_look):
         x.update(fields_all=v1_reading, extract_status="done", vlm_meta={"read": {"model": "v1 reading (dry run)"}})
     elif READER == "two_step":
         try:
-            fa, meta, blocks, notes, mapping = read_then_map(bid, n, up, ctx, prev)
+            fa, meta, blocks, notes, mapping = read_then_map(bid, n, up, ctx, prev, fresh)
             x.update(fields_all=fa, extract_status="done", vlm_meta={"read": meta})
             two.update(notes=notes, mapping=mapping, blocks=blocks, tv=two_step_versions(ctx)[0])
             earlier = carry_over((prev or {}).get("second_look"), fa)
@@ -1125,18 +1143,19 @@ def two_step_versions(ctx):
     return tv, mv, mv + ("#x2" if MAP_TWICE else "")
 
 
-def read_then_map(bid, n, up, ctx, prev):
+def read_then_map(bid, n, up, ctx, prev, fresh=False):
     """Step 2, the mentor's way: the AI OCR's copy of the page (reused from the page or a trial when the same image,
     model and prompt made it; else transcribed and saved at once), then the text model's mapping (reused from a trial
     with the same version; else mapped, twice and merged). Returns (fields_all, meta, transcript, notes, mapping).
-    Tesseract hasn't read the page yet: boxes are tightened to the value's ink now, to its words after step 5."""
+    Tesseract hasn't read the page yet: boxes are tightened to the value's ink now, to its words after step 5.
+    fresh (a person's restart): a trial's copy or mapping is never reused either."""
     tv, mv, _ = two_step_versions(ctx)
     schema, meta = context.vlm_schema(ctx), {}
     with db.connect() as c:
-        tr = c.execute("""SELECT transcript, mapping FROM staging.reading_trial WHERE batch_id=%s AND page_no=%s
+        tr = None if fresh else c.execute("""SELECT transcript, mapping FROM staging.reading_trial WHERE batch_id=%s AND page_no=%s
                             AND versions->>'transcript' = %s AND transcript IS NOT NULL
                           ORDER BY (versions->>'map' = %s) DESC LIMIT 1""", (bid, n, tv, mv)).fetchone()
-        same_map = c.execute("""SELECT 1 FROM staging.reading_trial WHERE batch_id=%s AND page_no=%s
+        same_map = None if fresh else c.execute("""SELECT 1 FROM staging.reading_trial WHERE batch_id=%s AND page_no=%s
                                   AND versions->>'map' = %s AND mapping ? 'raw'""", (bid, n, mv)).fetchone()
     if prev and prev.get("transcript") and prev.get("transcript_version") == tv:
         blocks, meta["transcribe"] = prev["transcript"], {"reused": "page"}
@@ -1371,6 +1390,9 @@ def park(ticket, why):
     stays 'queued' while it has a ticket, so nothing else sends it (vf-grouper sends only pages that are 'read')."""
     from common import queue
     with db.connect() as c:
+        if stopping.is_stopped(ticket["batch_id"], c):   # its file was stopped: shown stopped, never parked
+            stopping.mark_page(ticket["batch_id"], ticket["page_no"], c)
+            return
         c.execute("UPDATE staging.page SET status='queued' WHERE batch_id=%s AND page_no=%s",
                   (ticket["batch_id"], ticket["page_no"]))
     queue.send(queue.Q_WAIT, [{**ticket, "parked": why[:200]}])
@@ -1397,11 +1419,12 @@ def after(ticket):
 def enqueue(bid, pages, waits=None, tries=0, why=None):
     """Send pages to q.pages: each set 'queued' first (only those that are 'read': a page with a ticket keeps its one),
     and tickets published after the commit. waits = only pages whose look-again waits for this reason (its start).
-    Returns the pages sent."""
+    Never a page of a stopped file (common/stopping.py). Returns the pages sent."""
     from common import queue
     with db.connect() as c:
         rows = c.execute("""UPDATE staging.page p SET status='queued' FROM staging.scan_batch b
                              WHERE b.id = p.batch_id AND p.batch_id=%s AND p.page_no = ANY(%s) AND p.status='read'
+                               AND b.status <> 'stopped'
                                AND (%s::text IS NULL OR starts_with(p.second_look->>'waiting', %s::text))
                          RETURNING p.page_no, coalesce(p.original_path, p.image_path) AS key, b.run""",
                          (bid, list(pages), waits, waits)).fetchall()
@@ -1435,6 +1458,27 @@ def sweep():
     for bid in grouping:
         queue.wake_grouper(bid, "the sweep: a bundle still waits")
     return {"sent": sent, "regrouped": grouping}
+
+
+def restart(bid, pages, why="a person restarted it"):
+    """A person's restart: read these pages again FROM SCRATCH. Their AI OCR copy is dropped now (so a retry after a
+    failed call reuses the new copy, never the old one) and the ticket says fresh, so every later AI step is redone
+    too (_handle, FRESH). Their reading stays until the new one is saved; their prepared image and people's labels
+    and corrections stay. Only pages not queued (being read or waiting), never of a stopped file; the caller keeps
+    pages of orders already sent out. No new run: the file's other pages being read go on. Returns the pages sent."""
+    from common import queue
+    with db.connect() as c:
+        rows = c.execute("""UPDATE staging.page p SET status='queued', error=NULL, transcript=NULL,
+                                   transcript_version=NULL, transcript_status=NULL
+                              FROM staging.scan_batch b
+                             WHERE b.id = p.batch_id AND p.batch_id=%s AND p.page_no = ANY(%s)
+                               AND p.status IN ('read', 'failed', 'dead_letter') AND b.status <> 'stopped'
+                         RETURNING p.page_no, coalesce(p.original_path, p.image_path) AS key, b.run""",
+                         (bid, list(pages))).fetchall()
+    queue.send(queue.Q_PAGES, [{"batch_id": bid, "page_no": r["page_no"], "run": r["run"], "image_key": r["key"],
+                                "fresh": True} for r in sorted(rows, key=lambda r: r["page_no"])])
+    trace.events("page.queued", [{"batch": bid, "page": r["page_no"]} for r in rows], why=why)
+    return sorted(r["page_no"] for r in rows)
 
 
 def again(bid, pages=None):

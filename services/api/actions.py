@@ -4,7 +4,7 @@ ActionError, which the API turns into its status and reason.
 
 Moved here from app.py's form handlers on 2026-10-02 (the user: "lets make it using react and next js where it talks
 with REST API"), unchanged in what it writes."""
-from common import db, intake, verify
+from common import db, intake, stopping, trace, verify
 
 
 class ActionError(Exception):
@@ -107,6 +107,8 @@ def retry_page(batch, page, by):
             raise ActionError(404, "Halaman itu tidak ada.")
         if p["published"]:
             raise ActionError(409, "Order halaman ini sudah dikirim ke Satellite, jadi halamannya tidak dibaca ulang.")
+        if stopping.is_stopped(batch, c):
+            raise ActionError(409, STOPPED_FILE)
         if p["status"] == "queued":
             raise ActionError(409, "Halaman ini sedang dibaca atau menunggu giliran: sistem sedang mencobanya.")
         k = stuck.kind(p["status"], p["extract_status"], p["waits"])
@@ -180,6 +182,168 @@ def retry_upload(upload_id, by):
         tried["pages"] += len(vf.again(b, ns))
     print(f"retry upload {upload_id} by {by.strip()}: {tried}, left {len(left)}", flush=True)
     return {**tried, "left": left}
+
+
+STOPPED_FILE = "File ini dihentikan. Tekan Lanjutkan membaca untuk meneruskannya."
+
+
+def stop_scan(batch, by):
+    """Stop one file's AI work (common/stopping.py): its waiting pages are marked stopped now, a page being read stops
+    at its next AI call, and nothing sends its pages again until it goes on. Pages already read, grouping, checks and
+    sending complete orders go on. 409 when nothing of it runs, it is already stopped, or it couldn't be split."""
+    _need(by)
+    try:
+        out = stopping.stop(batch, by)
+    except stopping.Refused as e:
+        raise ActionError(e.status, e.why)
+    print(f"stopped {batch} by {by.strip()}: {out}", flush=True)
+    return out
+
+
+def resume_scan(batch, by):
+    """Go on with a stopped file: a file stopped before it was split is split; otherwise its stopped pages go back on
+    the queue under a new run (stray tickets of the stop are then stale) and its pages waiting for a look-again are
+    sent. 409 when it isn't stopped, or while one of its pages still finishes its last AI call."""
+    from common import queue
+    from worker import vf
+    _need(by)
+    try:
+        plan = stopping.resume_plan(batch)
+    except stopping.Refused as e:
+        raise ActionError(e.status, e.why)
+    if plan["split"]:
+        if not stopping.unstop(batch, "received"):
+            raise ActionError(409, "File ini tidak dihentikan.")
+        queue.send(queue.Q_INTAKE, [{"batch_id": batch}])
+        out = {"batch_id": batch, "split": True, "pages": [], "sent": []}
+    else:
+        with db.connect() as c:                # going on and the new run in one step: no ticket of the stop reads a page
+            if not stopping.unstop(batch, "split" if plan["pages"] else "read", c):
+                raise ActionError(409, "File ini tidak dihentikan.")
+            if plan["pages"]:
+                c.execute("UPDATE staging.scan_batch SET page_done=0, run=run+1 WHERE id=%s", (batch,))
+                c.execute("""UPDATE staging.page SET status='rendered', error=NULL
+                              WHERE batch_id=%s AND page_no = ANY(%s)""", (batch, plan["pages"]))
+        if plan["pages"]:
+            intake.enqueue(batch, only_rendered=True, why="went on after a stop")
+        sent = vf.again(batch)
+        out = {"batch_id": batch, "split": False, "pages": plan["pages"], "sent": sent}
+    trace.event("file.resumed", "info", batch=batch, who=by.strip(), pages=len(out["pages"]) or None,
+                look_again=len(out["sent"]) or None, split=out["split"] or None)
+    print(f"went on with {batch} by {by.strip()}: {out}", flush=True)
+    return out
+
+
+CALLS_PER_PAGE = 5            # a page read from scratch: copy, map twice, page type, look-again (about)
+
+
+def why_not_restart(p):
+    """Pure: why a page can't be read again from scratch now (for people), else None. p: {status, published,
+    scan_status}."""
+    if p["published"]:
+        return "ordernya sudah dikirim ke Satellite"
+    if p["scan_status"] == stopping.STOPPED:
+        return "filenya dihentikan: Lanjutkan membaca dulu"
+    if p["status"] == "queued":
+        return "sedang dibaca atau antre"
+    if p["status"] not in ("read", "failed", "dead_letter"):
+        return "belum dibaca"
+    return None
+
+
+def _restart(where, args, by):
+    """Read pages again from scratch (vf.restart), those that may be; the others listed with why."""
+    from api import stuck
+    from worker import vf
+    _need(by)
+    why = _not_now()
+    if why:
+        raise ActionError(409, why)
+    with db.connect() as c:
+        rows = [dict(r) for r in c.execute(
+            f"""SELECT p.batch_id, p.page_no, p.status::text AS status, s.status AS scan_status, s.file_name,
+                       {stuck.PUBLISHED} AS published
+                  FROM staging.page p JOIN staging.scan_batch s ON s.id = p.batch_id
+                 WHERE {where} ORDER BY s.file_name, p.page_no""", args)]
+    if not rows:
+        raise ActionError(404, "Halaman itu tidak ada.")
+    todo, left = {}, []
+    for p in rows:
+        w = why_not_restart(p)
+        if w:
+            left.append({"batch_id": p["batch_id"], "page_no": p["page_no"], "file_name": p["file_name"], "why": w})
+        else:
+            todo.setdefault(p["batch_id"], []).append(p["page_no"])
+    sent = {b: vf.restart(b, ns, why=f"{by.strip()} restarted it") for b, ns in todo.items()}
+    n = sum(len(v) for v in sent.values())
+    if not n:
+        raise ActionError(409, left[0]["why"].capitalize() + "." if len(left) == 1 else
+                          "Tidak ada halaman yang bisa dibaca ulang sekarang.", left=left)
+    print(f"restart by {by.strip()}: {sent}, left {len(left)}", flush=True)
+    return {"restarted": n, "pages": [{"batch_id": b, "page_no": x} for b, ns in sent.items() for x in ns],
+            "calls": n * CALLS_PER_PAGE, "left": left}
+
+
+def restart_upload(upload_id, by, pages=None):
+    """Read a batch's pages again from scratch: `pages` [{batch_id, page_no}], or every page (None). Each gets a new AI
+    OCR copy and every AI step after it (about CALLS_PER_PAGE calls); people's labels and corrections stay. Never a
+    page of an order already sent to Satellite, a page queued or being read, or a page of a stopped file: those are
+    listed in `left` with why. 409 while a model isn't set or a limit holds every page, or when no page may be."""
+    if pages is None:
+        return _restart("s.upload_id = %s", (upload_id,), by)
+    keys = [f"{p['batch_id']}/{int(p['page_no'])}" for p in pages]
+    return _restart("s.upload_id = %s AND (p.batch_id || '/' || p.page_no) = ANY(%s)", (upload_id, keys), by)
+
+
+def restart_scan(batch, by, pages=None):
+    """The same for one file: `pages` [page_no], or every page (None)."""
+    if pages is None:
+        return _restart("p.batch_id = %s", (batch,), by)
+    return _restart("p.batch_id = %s AND p.page_no = ANY(%s)", (batch, [int(n) for n in pages]), by)
+
+
+def _files(upload_id):
+    with db.connect() as c:
+        return [dict(r) for r in c.execute("SELECT id, file_name, status FROM staging.scan_batch WHERE upload_id=%s "
+                                           "ORDER BY file_name", (upload_id,))]
+
+
+def stop_upload(upload_id, by):
+    """Stop every file of a batch that is still running (stop_scan). Returns what was stopped, and the files left with
+    why. 409 when no file of it runs (or it has no file the AI reads: e-Fakturs only)."""
+    _need(by)
+    files = _files(upload_id)
+    if not files:
+        raise ActionError(409, "Batch ini tidak punya file yang dibaca AI.")
+    stopped, left = [], []
+    for f in files:
+        try:
+            stopped.append({**stop_scan(f["id"], by), "file_name": f["file_name"]})
+        except ActionError as e:
+            left.append({"batch_id": f["id"], "file_name": f["file_name"], "why": e.error})
+    if not stopped:
+        raise ActionError(409, left[0]["why"] if len(left) == 1 else
+                          "Tidak ada yang sedang berjalan di batch ini: semua file sudah selesai dibaca atau dihentikan.",
+                          left=left)
+    return {"stopped": stopped, "left": left}
+
+
+def resume_upload(upload_id, by):
+    """Go on with every stopped file of a batch (resume_scan). 409 when none is stopped, or while a page still
+    finishes its last AI call (that file is listed in `left`)."""
+    _need(by)
+    files = [f for f in _files(upload_id) if f["status"] == stopping.STOPPED]
+    if not files:
+        raise ActionError(409, "Batch ini tidak dihentikan.")
+    went, left = [], []
+    for f in files:
+        try:
+            went.append({**resume_scan(f["id"], by), "file_name": f["file_name"]})
+        except ActionError as e:
+            left.append({"batch_id": f["id"], "file_name": f["file_name"], "why": e.error})
+    if not went:
+        raise ActionError(409, left[0]["why"], left=left)
+    return {"resumed": went, "left": left}
 
 
 def save_label(batch, page, label, customer="", note="", labelled_by=""):

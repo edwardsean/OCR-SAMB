@@ -104,6 +104,33 @@ h2 { font-size: 18px; font-weight: 700; margin: 0 0 12px; letter-spacing: -.01em
 .linkbtn { background: none; border: 0; padding: 0; color: var(--biru-pulpen); font: inherit; font-size: 13.5px; font-weight: 600;
            cursor: pointer; text-decoration: underline; text-underline-offset: 2px; }
 
+/* form controls (2026-10-16; the same block as services/api/static/app.css): every plain button, box and list gets
+   the .btn look, one height, so a row of them lines up and nothing is drawn in the browser's grey. :where() keeps this at zero weight: any screen's own rule still wins. */
+:where(button, input:not([type=checkbox], [type=radio], [type=hidden], [type=file], [type=range], [type=color]), select, textarea) {
+  font: inherit; font-size: 13.5px; line-height: 1.4; color: var(--tinta); background: var(--kertas);
+  border: 1px solid var(--garis-tebal); border-radius: var(--radius-sm); padding: 7px 10px; margin: 0;
+  transition: border-color .15s, background .15s, box-shadow .15s; }
+:where(button, input[type=submit], input[type=button]) { padding: 7px 14px; font-weight: 600; cursor: pointer; white-space: nowrap; }
+:where(button, input[type=submit], input[type=button]):hover:not([disabled]) { border-color: var(--tinta); }
+:where(button, input[type=submit], input[type=button]):active:not([disabled]) { background: var(--meja-muda); }
+:where(button, input, select, textarea)[disabled] { opacity: .45; cursor: not-allowed; }
+:where(input, select, textarea):hover:not([disabled]) { border-color: var(--pensil); }
+:where(input, select, textarea):focus { outline: none; border-color: var(--biru-pulpen); box-shadow: 0 0 0 3px rgba(31, 63, 143, .14); }
+:where(input, textarea)::placeholder { color: #8E959E; }
+/* a list's own arrow, not the browser's grey one: weighted as select:not(), so a screen's `background:` can't drop it */
+select:not([multiple]) { appearance: none; -webkit-appearance: none; padding-right: 30px; cursor: pointer;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6' viewBox='0 0 10 6'%3E%3Cpath d='M1 1l4 4 4-4' fill='none' stroke='%235C636D' stroke-width='1.6'/%3E%3C/svg%3E");
+  background-repeat: no-repeat; background-position: right 11px center; }
+/* Chrome pads a date box's fields and calendar icon, which made it 2px taller than the boxes beside it */
+:where(input[type=date], input[type=datetime-local])::-webkit-datetime-edit,
+:where(input[type=date], input[type=datetime-local])::-webkit-datetime-edit-fields-wrapper { padding: 0; }
+:where(input[type=date], input[type=datetime-local])::-webkit-calendar-picker-indicator { padding: 0; margin: 0 0 0 6px; cursor: pointer; }
+:where(input[type=checkbox], input[type=radio]) { accent-color: var(--biru-pulpen); }
+/* a submit that is the screen's main action */
+:where(button.primary, button[type=submit].primary) { background: var(--biru-pulpen); border-color: var(--biru-pulpen); color: #fff; }
+:where(button.primary):hover:not([disabled]) { background: var(--biru-tekan); border-color: var(--biru-tekan); }
+/* a register followed by the next heading needs air */
+
 /* the technical fold: closed, at the end of a screen */
 details.tech { margin-top: 40px; border-top: 1px solid var(--garis); padding-top: 12px; }
 details.tech > summary { cursor: pointer; color: var(--pensil); font-size: 13.5px; font-weight: 600; padding: 4px 0 10px; }
@@ -406,8 +433,7 @@ ul.plain { list-style: none; padding: 0; margin: 0; } ul.plain li { padding: 4px
 
 .head-row { display: flex; justify-content: space-between; align-items: flex-end; gap: 16px; flex-wrap: wrap; }
 .head-row .lede { margin-bottom: 0; }
-.scanpick, .pl-top select { padding: 6px 8px; border: 1px solid var(--garis-tebal); border-radius: var(--radius-sm); font: inherit;
-                            font-size: 13.5px; background: var(--kertas); color: var(--tinta); }
+.scanpick, .pl-top select { padding: 7px 10px; font-size: 13.5px; }
 .sec-head { display: flex; align-items: baseline; gap: 16px; }
 .sec-head h2 { margin: 0 0 12px; }
 .kosong { color: var(--pensil); padding: 8px 0; }
@@ -717,6 +743,21 @@ h2.sect { margin: 32px 0 12px; }
 .bx-form label { display: flex; flex-direction: column; gap: 4px; font-size: 12.5px; color: var(--pensil); }
 .bx-form input { padding: 7px 10px; border: 1px solid var(--garis-tebal); border-radius: var(--radius-sm); font-size: 14px; background: var(--kertas); color: var(--tinta); }
 .bx-form input.mono { min-width: 220px; font-family: var(--mono); }
+/* the closest orders in Satellite to a number that matched none (2026-10-16): a list to choose from */
+.bx-who { display: inline-flex; align-items: center; gap: 8px; font-size: 12.5px; color: var(--pensil); margin: 0 0 12px; }
+.bx-near { margin: 0 0 10px; }
+.bx-near h4 { margin: 0 0 6px; font-size: 13px; font-weight: 700; }
+.bx-near ul { list-style: none; margin: 0 0 8px; padding: 0; border-top: 1px solid var(--garis); }
+.bx-near li { display: flex; align-items: center; gap: 16px; padding: 9px 10px; border-bottom: 1px solid var(--garis); }
+.bx-near li.lacks { background: var(--meja-muda); box-shadow: inset 3px 0 0 var(--cap-hijau); }
+.bx-near-main { flex: 1; min-width: 0; }
+.bx-near-main p { margin: 0; } .bx-near-main p + p { margin-top: 2px; }
+.bx-near-main b { font-weight: 700; margin-right: 6px; }
+.bx-near mark { background: #FFE58A; color: inherit; padding: 0 1px; }
+.bx-near-tags { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 4px !important; }
+.bx-near-tags span { font-size: 11.5px; font-weight: 600; color: var(--pensil); border: 1px solid var(--garis-tebal); border-radius: 3px; padding: 0 6px; }
+.bx-near-tags span.ok { color: var(--cap-hijau); border-color: var(--cap-hijau); }
+.bx-near-tags span.warn { color: var(--cap-kuning); border-color: var(--cap-kuning); }
 @media (max-width: 800px) { .bx-hcard { flex-direction: column; } }
 /* a phone: a register scrolls sideways inside itself, never the page */
 @media (max-width: 700px) {
@@ -819,3 +860,19 @@ h2.sect { margin: 32px 0 12px; }
 /* e-Faktur PDFs (components/EFaktur.tsx): a batch's page and the Order tab */
 .efaktur { margin: 14px 0 20px; }
 .efaktur h2 small { font-weight: 400; margin-left: 6px; }
+
+/* Hentikan / Lanjutkan membaca on a batch (2026-10-15) */
+.btn.stop { color: var(--cap-merah); border-color: var(--cap-merah); }
+.btn.stop:hover { background: var(--cap-merah); color: #fff; }
+.stopbox { max-width: 420px; display: flex; flex-direction: column; gap: 6px; align-items: flex-end; text-align: right; }
+.stopbox p { margin: 0; }
+.stoprow { display: inline-flex; gap: 6px; flex-wrap: wrap; justify-content: flex-end; }
+.head-side { display: flex; flex-direction: column; align-items: flex-end; gap: 8px; margin-left: auto; }
+
+/* Baca ulang: pick pages to read again from scratch (2026-10-15) */
+.rs .rs-bar { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; margin: 8px 0; }
+.rs .rs-grid { list-style: none; padding: 0; margin: 6px 0; display: grid; grid-template-columns: repeat(auto-fill, minmax(110px, 1fr)); gap: 4px; }
+.rs .rs-grid li { border: 1px solid var(--garis); padding: 3px 6px; font-size: 13px; }
+.rs .rs-grid li.on { border-color: var(--biru-pulpen); background: var(--meja-muda); }
+.rs .rs-grid li.off { color: var(--pensil); opacity: .55; }
+.rs .rs-grid label { display: flex; gap: 6px; align-items: center; cursor: pointer; }

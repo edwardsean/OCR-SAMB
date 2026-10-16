@@ -8,7 +8,7 @@
   <span></span>
   {% if b and b.status in ('read','queued','reading') %}
   <form method="post" action="/batches/{{ batch_id }}/rerun" class="rerunf" onsubmit="return confirm('Re-run ' + (this.pages.value || 'ALL {{ total }}') + ' pages? Steps whose code has not changed are reused, so only new steps run (and only new model calls are paid).')">
-    <input name="pages" placeholder="all, or e.g. 1-32" size="12">
+    <input name="pages" placeholder="all, or e.g. 1-32" size="16">
     <button class="ghost" type="submit">↻ Re-run</button>
   </form>
   {% endif %}
