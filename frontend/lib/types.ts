@@ -99,6 +99,7 @@ export type UploadDetail = {
   failed_files: FailedFile[]; not_now: string | null;
   activity: Activity;
   stop: StopInfo;
+  delete: DeleteInfo;
   efaktur: EFaktur[];
 };
 /** An e-Faktur PDF (services/common/efaktur.py): the tax office's file for one order, attached to the order's PDF and
@@ -124,6 +125,8 @@ export type PageNow = {
   kind?: StuckPage["kind"]; cause?: StuckPage["cause"]; can_retry?: boolean; published?: boolean; error?: string | null;
   /** why it can't be read again from scratch now; null when it can (POST /uploads/{id}/restart) */
   restart?: string | null;
+  /** its order's SOR; the page's outcome; what else it can be searched by (numbers read, customer) */
+  sor?: string | null; outcome?: string | null; find?: string;
 };
 export type Activity = {
   pages: PageNow[]; splitting: { batch_id: string; file_name: string; status: string; page_total: number }[];
@@ -343,4 +346,11 @@ export interface Closest {
     total: number | null; status: string | null; how: string; shared: string[]; here: boolean; lacks: boolean;
     pick: { field: string; value: string } | null;
   }[];
+}
+
+/** GET /uploads/{id} `delete`: whether the batch can be deleted now, and what it would take away. */
+export interface DeleteInfo {
+  can: boolean; why_not: string | null; code: string;
+  impact: { files: number; pages: number; orders: number; shared: number; approved: number; labels: number;
+            confirmations: number; efaktur: number };
 }

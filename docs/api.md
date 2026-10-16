@@ -97,6 +97,7 @@ approved it). Only finished orders are published.
 | POST | `/api/v1/scans/{batch_id}/stop` · `/resume` | the same for one file |
 | POST | `/api/v1/uploads/{upload_id}/restart` | read chosen pages (or all) again from scratch (calls the AI) |
 | POST | `/api/v1/scans/{batch_id}/restart` | the same for one file |
+| POST | `/api/v1/uploads/{upload_id}/delete` | delete a whole batch, so its files can be uploaded again |
 | GET | `/api/v1/scans/{batch_id}/pages/{page_no}/region` | what a region marked on the paper holds |
 | GET | `/api/v1/keycheck` | does Satellite know this SOR / PO number? |
 | GET | `/api/v1/lessons` | what a fix is doing now (kept as a lesson, the teacher writing a tip, …) |
@@ -318,6 +319,20 @@ stop is then stale), its pages waiting for a look-again sent, a file stopped bef
 "stopped": [{"batch_id", "file_name", "by", "at", "finishing"}]}`; its pages' `activity` states add `stopping` (a
 worker still has it: it ends at its next AI call) and `stopped`; step 1 (`baca`) adds `stopped` (pages of stopped files
 not read yet) and `stopped_files`, and is `need` while a file is stopped.
+
+### `POST /api/v1/uploads/{upload_id}/delete`
+`{"by": "…", "code": "BATCH-…"}`: the batch's code, typed, is the confirmation (400 otherwise). The batch goes
+whole (services/common/deleting.py): its files, pages, documents and readings, the labels and corrections made on its
+pages, and its PDFs and page images in storage. A file's SHA-256 is what refuses a second upload, so the same PDF can
+then be uploaded again.
+- An order made only of its documents goes; an order with documents from other batches too loses this batch's
+  documents and those batches are regrouped (an approval on it goes, as with any change).
+- Kept: what was learned from it (classification context, knowledge tips, product codes, calibration), Jejak, and the
+  AI-call ledger. Jejak records `upload.deleted`.
+- **409** when an order made from it was sent to Satellite, when its e-Faktur is inside a sent order's PDF, while
+  something of it runs or waits for the AI (stop it first), or while a stopped file's page finishes its last call.
+- `GET /api/v1/uploads/{id}` says beforehand: `delete: {can, why_not, code, impact: {files, pages, orders, shared,
+  approved, labels, confirmations, efaktur}}`.
 
 ### `POST /api/v1/uploads/{upload_id}/restart`
 `{"by": "…", "pages": [{"batch_id", "page_no"}]}` (omit `pages`: every page). Each page is read again **from

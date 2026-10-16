@@ -391,10 +391,12 @@ def upload_view(upload_id):
         work = steps.of_uploads(c, [upload_id])[upload_id]
         efs = efaktur.of_upload(c, upload_id)
         stop = stop_view(c, files)
+        from common import deleting
+        delete = deleting.view(c, upload_id)
     summary = next(iter(uploads_view(10_000, only=upload_id)), {})
     page = lambda p: {"batch_id": p["batch_id"], "page_no": p["page_no"], "file_name": p["file_name"],
                       "thumb": _thumb(p), "error": p["error"]}
-    return {"stop": stop,
+    return {"stop": stop, "delete": delete,
             "upload": {**u, **{k: summary.get(k) for k in ("files", "pages", "read", "busy", "stopped", "need", "waiting",
                                                              "ready", "published", "orders", "efaktur",
                                                              "efaktur_attached", "efaktur_open")}},
