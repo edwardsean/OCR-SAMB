@@ -19,7 +19,7 @@ import pika
 from PIL import Image
 from psycopg.types.json import Json
 
-from common import config, db, health, queue, settings, storage, verify
+from common import config, db, health, queue, settings, stopping, storage, verify
 from common import keys as keymod
 from common.models import schemas, vlm
 from worker import classify, enhance
@@ -215,12 +215,17 @@ def on_message(ch, method, props, body):
             from worker import vf
             if ticket.get("run", 1) != current_run(ticket["batch_id"]):
                 ch.basic_ack(method.delivery_tag); return  # an earlier run's ticket (re-run, or stopped): never re-parked
+            if stopping.is_stopped(ticket["batch_id"]):  # its file was stopped (common/stopping.py): never read now
+                stopping.mark_page(ticket["batch_id"], ticket["page_no"])
+                from common import trace
+                trace.event("page", "skip", batch=ticket["batch_id"], page=ticket["page_no"], why="its file was stopped")
+                ch.basic_ack(method.delivery_tag); return
             why = ticket.get("parked") and vf.blocked()
             if why:                            # back from the waiting room, but the AI still can't be asked: no work
                 vf.park(ticket, why)
                 ch.basic_ack(method.delivery_tag); return
             score = vf.handle(ticket)
-            if score not in ("stale", "done"):
+            if score not in ("stale", "done", "stopped"):
                 did = vf.after(ticket)         # a call the limit stopped waits in q.pages.wait; a failed one retries
                 if did:
                     print(f"{ticket['batch_id']} p{ticket['page_no']}: {did}", flush=True)
@@ -228,7 +233,7 @@ def on_message(ch, method, props, body):
                     queue.wake_grouper(ticket["batch_id"], f"page {ticket['page_no']} was read")
         else:
             score = handle(ticket)
-        if score in ("stale", "done"):
+        if score in ("stale", "done", "stopped"):
             ch.basic_ack(method.delivery_tag); return
         if score and score["ring"]:
             ring_bell(ch, ticket["batch_id"], ticket.get("run", 1))
@@ -237,6 +242,9 @@ def on_message(ch, method, props, body):
     except Exception as e:
         err = f"{type(e).__name__}: {e}"[:500]
         traceback.print_exc()
+        if stopping.is_stopped(ticket["batch_id"]):     # its file was stopped meanwhile: shown stopped, never retried
+            stopping.mark_page(ticket["batch_id"], ticket["page_no"])
+            ch.basic_ack(method.delivery_tag); return
         with db.connect() as c:
             # never downgrade a page another ticket already read successfully
             c.execute("UPDATE staging.page SET error=%s, status=%s WHERE batch_id=%s AND page_no=%s AND status <> 'read'",

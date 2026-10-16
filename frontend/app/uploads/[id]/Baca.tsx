@@ -7,6 +7,7 @@ import { getWords } from "@/lib/api";
 import { kira, lama, pct, sejak } from "@/lib/format";
 import type { PageNow, UploadDetail } from "@/lib/types";
 import Retry from "./Retry";
+import RestartPicker from "./RestartPicker";
 
 const enc = encodeURIComponent;
 const SHOW_QUEUED = 12;                  // a long queue: the first few, then how many more
@@ -27,6 +28,10 @@ function State({ p }: { p: PageNow }) {
       return <span className="pn need">Gagal · {p.text}</span>;
     case "idle":
       return <span className="pn">{p.text}</span>;
+    case "stopping":
+      return <span className="pn sys">◔ {p.text}</span>;
+    case "stopped":
+      return <span className="pn wait">■ {p.text}</span>;
     default:
       return <span className="pn ok">✓ Selesai{p.ms ? ` dalam ${lama(p.ms)}` : ""}</span>;
   }
@@ -58,13 +63,24 @@ export default async function Baca({ d }: { d: UploadDetail }) {
   const reading = open.filter((p) => p.state === "reading").length;
   const queued = open.filter((p) => p.state === "queued");
   const failed = open.filter((p) => p.state === "failed");
-  const shown = [...open.filter((p) => p.state !== "queued"), ...queued.slice(0, SHOW_QUEUED)];
+  const stopped = open.filter((p) => p.state === "stopped");
+  const stopping = open.filter((p) => p.state === "stopping").length;
+  const many = (st: string) => st === "queued" || st === "stopped";      // a long list: the first few, then how many more
+  const shown = [...open.filter((p) => !many(p.state)), ...queued.slice(0, SHOW_QUEUED),
+    ...stopped.slice(0, Math.max(0, SHOW_QUEUED - queued.length))];
+  const hidden = queued.length + stopped.length - shown.filter((p) => many(p.state)).length;
   const retryable = failed.filter((p) => p.can_retry).length + d.failed_files.length;
   const eta = kira(a.eta_s);
 
   const quota = !!d.not_now?.startsWith("Kuota gratis");
   let line: [string, string];
-  if (d.not_now)                       // what stops everything comes first: nothing can be tried until it is solved
+  const halt = d.stop.stopped[0];
+  if (halt)                            // a person stopped it: say so first, and how it goes on
+    line = ["wait", `Dihentikan oleh ${halt.by ?? "seseorang"}.`
+      + (stopping ? ` ${stopping} halaman menyelesaikan panggilan AI terakhirnya, lalu berhenti.` : "")
+      + (s.stopped ? ` ${s.stopped} halaman belum dibaca.` : "")
+      + " Halaman yang sudah dibaca tetap tersimpan. Tekan Lanjutkan membaca di atas untuk meneruskan."];
+  else if (d.not_now)                       // what stops everything comes first: nothing can be tried until it is solved
     line = [quota ? "need" : "wait", (quota ? "" : "Menunggu: ") + d.not_now
       + (failed.length ? ` ${failed.length} halaman gagal: Coba lagi bisa setelah itu.` : "")];
   else if (failed.length || d.failed_files.length)
@@ -89,6 +105,13 @@ export default async function Baca({ d }: { d: UploadDetail }) {
           <span>{s.done} dari {s.pages} halaman selesai</span>
           <div className="bar"><i style={{ width: `${pct(s.done, s.pages)}%` }} /></div>
         </div>
+      )}
+
+      {a.stopped.some((f) => f.before_split) && (
+        <ul className="pn-files small">
+          {a.stopped.filter((f) => f.before_split).map((f) =>
+            <li key={f.batch_id}>■ {f.file_name}: dihentikan sebelum dipecah menjadi {f.page_total} halaman</li>)}
+        </ul>
       )}
 
       {a.splitting.length > 0 && (
@@ -128,8 +151,8 @@ export default async function Baca({ d }: { d: UploadDetail }) {
                 <td><Action p={p} notNow={d.not_now} /></td>
               </tr>
             ))}
-            {queued.length > SHOW_QUEUED && (
-              <tr><td colSpan={5} className="muted small">dan {queued.length - SHOW_QUEUED} halaman lagi antre</td></tr>
+            {hidden > 0 && (
+              <tr><td colSpan={5} className="muted small">dan {hidden} halaman lagi {stopped.length ? "antre atau dihentikan" : "antre"}</td></tr>
             )}
           </tbody>
         </table>
@@ -155,6 +178,8 @@ export default async function Baca({ d }: { d: UploadDetail }) {
           </table>
         </details>
       )}
+
+      {pages.length > 0 && <RestartPicker upload={d.upload.id} pages={pages} notNow={d.not_now} />}
     </section>
   );
 }

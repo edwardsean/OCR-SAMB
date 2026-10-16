@@ -1,0 +1,78 @@
+# Trying "Stop" on a working batch (branch stop-batch, 2026-10-15) beside everything else, without touching main's
+# data and with no real AI call:
+#   - its own database ocr_stop (every migration in schema/, empty), RabbitMQ vhost "stop", storage prefix stop/;
+#   - its own service names (stp-*); the servers are main's (network samb-ocr_default);
+#   - every model is stp-fakeai (scripts/fake_ai.py): an OpenAI-compatible stand-in that answers after FAKE_DELAY s,
+#     set on Teknis → Model & kunci API; .env's provider keys are blanked here.
+#
+#   docker exec -i samb-ocr-postgres-1 … (see the commands in the session) to make ocr_stop, then
+#   docker compose -f docker-compose.stop.yml up -d
+#   open http://localhost:3006
+name: samb-ocr-stop
+
+x-stp: &stp
+  image: samb-ocr-api:latest              # the workers' image is built from the same Dockerfile; the code is mounted
+  env_file: ../../../.env
+  volumes: [./services:/app, ./tests:/app/tests:ro, ./testdata:/app/testdata:ro, ./.env.example:/app/.env.example:ro]
+  environment: &stpenv
+    DATABASE_URL: postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/ocr_stop
+    PIPELINE_DB: ocr_stop
+    AMQP_URL: amqp://${RABBITMQ_USER}:${RABBITMQ_PASSWORD}@rabbitmq:5672/stop
+    RABBITMQ_VHOST: stop
+    MINIO_ENDPOINT: minio:9000
+    STORAGE_PREFIX: stop/
+    SERVICE_PREFIX: stp
+    PIPELINE: vlm-first
+    VF_READER: two_step
+    WEB_URL: http://localhost:3006
+    API_URL: http://localhost:8000
+    DASHSCOPE_API_KEY: ""
+    GEMINI_API_KEY: ""
+    GROQ_API_KEY: ""
+    TYPESAFE_API_KEY: ""
+    ZAI_API_KEY: ""
+  restart: unless-stopped
+
+services:
+  stp-fakeai:
+    image: samb-ocr-api:latest
+    command: python /scripts/fake_ai.py
+    volumes: [./scripts:/scripts:ro]
+    environment: { FAKE_DELAY: "6", FAKE_PORT: "9000" }
+    ports: ["9006:9000"]
+    restart: unless-stopped
+
+  stp-intake:
+    <<: *stp
+    command: python -m intake.serve
+
+  stp-worker:
+    <<: *stp
+    command: python -m worker.main
+    stop_grace_period: 1m
+    environment:
+      <<: *stpenv
+      OMP_THREAD_LIMIT: "1"
+
+  stp-grouper:
+    <<: *stp
+    command: python -m grouper.serve
+
+  stp-api:
+    <<: *stp
+    command: uvicorn api.app:app --host 0.0.0.0 --port 8000
+    ports: ["8006:8000"]
+
+  stp-web:
+    build: { context: ./frontend, args: { API_URL: http://stp-api:8000 } }
+    image: samb-ocr-stop-web:latest
+    environment:
+      API_URL: http://stp-api:8000
+    ports: ["3006:3000"]
+    depends_on: [stp-api]
+    restart: unless-stopped
+
+networks:
+  default:
+    name: samb-ocr_default
+    external: true

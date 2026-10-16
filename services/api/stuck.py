@@ -19,7 +19,9 @@ import re
 CRASHED = "p.status IN ('dead_letter', 'failed')"
 CALL_FAILED = ("(p.status = 'read' AND (p.extract_status = 'failed' "
                "OR strpos(coalesce(p.second_look->>'waiting', ''), 'the call failed') > 0))")
-STUCK = f"({CRASHED} OR {CALL_FAILED})"
+# a page of a stopped file (common/stopping.py) is stopped, not stuck: the file goes on as a whole ("Lanjutkan membaca")
+STOPPED = "EXISTS (SELECT 1 FROM staging.scan_batch sb WHERE sb.id = p.batch_id AND sb.status = 'stopped')"
+STUCK = f"(({CRASHED} OR {CALL_FAILED}) AND NOT {STOPPED})"
 PUBLISHED = """EXISTS (SELECT 1 FROM staging.document d JOIN staging.bundle_document bd ON bd.document_id = d.id
                          JOIN staging.bundle b ON b.id = bd.bundle_id
                         WHERE d.batch_id = p.batch_id AND p.page_no BETWEEN d.page_from AND d.page_to
@@ -45,7 +47,7 @@ def error_of(row):
 def cause(error):
     """Pure: (cause, a sentence for people) from a raw error. cause: setting | connection | answer | other."""
     e = error or ""
-    if e.startswith("Stopped on purpose"):
+    if e.startswith("Stopped on purpose"):                # its file went on since (a page left from a stop)
         return "other", "Dihentikan dengan sengaja. Coba lagi untuk membacanya."
     if re.search(r"HTTP (400|401|403|404)\b|refused the API key|no API key|NotSet|isn't set|no model", e):
         return "setting", f"Pengaturan model bermasalah (alamat, model atau kunci API). Periksa {WHERE}, lalu coba lagi."

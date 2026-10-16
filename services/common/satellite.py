@@ -293,6 +293,46 @@ def near_keys(value, pairs):
     return sorted({sor for c, sor in close if c == v}), sorted({sor for c, sor in close if c != v and edits(c, v) <= 1})
 
 
+CLOSEST_EDITS = 3            # a number further than this from every SO's is shown no candidates
+
+
+def closest(value, sos, key="cpo_no", n=5):
+    """Pure. The SOs whose `key` (Nomor CPO, or the SOR) is most like a number read on a page that matched none (the
+    user, 2026-10-16: "why not just show the most similar ids, so the user can verify"). A hint for a person, never a
+    link. Best first: the same number; one inside the other (a TTG's Ord slip 260909-04006-00226 is the tail of
+    Satellite's '012474 2609090400600226'); then fewest characters different, at most CLOSEST_EDITS.
+    [(record, how, (start, end))]: how = 'same' | 'part' | 'edits:<d>'; the span is where the read number sits in the
+    record's own spelling (for marking it), or None."""
+    import difflib
+    v = flat(value)
+    if len(v) < 5:
+        return []
+    found = []
+    for s in sos.values():
+        raw = str(s.get(key) or "")
+        c = flat(raw)
+        if not c:
+            continue
+        if c == v:
+            found.append((0, 0, s, "same", (0, len(raw))))
+        elif len(v) >= 8 and v in c:
+            found.append((1, len(c) - len(v), s, "part", _span(raw, c.index(v), len(v))))
+        elif len(c) >= 8 and c in v:
+            found.append((1, len(v) - len(c), s, "part", None))
+        elif abs(len(c) - len(v)) <= CLOSEST_EDITS and difflib.SequenceMatcher(None, v, c).quick_ratio() >= .75:
+            d = edits(v, c)
+            if d <= CLOSEST_EDITS:
+                found.append((2, d, s, f"edits:{d}", None))
+    found.sort(key=lambda x: (x[0], x[1], str(x[2].get("sor_no"))))
+    return [(s, how, span) for _, _, s, how, span in found[:n]]
+
+
+def _span(raw, start, length):
+    """Where the flat characters [start, start+length) sit in `raw` (which may have spaces, dashes, slashes)."""
+    at = [i for i, ch in enumerate(raw) if re.match(r"[0-9A-Za-z]", ch)]
+    return at[start], at[start + length - 1] + 1
+
+
 def unique_match(value, pairs):
     """The SOR whose candidate equals value, if exactly one does and no other candidate is one character away; else
     (None, why)."""

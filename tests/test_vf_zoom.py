@@ -34,3 +34,15 @@ def test_ai_box_is_used_first_and_clamped():
     assert zoom.by_ai_box([100, 200, 150, 400], (3000, 2000)) == (400, 300, 800, 450)
     assert zoom.by_ai_box([150, 200, 100, 400], (3000, 2000)) is None       # empty box
     assert zoom.by_ai_box(None, (3000, 2000)) is None
+
+
+def test_a_number_sharing_only_its_date_digits_is_not_the_value():
+    """2026-10-16: a receipt's PO number TA05PO1009260248 (its line unread by Tesseract) was cropped at the GR ID line,
+    TA05GR1009260233: 7 shared characters were enough. A line counts only when it holds the value itself."""
+    from worker import zoom
+    gr = [["GR", 90, 1496, 144, 68, 38], ["ID", 90, 1580, 144, 50, 38], [":", 90, 1640, 144, 10, 38],
+          ["TA05GR1009260233", 90, 1700, 144, 468, 38]]
+    assert zoom.by_words(gr, "TA05PO1009260248") is None
+    misread = [["Po", 90, 1300, 470, 50, 38], ["Number:", 90, 1360, 470, 200, 38], ["TA05P01009260248", 90, 1600, 470, 470, 38]]
+    assert zoom.by_words(gr + misread, "TA05PO1009260248")[1] == 470          # one O read as 0: still its line
+    assert zoom.by_words([["Rp1.126.011,00", 90, 10, 900, 300, 30]], "1126011")[1] == 900

@@ -343,6 +343,24 @@ def _batches_need():
         return 0
 
 
+def stop_view(c, files):
+    """Whether the batch's AI work can be stopped now (common/stopping.py), and if not, why; its stopped files (who,
+    when, pages still finishing their last AI call)."""
+    from common import stopping
+    can, whys, stopped = False, [], []
+    for f in files:
+        why = stopping.why_not(f, stopping.running(c, f))
+        if why is None:
+            can = True
+        elif why not in whys:
+            whys.append(why)
+        if f["status"] == stopping.STOPPED:
+            stopped.append({"batch_id": f["id"], "file_name": f["file_name"], "by": f["stopped_by"],
+                            "at": f["stopped_at"], "finishing": len(stopping.finishing(c, f["id"]))})
+    return {"can": can, "why_not": None if can else (whys[0] if whys else "Batch ini tidak punya file yang dibaca AI."),
+            "stopped": stopped, "finishing": sum(s["finishing"] for s in stopped)}
+
+
 def upload_view(upload_id):
     """One upload batch: its record, its files (each a scan, with its progress), its orders by status, its five
     steps (api/steps.py), and the pages steps 1 and 2 list: those stuck (api/stuck.py, each with why and whether a
@@ -358,7 +376,8 @@ def upload_view(upload_id):
             return None
         live = activity.of_upload(c, upload_id, blocked)
         files = [dict(r) for r in c.execute(
-            """SELECT id, file_name, page_total, pages_rendered, page_done, status, received_at, error
+            """SELECT id, file_name, page_total, pages_rendered, page_done, status, received_at, error,
+                      stopped_by, stopped_at
                  FROM staging.scan_batch WHERE upload_id=%s ORDER BY file_name""", (upload_id,))]
         pages = [dict(r) for r in c.execute(
             f"""SELECT p.batch_id, p.page_no, p.status::text AS status, p.type_status, p.error, s.file_name,
@@ -371,10 +390,12 @@ def upload_view(upload_id):
                  ORDER BY s.file_name, p.page_no""", (upload_id,))]
         work = steps.of_uploads(c, [upload_id])[upload_id]
         efs = efaktur.of_upload(c, upload_id)
+        stop = stop_view(c, files)
     summary = next(iter(uploads_view(10_000, only=upload_id)), {})
     page = lambda p: {"batch_id": p["batch_id"], "page_no": p["page_no"], "file_name": p["file_name"],
                       "thumb": _thumb(p), "error": p["error"]}
-    return {"upload": {**u, **{k: summary.get(k) for k in ("files", "pages", "read", "busy", "need", "waiting",
+    return {"stop": stop,
+            "upload": {**u, **{k: summary.get(k) for k in ("files", "pages", "read", "busy", "stopped", "need", "waiting",
                                                              "ready", "published", "orders", "efaktur",
                                                              "efaktur_attached", "efaktur_open")}},
             "files": files, "steps": work["steps"], "next": work["next"], "blockers": work["blockers"],
@@ -1366,7 +1387,7 @@ def vf_after_label(batch, page, label):
     check. A practice-pile label on a page the machine was unsure or wrong about becomes a lesson for the teacher."""
     with db.connect() as c:
         p = c.execute("""SELECT p.page_no, p.image_path, p.original_path, p.fields_all IS NOT NULL AS read,
-                                p.type_votes->'machine' AS machine, b.run, l.pile
+                                p.type_votes->'machine' AS machine, b.run, b.status AS scan_status, l.pile
                            FROM staging.page p JOIN staging.scan_batch b ON b.id = p.batch_id
                            JOIN staging.type_label l USING (batch_id, page_no)
                           WHERE p.batch_id=%s AND p.page_no=%s""", (batch, page)).fetchone()
@@ -1378,8 +1399,9 @@ def vf_after_label(batch, page, label):
             c.execute("""INSERT INTO staging.lesson (batch_id, page_no, label) VALUES (%s, %s, %s)
                          ON CONFLICT (batch_id, page_no) DO UPDATE SET label=EXCLUDED.label, status='waiting',
                            answer=NULL, proposal=NULL, error=NULL""", (batch, page, label))
-        resume = p["read"] and resumable(p["original_path"] or p["image_path"])
-        if resume:                          # only pages with a real image (v1's render, or one uploaded here) are resumed
+        resume = p["read"] and resumable(p["original_path"] or p["image_path"]) and p["scan_status"] != "stopped"
+        if resume:                          # only pages with a real image (v1's render, or one uploaded here) are resumed;
+                                            # a stopped file's page keeps its label and is read when the file goes on
             c.execute("UPDATE staging.page SET status='queued' WHERE batch_id=%s AND page_no=%s", (batch, page))
     if lesson:                              # after the commit above, so the teacher finds the lesson
         try:
@@ -1996,6 +2018,57 @@ def knowledge_teach():
 # ---------------------------------------------------------------------------------------------- phase 6: bundles
 
 CONFIRM_FIELD = {"FP": "sor", "TTG": "purchase_order_no", "PO": "purchase_order_no"}   # the key a person can settle
+# Choosing one of the closest orders settles the key that names THAT order: an FP's SOR; a receipt's SOR reference
+# (No Ref: two SOs can share a Nomor CPO, an SOR is one order); a PO's number only as that order's own CPO (a PO has no
+# SOR field), so a CPO several orders share can't be chosen for a PO.
+PICK_FIELD = {"FP": "sor", "TTG": "no_ref", "PO": "purchase_order_no"}
+SO_STATUS = {"INVOICE_GENERATED": "sudah ditagih", "INVOICE_REQUESTED": "sudah ditagih", "CGR": "barang diterima",
+             "GOOD_ISSUED": "barang dikirim", "MANIFESTED": "barang dikirim", "ORDER_GENERATED": "baru order",
+             "SO_CANCELLED": "dibatalkan"}
+
+
+def held_closest(batch, page):
+    """The orders in Satellite closest to a held document's number, for a person to choose from (step 3 / Berkas per
+    SOR; satellite.closest). Each: its SOR, Nomor CPO (with the read number's place marked), customer, date, total,
+    status, how close, the other orders sharing its CPO, whether its order here still lacks this kind of document, and
+    what choosing it confirms ({field, value}, or None when it can't decide)."""
+    from common import satellite
+    with db.connect() as c:
+        d = c.execute("""SELECT d.doc_type::text AS type, p.fields FROM staging.document d
+                           JOIN staging.page p ON p.batch_id = d.batch_id AND p.page_no = d.page_from
+                          WHERE d.batch_id=%s AND d.page_from=%s""", (batch, page)).fetchone()
+        if not d or d["type"] not in CONFIRM_FIELD:
+            return {"read": None, "candidates": []}
+        field = CONFIRM_FIELD[d["type"]]
+        mine = c.execute("SELECT value FROM staging.field_confirmation WHERE batch_id=%s AND page_no=%s AND field=%s",
+                         (batch, page, field)).fetchone()
+        read = (mine or {}).get("value") or ((d["fields"] or {}).get(field) or {}).get("value")
+        sos = satellite.load(c)
+        key = "sor_no" if field == "sor" else "cpo_no"
+        found = satellite.closest(read, sos, key) if read else []
+        sors = [s["sor_no"] for s, _, _ in found]
+        has = {}
+        for r in c.execute("""SELECT b.sor_no, array_agg(DISTINCT d.doc_type::text) AS types
+                                FROM staging.bundle b JOIN staging.bundle_document bd ON bd.bundle_id = b.id
+                                JOIN staging.document d ON d.id = bd.document_id
+                               WHERE b.sor_no = ANY(%s) GROUP BY b.sor_no""", (sors,)):
+            has[r["sor_no"]] = set(r["types"])
+    index = satellite._cached_index(sos, "cpo_no")
+    out = []
+    for s, how, span in found:
+        cpo = s.get("cpo_no") or ""
+        shared = sorted(sor for cc, sor in index.get(satellite.flat(cpo), ()) if cc == satellite.flat(cpo)
+                        and satellite.flat(sor) != satellite.flat(s["sor_no"])) if cpo else []
+        pf = PICK_FIELD[d["type"]]
+        value = s["sor_no"] if pf in ("sor", "no_ref") else (cpo if cpo and not shared else None)
+        out.append({"sor": s["sor_no"], "cpo": cpo, "mark": span if key == "cpo_no" else None,
+                    "customer": s.get("customer_name"), "date": s.get("tgl_so"), "total": s.get("order_total"),
+                    "status": SO_STATUS.get(s.get("status"), s.get("status")), "how": how, "shared": shared,
+                    "here": s["sor_no"] in has, "lacks": s["sor_no"] in has and d["type"] not in has[s["sor_no"]],
+                    "pick": {"field": pf, "value": value} if value else None})
+    rank = {"same": 0, "part": 1}
+    out.sort(key=lambda x: (rank.get(x["how"], 2), not x["lacks"]))   # stable: closeness first, then the one waiting
+    return {"read": read, "key": key, "type": d["type"], "candidates": out}
 
 
 def bundles_view(batch):
@@ -2921,9 +2994,9 @@ def field_crop(batch: str, page_no: int, field: str):
     f, words, up = (p["fields_all"] or {}).get(canon) or {}, p["ocr_words"] or [], v1.load(p["upright_path"])
     h, w = up.shape[:2]
     rect = zoom.by_words(words, f.get("source_text")) or zoom.by_label(words, CANON[canon]["printed_as"], w)
-    if not rect:                     # the AI's box: on these forms it tends to sit left of the value, so show the line
-        box = zoom.by_ai_box(f.get("box"), up.shape)
-        rect = (box[0], box[1], w, box[3]) if box else None
+    if not rect:                     # the AI's box: on these forms it tends to sit left of the value, so show the line,
+        box = zoom.by_ai_box(f.get("box"), up.shape)     # from a fifth of the page before it (its label is there)
+        rect = (max(0, box[0] - w // 5), box[1], w, box[3]) if box else None
     if not rect:
         return Response(status_code=404)
     x0, y0, x1, y1 = rect
@@ -3405,6 +3478,36 @@ def _scans_of(c, ids):
              LEFT JOIN staging.upload u ON u.id = s.upload_id WHERE s.id = ANY(%s)""", (ids,))}
 
 
+def _jejak_picks(c):
+    """What Jejak's search offers (the user, 2026-10-16: "a drop down for existing values … selections either we want
+    to pick from SOR, document name, batch"): {kind: [{v, d}]}, newest first; d says what it is. Typing still searches
+    anything."""
+    from zoneinfo import ZoneInfo
+    from api import bahasa
+    wib = ZoneInfo("Asia/Jakarta")
+    out = {"batch": [], "file": [], "sor": [], "scan": [], "who": []}
+    for r in c.execute("""SELECT u.code, u.created_at, u.uploaded_by, count(s.id) AS files, coalesce(sum(s.page_total), 0) AS pages
+                            FROM staging.upload u LEFT JOIN staging.scan_batch s ON s.upload_id = u.id
+                           GROUP BY u.id ORDER BY u.created_at DESC LIMIT 60"""):
+        out["batch"].append({"v": r["code"], "d": f"{r['files']} file · {r['pages']} hal. · {r['uploaded_by'] or ''} · "
+                                                  f"{r['created_at'].astimezone(wib):%d %b %H.%M}"})
+    for r in c.execute("""SELECT s.id, s.file_name, s.page_total, u.code FROM staging.scan_batch s
+                            LEFT JOIN staging.upload u ON u.id = s.upload_id ORDER BY s.received_at DESC LIMIT 80"""):
+        out["file"].append({"v": r["file_name"], "d": f"{r['page_total'] or '?'} hal. · {r['code'] or r['id']}"})
+        out["scan"].append({"v": r["id"], "d": r["file_name"]})
+    for r in c.execute("""SELECT DISTINCT ON (b.sor_no) b.sor_no, b.status::text AS status, b.created_at, so.customer_name
+                            FROM staging.bundle b LEFT JOIN satellite.sor so ON so.sor_no = b.sor_no
+                           WHERE b.sor_no IS NOT NULL ORDER BY b.sor_no, b.created_at DESC"""):
+        out["sor"].append({"v": r["sor_no"], "d": " · ".join(x for x in (r["customer_name"],
+                                                                         bahasa.BUNDLE.get(r["status"], r["status"])) if x),
+                           "at": r["created_at"]})
+    out["sor"] = [{k: x[k] for k in ("v", "d")} for x in sorted(out["sor"], key=lambda x: x["at"], reverse=True)[:400]]
+    for r in c.execute("""SELECT who, max(at) AS last FROM staging.trace WHERE who IS NOT NULL AND who <> ''
+                            AND at > now() - interval '90 days' GROUP BY who ORDER BY max(at) DESC LIMIT 40"""):
+        out["who"].append({"v": r["who"], "d": f"terakhir {r['last'].astimezone(wib):%d %b %H.%M}"})
+    return out
+
+
 @app.get("/teknis/jejak", response_class=HTMLResponse, include_in_schema=False)
 def page_jejak(request: Request, q: str = "", step: str = "", status: str = "", service: str = "", around: str = "",
                hours: int = 6, limit: int = 300):
@@ -3415,16 +3518,17 @@ def page_jejak(request: Request, q: str = "", step: str = "", status: str = "", 
     since, until = observe.window(around=_when(around), hours=hours)
     f = {"q": q, "step": step, "status": status, "service": service, "around": around, "hours": hours,
          "since": since, "until": until}
-    rows, scans, missing = [], {}, None
+    rows, scans, missing, picks = [], {}, None, {}
     try:
         with db.connect() as c:
+            picks = _jejak_picks(c)
             rows = observe.explore(c, q or None, since, until, step or None, status or None, service or None,
                                    max(20, min(limit, 2000)))
             scans = _scans_of(c, [r["batch_id"] for r in rows])
     except Exception as e:
         missing = TRACE_MISSING if "trace" in str(e) and "does not exist" in str(e) else f"{type(e).__name__}: {e}"
     return templates.TemplateResponse("jejak.html", ctx(request, rows=rows, scans=scans, f=f, steps=tw.STEPS,
-                                                        missing=missing, limit=limit, words=STATUS_WORDS))
+                                                        missing=missing, limit=limit, words=STATUS_WORDS, picks=picks))
 
 
 @app.get("/teknis/jejak/batch/{upload_id}", response_class=HTMLResponse, include_in_schema=False)

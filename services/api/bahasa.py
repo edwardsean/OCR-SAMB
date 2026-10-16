@@ -97,7 +97,7 @@ BUNDLE = {"needs_review": "Perlu dicek", "grouping": "Menunggu sistem", "auto_ok
           "reviewed": "Disetujui", "published": "Terkirim"}
 BATCH = {"received": "Diterima", "splitting": "Sedang dipecah per halaman", "split": "Sudah dipecah",
          "rendered": "Sudah dipecah", "queued": "Antre dibaca", "reading": "Sedang dibaca", "read": "Selesai dibaca",
-         "grouping": "Sedang dikelompokkan", "done": "Selesai", "failed": "Gagal"}
+         "grouping": "Sedang dikelompokkan", "done": "Selesai", "failed": "Gagal", "stopped": "Dihentikan"}
 OUTCOME = {"clear": "Beres", "waiting_ai": "Menunggu AI", "needs_person": "Perlu dicek", "held_unsure": "Jenis belum pasti"}
 FLAG = {"rotated": "diputar", "skewed": "miring", "dark_band": "ada pita hitam", "faint": "cetakan pudar",
         "poor_quality": "kualitas buruk"}

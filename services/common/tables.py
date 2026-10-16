@@ -708,6 +708,12 @@ class ScanBatch(TypedDict, total=False):
     error: str | None
     run: int
     upload_id: int | None
+    # When a person stopped this file's AI work (status stopped); NULL once it goes on.
+    stopped_at: datetime | None
+    # Who stopped it.
+    stopped_by: str | None
+    # The status it had when stopped (received, splitting, split, queued, reading, read): where going on starts.
+    stopped_from: str | None
 
 
 class Setting(TypedDict, total=False):

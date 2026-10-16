@@ -40,7 +40,8 @@ import time
 
 from psycopg.types.json import Json
 
-from common import config, context, customer, db, knowledge, satellite, settings, tables, trace, transcript, wiki
+from common import (config, context, customer, db, knowledge, satellite, settings, stopping, tables, trace, transcript,
+                    wiki)
 from common.fields import DOCS, TYPE_MAP
 from common.tables import KnowledgePage, Page
 from common.verify import flat
@@ -274,6 +275,7 @@ def _scope(c, doc_type, bid=None):
                           LEFT JOIN staging.bundle b ON b.id=bd.bundle_id
                          WHERE p.doc_type=%s AND p.type_status IN ('decided', 'labelled') AND p.transcript IS NOT NULL
                            AND p.fields_all IS NOT NULL AND (%s::text IS NULL OR p.batch_id=%s)
+                           AND s.status <> 'stopped'                  -- a stopped file gets no AI call (stopping.py)
                          ORDER BY p.batch_id, p.page_no""", (doc_type, bid, bid)).fetchall()
 
 
@@ -569,7 +571,10 @@ def _apply(doc_type, show=print, bid=None):
     out, batches = {}, set()
     for i, p in enumerate(pages, 1):
         b, n = p["batch_id"], p["page_no"]
-        fa, m, _ = step(b, n, doc_type, p["fields_all"], p["mapping"], p["qr_text"], ctx)
+        try:
+            fa, m, _ = step(b, n, doc_type, p["fields_all"], p["mapping"], p["qr_text"], ctx)
+        except stopping.Stopped:            # its file was stopped since this run began: its page stays as it was
+            continue
         if fa != p["fields_all"] or m != p["mapping"]:
             out[f"{b}/{n}"] = _store(b, n, p, fa, m, show, "knowledge")
             batches.add(b)

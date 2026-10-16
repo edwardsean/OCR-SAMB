@@ -78,12 +78,25 @@ def by_ai_box(box, shape):
     return (x0 * w // 1000, y0 * h // 1000, x1 * w // 1000, y1 * h // 1000)
 
 
+def holds(s, word):
+    """How well one Tesseract word holds the value s (both flat): its longest shared run, or 0 when that isn't the
+    value. Most of the value in one run, or the same length off by a character or two (a 1-bit scan's misreads); a
+    shared part alone is not enough: one system's GR and PO numbers share their date digits (TA05GR1009260233 /
+    TA05PO1009260248, 2026-10-16: the PO's crop showed the GR line, its own line unread by Tesseract)."""
+    run = longest_run(s, word)
+    if run >= max(MIN_RUN, -(-4 * len(s) // 5)):
+        return run
+    if len(word) == len(s) and run >= MIN_RUN and sum(x != y for x, y in zip(s, word)) <= max(1, len(s) // 8):
+        return run
+    return 0
+
+
 def by_words(words, source):
     s = flat(source)
     best, at = 0, None
     for ws in lines_of(words):
         for w in ws:
-            run = longest_run(s, flat(w[0]))
+            run = holds(s, flat(w[0]))
             if run > best:
                 best, at = run, ws
     return rect_of(at) if at and best >= MIN_RUN else None

@@ -15,6 +15,7 @@ import Jenis from "./Jenis";
 import Cocokkan from "./Cocokkan";
 import Periksa from "./Periksa";
 import Kirim from "./Kirim";
+import Stop from "./Stop";
 import { EFakturList } from "@/components/EFaktur";
 
 const load = cache((id: string) => get<UploadDetail>(`/uploads/${id}`));      // once per request: title and page
@@ -34,8 +35,8 @@ export default async function UploadPage({ params, searchParams }: { params: Pro
   const at: StepKey = asked && ORDER.includes(asked) ? asked
     : d.next ?? d.steps.find((s) => s.state === "sys")?.key ?? (d.finished ? "kirim" : "periksa");
   // asked again every few seconds only while a page is moving (an order waiting days for SAP never keeps it busy)
-  const live = d.activity.splitting.length > 0
-    || d.activity.pages.some((p) => ["queued", "reading", "waiting", "waiting_ai"].includes(p.state));
+  const live = d.activity.splitting.length > 0 || d.stop.finishing > 0
+    || d.activity.pages.some((p) => ["queued", "reading", "waiting", "waiting_ai", "stopping"].includes(p.state));
   const next = d.next ? d.steps.find((s) => s.key === d.next)! : null;
   const href = `/uploads/${u.id}`;
   return (
@@ -55,9 +56,12 @@ export default async function UploadPage({ params, searchParams }: { params: Pro
             </p>
             {u.note && <p className="muted small">{u.note}</p>}
           </div>
-          {next && next.key !== at ? (
-            <Link className="btn primary" href={`${href}?step=${next.key}`}>Lanjutkan: {NAME[next.key]} ({count(next)})</Link>
-          ) : d.finished ? <span className="cap hijau besar">Selesai</span> : null}
+          <div className="head-side">
+            {d.files.length > 0 && <Stop upload={u.id} stop={d.stop} />}
+            {next && next.key !== at ? (
+              <Link className="btn primary" href={`${href}?step=${next.key}`}>Lanjutkan: {NAME[next.key]} ({count(next)})</Link>
+            ) : d.finished ? <span className="cap hijau besar">Selesai</span> : null}
+          </div>
         </div>
       </section>
 

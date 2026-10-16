@@ -163,6 +163,10 @@ export default function OrderReview({ v, pub, fixed, back }: {
   const [lastFix, setLastFix] = useState(fixed);
   const me = useRef<HTMLInputElement>(null);
   const published = v.bundle.status === "published";
+  // approved by a person, not sent yet (staging.bundle 'reviewed'): said as such, never offered to approve again
+  const approved = v.bundle.status === "reviewed";
+  const byWhom = `${v.bundle.reviewed_by ?? "seseorang"}${v.bundle.reviewed_at ? `, ${tgl(v.bundle.reviewed_at)}` : ""}`;
+  const send = back ? `/uploads/${back.id}?step=kirim` : `/review?batch=${v.batch}`;
   const cal = v.calibration;
   const nTodo = v.open_items.filter((i) => i.kind !== "wait").length + (cal?.asks.length ?? 0);
   const cust = (v.so?.customer_name ?? "").split(" ").slice(0, 2).join(" ");
@@ -197,6 +201,7 @@ export default function OrderReview({ v, pub, fixed, back }: {
             {v.uploads?.length > 0 && <p className="batchhead">Dari batch <BatchTags list={v.uploads} full /></p>}
             <p className="rv-status">
               {published ? <><Cap status="published" big>Terkirim</Cap> <span>Terkirim ke Satellite</span></>
+                : approved ? <><Cap status="reviewed" big>Disetujui</Cap> <span>Disetujui oleh {byWhom} · tinggal dikirim</span></>
                 : v.can_approve ? <><Cap status="auto_ok" big>Sesuai</Cap> <span>Siap disetujui</span></>
                 : nTodo ? <><Cap status="needs_review" big>Perlu dicek</Cap> <span>Perlu Anda: {nTodo} keputusan</span></>
                 : <><Cap status="grouping" big>Menunggu</Cap> <span>Menunggu sistem, belum ada yang perlu dilakukan</span></>}
@@ -305,7 +310,9 @@ export default function OrderReview({ v, pub, fixed, back }: {
 
                     {!v.open_items.length && !cal && (
                       <div className="kp kp-1"><div>
-                        {v.can_approve ? <><h2>Semua sudah sesuai.</h2><p className="sub">Setujui di bawah, lalu order ini bisa dikirim ke Satellite.</p></>
+                        {approved ? <><h2>Disetujui oleh {byWhom}.</h2><p className="sub">Kirim ke Satellite di
+                          langkah 5: <Link href={send}>Kirim ke Satellite</Link>.</p></>
+                          : v.can_approve ? <><h2>Semua sudah sesuai.</h2><p className="sub">Setujui di bawah, lalu order ini bisa dikirim ke Satellite.</p></>
                           : <><h2>Belum ada yang perlu dilakukan</h2><p className="sub">{v.left.join(" ")}</p></>}
                       </div></div>
                     )}
@@ -324,7 +331,9 @@ export default function OrderReview({ v, pub, fixed, back }: {
 
       {!published && (
         <div className="rv-bar">
-          {v.can_approve ? <><span className="left">✓ Tidak ada yang tersisa.</span><ApproveButton /></> : (
+          {approved ? <><span className="left">✓ Disetujui oleh {byWhom}.</span>
+            <Link className="btn primary" href={send}>Ke langkah 5: Kirim</Link></>
+          : v.can_approve ? <><span className="left">✓ Tidak ada yang tersisa.</span><ApproveButton /></> : (
             <>
               <span className="left">{nTodo} keputusan lagi</span>
               <button className="btn primary" disabled style={{ opacity: 0.45, cursor: "not-allowed" }} title="Selesaikan dulu semua keputusan di atas">Setujui order ini</button>

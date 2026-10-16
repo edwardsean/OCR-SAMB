@@ -58,6 +58,8 @@ export type Orders = { total: number; need: number; waiting: number; ready: numb
 export type UploadRef = { id: number; code: string; uploaded_by: string; doc_date: string };
 export type Upload = UploadRef & {
   created_at: string; note: string | null; files: number; pages: number; read: number; busy: number;
+  /** files stopped by a person (services/common/stopping.py) */
+  stopped: number;
   need: number; waiting: number; ready: number; published: number; orders: number;
   /** its e-Faktur PDFs: how many, attached to their order's PDF, waiting (for Satellite, or a person) */
   efaktur: number; efaktur_attached: number; efaktur_open: number;
@@ -73,7 +75,9 @@ export type StepState = "need" | "sys" | "done" | "none" | "later";
 type StepBase = { state: StepState; after?: StepKey };
 export type Step =
   | StepBase & { key: "baca"; pages: number; done: number; read: number; failed: number; busy: number; again: number;
-                 waiting_ai: number; unscheduled: number; splitting: number }
+                 waiting_ai: number; unscheduled: number; splitting: number;
+                 /** pages of stopped files not read yet, and those files */
+                 stopped: number; stopped_files: number }
   | StepBase & { key: "jenis"; unsure: number; answered: number; pending: number }
   | StepBase & { key: "cocokkan"; block: number; wait: number; later: number; loose_unread: number; loose_unsure: number; loose_other: number }
   | StepBase & { key: "periksa"; need: number; depends: number; outside: number; waiting: number; ready: number; published: number; orders: number }
@@ -94,6 +98,7 @@ export type UploadDetail = {
   orders: Record<string, OrderStep>; failed: StuckPage[]; unsure: PageRef[];
   failed_files: FailedFile[]; not_now: string | null;
   activity: Activity;
+  stop: StopInfo;
   efaktur: EFaktur[];
 };
 /** An e-Faktur PDF (services/common/efaktur.py): the tax office's file for one order, attached to the order's PDF and
@@ -104,15 +109,26 @@ export type EFaktur = {
   dpp: number | null; ppn: number | null; pages: number; status: "waiting" | "held" | "linked" | "attached";
   why: string | null; attached_version: number | null; received_at: string; upload_id: number | null;
 };
-/** What each page of a batch is doing now (services/api/activity.py): one state per page. */
-export type PageState = "queued" | "reading" | "waiting" | "waiting_ai" | "failed" | "idle" | "done";
+/** Whether a batch's AI work can be stopped now (services/common/stopping.py), and if not why; its stopped files and
+ * the pages still finishing their last AI call. */
+export type StopInfo = {
+  can: boolean; why_not: string | null; finishing: number;
+  stopped: { batch_id: string; file_name: string; by: string | null; at: string | null; finishing: number }[];
+};
+/** What each page of a batch is doing now (services/api/activity.py): one state per page. stopping: its file was
+ * stopped while a worker had it (it ends at its next AI call) · stopped: its file was stopped before it was read. */
+export type PageState = "queued" | "reading" | "waiting" | "waiting_ai" | "failed" | "idle" | "done" | "stopping" | "stopped";
 export type PageNow = {
   batch_id: string; page_no: number; file_name: string; doc_type: string | null; unsure: boolean; thumb: string | null;
   state: PageState; text?: string; since?: string; ahead?: number | null; again?: boolean; ms?: number | null;
   kind?: StuckPage["kind"]; cause?: StuckPage["cause"]; can_retry?: boolean; published?: boolean; error?: string | null;
+  /** why it can't be read again from scratch now; null when it can (POST /uploads/{id}/restart) */
+  restart?: string | null;
 };
 export type Activity = {
   pages: PageNow[]; splitting: { batch_id: string; file_name: string; status: string; page_total: number }[];
+  stopped: { batch_id: string; file_name: string; page_total: number; stopped_by: string | null; stopped_at: string | null;
+             before_split: boolean }[];
   eta_s: number | null; page_s: number; workers: number;
 };
 export type SearchResult = {
@@ -316,3 +332,15 @@ export type LabelData = {
   upload?: UploadRef | null;
   left?: number | null;
 };
+
+/** GET /bundles/closest: the orders closest to a held document's number. */
+export interface Closest {
+  read: string | null;
+  key: "cpo_no" | "sor_no";
+  type: string;
+  candidates: {
+    sor: string; cpo: string; mark: [number, number] | null; customer: string | null; date: string | null;
+    total: number | null; status: string | null; how: string; shared: string[]; here: boolean; lacks: boolean;
+    pick: { field: string; value: string } | null;
+  }[];
+}
