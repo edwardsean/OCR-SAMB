@@ -29,7 +29,7 @@ import time
 import re
 from datetime import date
 
-from common import config, confusions, gates, tables
+from common import confusions, gates, tables
 from common.tables import Sor, SorItem
 
 PRINTED = ("text", "qr", "zoom", "second_look", "adds_up")    # verdicts backed by print
@@ -64,14 +64,24 @@ def edits(a, b):
 # What the checks read of an SO (common/tables.py's Sor). Not every column: a bundle's fingerprint hashes the record
 # (grouper/crosscheck.py), and a reviewed bundle is reviewed only while it is unchanged, so a column added here would
 # undo every approval; loaded_at changes on every load of Satellite's data.
-SO_COLS = tables.select(Sor, without=("so_no", "posting_date", "loaded_at"))
-LINE_SUMS = """LEFT JOIN (SELECT sor_no, bool_and(invoice_qty IS NOT DISTINCT FROM qty_pcs) AS unchanged,
-                                 bool_and(line_amount > 0 AND vat IS NOT NULL) AS priced,
-                                 sum(line_amount) AS lines_dpp, sum(vat) AS lines_ppn
-                            FROM satellite.sor_item GROUP BY sor_no) l USING (sor_no)"""
-TTL = 600                                          # seconds a process keeps Satellite's SO list
-_cache = {"at": 0.0, "sos": None}
-_index = {}
+SO_COLS = tables.select(Sor, without=("so_no", "posting_date", "loaded_at"), prefix="s.")
+# One SO as the checks read it: its columns, and its lines' sums (paper() needs them when Satellite has no
+# as-ordered amounts). Per SO through the lines' key, so a lookup never aggregates the whole sor_item table.
+RECORD = f"""SELECT l.unchanged, l.priced, l.lines_dpp, l.lines_ppn, {SO_COLS}
+               FROM satellite.sor s
+               LEFT JOIN LATERAL (SELECT bool_and(i.invoice_qty IS NOT DISTINCT FROM i.qty_pcs) AS unchanged,
+                                         bool_and(i.line_amount > 0 AND i.vat IS NOT NULL) AS priced,
+                                         sum(i.line_amount) AS lines_dpp, sum(i.vat) AS lines_ppn
+                                    FROM satellite.sor_item i WHERE i.sor_no = s.sor_no) l ON true"""
+TTL = 600                                          # seconds a process keeps Satellite's store names and an SO's lines
+
+
+def FLAT_SQL(col):
+    """flat() in SQL, written exactly as schema/034's indexes are, so the planner uses them."""
+    return f"regexp_replace(upper(coalesce({col}, '')), '[^0-9A-Z]', '', 'g')"
+
+
+KEYS = {"cpo_no": FLAT_SQL("s.cpo_no"), "sor_no": FLAT_SQL("s.sor_no")}
 
 
 def _record(r):
@@ -80,29 +90,214 @@ def _record(r):
     return r
 
 
-# The orders load() keeps: the last SATELLITE_WINDOW_DAYS days, counted back from Satellite's newest order (not from
-# today: an export loaded weeks ago still fills the window), plus every order a bundle names (an old document whose
-# order is already known keeps it), plus orders with no date.
-RECENT = """(tgl_so IS NULL OR sor_no IN (SELECT sor_no FROM staging.bundle)
-              OR tgl_so >= (SELECT max(tgl_so) FROM satellite.sor WHERE tgl_so <= current_date) - %s::int)"""
+NEAR_WINDOW = 3            # DbLookup.near: the stretch one edit may change (see there)
+NEAR_INDEXED = 4           # … and the shortest prefix or suffix worth an index range
 
 
-def load(conn, sors=None) -> dict[str, Sor]:
-    """{flat SOR: record}. With `sors`: only those SOs, read now. Without: the recent SOs (RECENT, ~40K a month),
-    kept for ten minutes per process: grouping and the near-neighbour rule need the whole CPO list of the orders a
-    page can be about. Each process keeps its own copy, so the window is what bounds the memory (2026-10-17: a year
-    of orders, 418K, in every worker ran an 8 GB server out of memory). Each record carries `paper`: the amounts its
-    FP printed."""
+class DbLookup:
+    """Satellite's orders, asked one question at a time (the production path; schema/034's indexes). Until
+    2026-10-17 every process kept every order in memory, with two one-character indexes (~12 KB an order): a year of
+    orders (418K) was ~4.8 GB a copy, and the mentor's 8 GB server killed its workers. A DbLookup holds nothing but
+    the answers it gave (one page, one grouping round); every question sees the WHOLE table, so "no other SO one
+    character away" and "exactly one SO has this total" are checked against every order, not a window.
+    Opens its own connection when first asked (a page's verdicts are made after the connection that started them
+    closes) and closes it when dropped. Acts like the old {flat SOR: record} dict for get / [] / in."""
+
+    def __init__(self):
+        self._c = None
+        self._so, self._near, self._lines, self._cpo = {}, {}, {}, {}
+
+    def _conn(self):
+        if self._c is None or self._c.closed:
+            from common import db
+            self._c = db.connect(autocommit=True, prepare_threshold=None)   # planned with each pattern: LIKE uses the index
+        return self._c
+
+    def close(self):
+        if self._c is not None and not self._c.closed:
+            self._c.close()
+        self._c = None
+
+    def __del__(self):
+        try:
+            self.close()
+        except Exception:
+            pass
+
+    def _records(self, where, args):
+        return [_record(r) for r in self._conn().execute(f"{RECORD} WHERE {where}", args)]
+
+    # the old dict's interface: {flat SOR: record}
+    def get_many(self, keys):
+        want = sorted({flat(k) for k in keys if flat(k)} - set(self._so))
+        if want:
+            got = {flat(r["sor_no"]): r for r in self._records(f"{KEYS['sor_no']} = ANY(%s)", (want,))}
+            self._so.update({k: got.get(k) for k in want})
+        return {flat(k): self._so[flat(k)] for k in keys if flat(k) and self._so.get(flat(k))}
+
+    def get(self, key, default=None):
+        k = flat(key)
+        if not k:
+            return default
+        if k not in self._so:
+            self.get_many([k])
+        return self._so.get(k) or default
+
+    def __getitem__(self, key):
+        so = self.get(key)
+        if so is None:
+            raise KeyError(key)
+        return so
+
+    def __contains__(self, key):
+        return self.get(key) is not None
+
+    def __bool__(self):
+        return True
+
+    def near(self, key, value):
+        """near_keys() against every SO's `key` ("cpo_no" / "sor_no"): (SORs whose key equals value, SORs whose key
+        is one character away). One edit (a character changed, dropped or added) sits inside some window of
+        NEAR_WINDOW characters, and everything before and after that window is the same: so each window asks for
+        that prefix AND that suffix (two index ranges; one of them is long, so few rows come back). SOR numbers and
+        many PO numbers run in sequence (SOR2612000…): a half alone would match thousands. The edit distance is
+        checked here, as near_keys() does."""
+        v = flat(value)
+        if not v:
+            return [], []
+        if (key, v) not in self._near:
+            f, n = KEYS[key], len(v)
+            parts, args = [], []
+            for a in range(0, n + 1, NEAR_WINDOW):
+                pre, suf = v[:a], v[a + NEAR_WINDOW:]
+                cond = [f"length({f}) BETWEEN %s AND %s"]
+                args += [n - 1, n + 1]
+                # one index range per window, the other side a filter (left()/right() aren't indexed): the end of the
+                # number when it has NEAR_INDEXED characters (SORs and PO numbers run in sequence, so their start is
+                # shared by thousands: "SOR2612…", "4505…"), else the start
+                if len(suf) >= NEAR_INDEXED or not pre:
+                    cond += [f"reverse({f}) LIKE %s", f"left({f}, %s) = %s"]
+                    args += [suf[::-1] + "%", len(pre), pre]
+                else:
+                    cond += [f"{f} LIKE %s", f"right({f}, %s) = %s"]
+                    args += [pre + "%", len(suf), suf]
+                parts.append(f"SELECT s.sor_no, {f} AS f FROM satellite.sor s WHERE " + " AND ".join(cond))
+            rows = self._conn().execute(" UNION ".join(parts), args).fetchall()
+            self._near[(key, v)] = (sorted({r["sor_no"] for r in rows if r["f"] == v}),
+                                    sorted({r["sor_no"] for r in rows if r["f"] != v and edits(r["f"], v) <= 1}))
+        return self._near[(key, v)]
+
+    def by_cpo_many(self, values):
+        """{flat CPO: {SOR}} for these values only (grouping: the PO numbers its pages read)."""
+        want = sorted({flat(x) for x in values if flat(x)} - set(self._cpo))
+        if want:
+            got = {}
+            for r in self._conn().execute(f"SELECT s.sor_no, {KEYS['cpo_no']} AS f FROM satellite.sor s "
+                                          f"WHERE {KEYS['cpo_no']} = ANY(%s)", (want,)):
+                got.setdefault(r["f"], set()).add(r["sor_no"])
+            self._cpo.update({k: got.get(k, set()) for k in want})
+        return {flat(x): self._cpo[flat(x)] for x in values if flat(x) and self._cpo.get(flat(x))}
+
+    def by_cpo(self, value):
+        """The SO records whose Nomor CPO is this value (flat)."""
+        return [s for s in self.get_many(sorted(self.by_cpo_many([value]).get(flat(value), ()))).values()]
+
+    def with_paper_totals(self, amounts):
+        """The SOs whose FP printed one of these totals (paper(): order_total, else the invoice total when the lines are
+        unchanged, else the lines' sums)."""
+        a = sorted({round(float(x), 2) for x in amounts if x is not None})
+        if not a:
+            return []
+        rows = self._records("""s.order_total = ANY(%(a)s::numeric[])
+                                 OR (s.order_total IS NULL AND (s.total = ANY(%(a)s::numeric[])
+                                     OR s.sor_no IN (SELECT i.sor_no FROM satellite.sor_item i
+                                                      JOIN satellite.sor o ON o.sor_no = i.sor_no
+                                                     WHERE o.order_total IS NULL GROUP BY i.sor_no
+                                                    HAVING round(sum(i.line_amount), 2) + round(sum(i.vat), 2)
+                                                           = ANY(%(a)s::numeric[]))))""", {"a": a})
+        self._so.update({flat(r["sor_no"]): r for r in rows})
+        return [r for r in rows if _num((r["paper"] or {}).get("total")) in a]
+
+    def items(self, sor):
+        if sor not in self._lines:
+            self._lines[sor] = items(self._conn(), sor)
+        return self._lines[sor]
+
+    def closest_candidates(self, key, value, limit=300):
+        """For closest(): the SOs whose key equals the value, contains it or sits inside it, or looks like it
+        (trigram similarity, schema/034's GIN index); closest() ranks them exactly as before."""
+        v, f = flat(value), KEYS[key]
+        parts = sorted({v[i:j] for i in range(len(v)) for j in range(i + 8, len(v) + 1)}) if len(v) >= 8 else []
+        return self._records(f"""s.sor_no IN (
+                    SELECT s.sor_no FROM satellite.sor s WHERE {f} = %(v)s
+                    UNION SELECT s.sor_no FROM satellite.sor s WHERE length(%(v)s) >= 8 AND {f} LIKE %(like)s
+                    UNION SELECT s.sor_no FROM satellite.sor s WHERE {f} = ANY(%(parts)s)
+                    UNION (SELECT s.sor_no FROM satellite.sor s WHERE {f} %% %(v)s
+                            ORDER BY similarity({f}, %(v)s) DESC LIMIT %(limit)s))""",
+                             {"v": v, "like": f"%{v}%", "parts": parts, "limit": limit})
+
+
+def load(conn=None, sors=None):
+    """With `sors`: {flat SOR: record} of those SOs, read now. Without: a DbLookup, which asks the database what each
+    check needs (an SO, the SOs one character away, the SOs with a total, an SO's lines) instead of keeping every
+    order in memory. Each record carries `paper`: the amounts its FP printed."""
     if sors is not None:
-        return {flat(r["sor_no"]): _record(r) for r in conn.execute(      # l.* first: an SO with no lines has a
-            f"SELECT l.*, {SO_COLS} FROM satellite.sor {LINE_SUMS} WHERE sor_no = ANY(%s)", (list(sors),))}   # NULL l.sor_no
-    days = config.SATELLITE_WINDOW_DAYS
-    if _cache["sos"] is None or time.time() - _cache["at"] > TTL or _cache.get("days") != days:
-        _cache.update(sos=None)                       # the old copy goes before the new one is built: one at a time
-        _index.clear()
-        _cache.update(sos={flat(r["sor_no"]): _record(r) for r in conn.execute(
-            f"SELECT l.*, {SO_COLS} FROM satellite.sor {LINE_SUMS} WHERE {RECENT}", (days,))}, at=time.time(), days=days)
-    return _cache["sos"]
+        return {flat(r["sor_no"]): _record(r) for r in conn.execute(f"{RECORD} WHERE s.sor_no = ANY(%s)", (list(sors),))}
+    return DbLookup()
+
+
+def lines_of(sos):
+    """The function a check reads an SO's lines with: a DbLookup's own (its connection, kept for the page), else
+    items_for (a connection per SO, kept ten minutes)."""
+    return sos.items if isinstance(sos, DbLookup) else items_for
+
+
+def neighbours(sos, key, value):
+    """(SORs whose `key` equals value, SORs one character away): a DbLookup asks the database; a plain dict (the
+    tests' hand-made SOs) is searched in memory."""
+    if isinstance(sos, DbLookup):
+        return sos.near(key, value)
+    return near_keys(value, neighbour_index([(s.get(key), s["sor_no"]) for s in sos.values()]))
+
+
+# Satellite's store names: small reference data (a few thousand names, not orders), read once per process every TTL
+# from the whole table, for the store question (S4), a page's customer and the bundle checks' store names.
+_names = {"at": 0.0, "rows": None}
+
+
+def name_rows(sos=None):
+    """[(store name, chain, orders)] of every SO: from the database (whole table, cached), or from a plain dict."""
+    if isinstance(sos, dict):
+        out = {}
+        for s in sos.values():
+            if s.get("customer_name"):
+                k = (s["customer_name"], chain_of(s))
+                out[k] = out.get(k, 0) + 1
+        return [(n, ch, k) for (n, ch), k in out.items()]
+    if _names["rows"] is None or time.time() - _names["at"] > TTL:
+        from common import db
+        with db.connect() as c:
+            rows = [(r["n"], r["ch"], r["k"]) for r in c.execute(
+                """SELECT customer_name AS n, coalesce(nullif(customer_parent, ''), customer_code) AS ch, count(*) AS k
+                     FROM satellite.sor WHERE coalesce(customer_name, '') <> '' GROUP BY 1, 2""")]
+        _names.update(rows=rows, at=time.time(), derived={})
+    return _names["rows"]
+
+
+def _derived(sos, name, build):
+    """Something built from the store names, kept with them (database) or built fresh (a plain dict)."""
+    if isinstance(sos, dict):
+        return build(name_rows(sos))
+    rows = name_rows()
+    d = _names.setdefault("derived", {})
+    if name not in d:
+        d[name] = build(rows)
+    return d[name]
+
+
+def chain_stores(chain, sos=None):
+    """The store names of one chain (customer_parent, else the store's own code), sorted."""
+    return sorted({n for n, ch, _ in name_rows(sos if isinstance(sos, dict) else None) if chain and ch == chain})
 
 
 def paper(so, lines=None):
@@ -196,9 +391,8 @@ def received(so, lines):
 
 
 def refresh():
-    """Forget the cached SO list and lines (after loading an export)."""
-    _cache["sos"] = None
-    _index.clear()
+    """Forget the cached store names and lines (after loading an export)."""
+    _names.update(rows=None, at=0.0, derived={})
     _items.clear()
 
 
@@ -211,7 +405,7 @@ _items = {}                                        # sor -> (when, lines)
 
 
 def items_for(sor) -> list[SorItem]:
-    """items(), for callers without a connection: kept ten minutes per process, like the SO list."""
+    """items(), for callers without a connection (or a DbLookup): kept ten minutes per process."""
     hit = _items.get(sor)
     if not hit or time.time() - hit[0] > TTL:
         from common import db
@@ -234,15 +428,6 @@ def neighbour_index(pairs):
             for d in _deletions(f):
                 idx.setdefault(d, set()).add((f, sor))
     return idx
-
-
-def _cached_index(sos, key):
-    """Only the process-wide SO list is worth caching (and safe to: small ad-hoc lists are built fresh)."""
-    if sos is not _cache["sos"]:
-        return neighbour_index([(s.get(key), s["sor_no"]) for s in sos.values()])
-    if key not in _index:
-        _index[key] = neighbour_index([(s.get(key), s["sor_no"]) for s in sos.values()])
-    return _index[key]
 
 
 def confirmations(conn, batch_id, page_no):
@@ -319,7 +504,7 @@ def closest(value, sos, key="cpo_no", n=5):
     if len(v) < 5:
         return []
     found = []
-    for s in sos.values():
+    for s in (sos.closest_candidates(key, v) if isinstance(sos, DbLookup) else sos.values()):
         raw = str(s.get(key) or "")
         c = flat(raw)
         if not c:
@@ -347,7 +532,11 @@ def _span(raw, start, length):
 def unique_match(value, pairs):
     """The SOR whose candidate equals value, if exactly one does and no other candidate is one character away; else
     (None, why)."""
-    exact, near = near_keys(value, pairs)
+    return _unique(*near_keys(value, pairs))
+
+
+def _unique(exact, near):
+    """unique_match on neighbours already found (neighbours())."""
     if len(exact) == 1 and not near:
         return exact[0], None
     if exact and near:
@@ -362,18 +551,12 @@ def store_words(name):
     return set(re.findall(r"[A-Z0-9]{2,}", str(name or "").upper()))
 
 
-def store_df(sos):
-    """{word: in how many distinct store names in Satellite}; cached with the process-wide SO list. INDONESIA is in
+def store_df(sos=None):
+    """{word: in how many distinct store names in Satellite}; kept with the store names (name_rows). INDONESIA is in
     62 of 4,184, HARAPAN in 11, EASTVARA in 1: a common word names no store."""
-    def build():
-        import collections
-        return collections.Counter(w for n in {s["customer_name"] for s in sos.values() if s.get("customer_name")}
-                                   for w in store_words(n))
-    if sos is not _cache["sos"]:
-        return build()
-    if "df" not in _index:
-        _index["df"] = build()
-    return _index["df"]
+    import collections
+    return _derived(sos, "df", lambda rows: collections.Counter(w for n in {n for n, _, _ in rows}
+                                                                 for w in store_words(n)))
 
 
 def store_can_tell(sor, near, sos):
@@ -386,14 +569,8 @@ def store_can_tell(sor, near, sos):
 
 
 def _stores(sos):
-    """{store name: its words}, every ship-to in Satellite; cached with the process-wide SO list."""
-    def build():
-        return {s["customer_name"]: store_words(s["customer_name"]) for s in sos.values() if s.get("customer_name")}
-    if sos is not _cache["sos"]:
-        return build()
-    if "stores" not in _index:
-        _index["stores"] = build()
-    return _index["stores"]
+    """{store name: its words}, every ship-to in Satellite; kept with the store names (name_rows)."""
+    return _derived(sos, "stores", lambda rows: {n: store_words(n) for n, _, _ in rows})
 
 
 def by_store(ship_to, sor, near, sos):
@@ -427,12 +604,12 @@ def by_store(ship_to, sor, near, sos):
                   "fits it as well")
 
 
-def _rows_decide(name, value, index, doc_type, fields, verdicts, why, items_of):
+def _rows_decide(name, nb, doc_type, fields, verdicts, why, items_of):
     """A key only the AI read that names exactly one SO, with others one character away: the page's rows decide
     when they fit that SO clearly better than every neighbour (grouper.matching.rows_tell). No model call, so it goes
     before the store question. On both batches: 22 correct keys settle; a key bent to each neighbour's number (164)
-    never does."""
-    exact, near = near_keys(value, index)
+    never does. nb: (exact, near), neighbours() of the key."""
+    exact, near = nb
     if len(exact) != 1 or not near or not items_of or not (fields.get("lines") or []):
         return why
     from grouper import matching                          # grouper sits on common; imported when first needed
@@ -453,7 +630,7 @@ def _receipt_is_po(fields, verdicts, sos, items_of, put):
     doc = (fields.get("document_no") or {}).get("value")
     if not doc or not items_of:
         return
-    exact, near = near_keys(doc, _cached_index(sos, "cpo_no"))
+    exact, near = neighbours(sos, "cpo_no", doc)
     if len(exact) != 1:
         return
     from grouper import matching                          # grouper sits on common; imported when first needed
@@ -475,11 +652,12 @@ def _receipt_is_po(fields, verdicts, sos, items_of, put):
     fields["purchase_order_no"]["source_text"] = (fields.get("document_no") or {}).get("source_text") or doc
 
 
-def _store_decides(name, value, index, sos, ship_to, verdicts, why):
+def _store_decides(name, nb, sos, ship_to, verdicts, why):
     """S4, for a key only the AI read that matches exactly one SO while others are one character away: the store
     printed on the page decides, when it can (store_can_tell). Not asked yet (ship_to None): the verdict carries
-    `store` (the SO it would name), so the page asks once. Returns the reason left, or None once settled."""
-    exact, near = near_keys(value, index)
+    `store` (the SO it would name), so the page asks once. Returns the reason left, or None once settled.
+    nb: (exact, near), neighbours() of the key."""
+    exact, near = nb
     if len(exact) != 1 or not near or not store_can_tell(exact[0], near, sos):
         return why
     if ship_to is None:
@@ -533,20 +711,16 @@ def pair_lines(rows, so_lines, trusted=()):
     return sorted(pairs), [j for j in range(len(so_lines)) if j not in lines_used]
 
 
-def _by_total(sos):
-    """{the total its FP printed: [SO]}, cached with the process-wide SO list."""
-    def build():
-        idx = {}
-        for s in sos.values():               # the order side only: what the FP printed, never the invoice
-            t = _num(((s["paper"] if "paper" in s else paper(s)) or {}).get("total"))
-            if t:
-                idx.setdefault(t, []).append(s)
-        return idx
-    if sos is not _cache["sos"]:
-        return build()
-    if "total" not in _index:
-        _index["total"] = build()
-    return _index["total"]
+def _by_total(sos, amounts):
+    """{the total its FP printed: [SO]} for these amounts: the order side only, what the FP printed, never the
+    invoice (a DbLookup asks the database; a plain dict is searched)."""
+    want, idx = {_num(a) for a in amounts}, {}
+    rows = sos.with_paper_totals(want) if isinstance(sos, DbLookup) else sos.values()
+    for s in rows:
+        t = _num(((s["paper"] if "paper" in s else paper(s)) or {}).get("total"))
+        if t and t in want:
+            idx.setdefault(t, []).append(s)
+    return idx
 
 
 def resolve_fp(fields, sos, items_of):
@@ -559,8 +733,9 @@ def resolve_fp(fields, sos, items_of):
     printed = (fields.get("total") or {}).get("source_text") or (fields.get("total") or {}).get("value")
     if not printed:
         return None, None
-    idx, seen = _by_total(sos), {}
-    for amount, change in confusions.amounts(printed).items():
+    options = confusions.amounts(printed)
+    idx, seen = _by_total(sos, options), {}
+    for amount, change in options.items():
         for s in idx.get(amount, ()):
             seen.setdefault(s["sor_no"], (s, change))
     if not seen:
@@ -601,8 +776,8 @@ def _so_of_customer_doc(fields, verdicts, sos):
         return sos.get(f if f.startswith("SOR") else "SOR" + f)
     po = (fields.get("purchase_order_no") or {}).get("value")
     if po and _ok(verdicts.get("purchase_order_no")):
-        hits = [s for s in sos.values() if same_id(s.get("cpo_no"), po)] if sos is not _cache["sos"] else \
-            [sos[flat(sor)] for c, sor in _cached_index(sos, "cpo_no").get(flat(po), ()) if c == flat(po)]
+        hits = sos.by_cpo(po) if isinstance(sos, DbLookup) else \
+            [s for s in sos.values() if same_id(s.get("cpo_no"), po)]
         return hits[0] if len(hits) == 1 else None
     return None
 
@@ -685,15 +860,15 @@ def settle(doc_type, fields, verdicts, sos, confirmed=None, items_of=None, ship_
     if doc_type in ("TTG", "PO"):                         # 3. a customer's paper: exact, and no near neighbour,
         po, v = (fields.get("purchase_order_no") or {}).get("value"), verdicts.get("purchase_order_no")
         if po and not _ok(v) and not mine("purchase_order_no"):   # or else the store printed on it (S4)
-            index = _cached_index(sos, "cpo_no")
-            sor, why = unique_match(po, index)
+            nb = neighbours(sos, "cpo_no", po)
+            sor, why = _unique(*nb)
             if sor:
                 verdicts["purchase_order_no"] = {"verdict": "ok", "by": "satellite", "why":
                                                  f"equals the Nomor CPO of {sor} in Satellite; no other SO's is one "
                                                  "character away"}
             elif why:
-                why = _rows_decide("purchase_order_no", po, index, doc_type, fields, verdicts, why, items_of)
-                why = why and _store_decides("purchase_order_no", po, index, sos, ship_to, verdicts, why)
+                why = _rows_decide("purchase_order_no", nb, doc_type, fields, verdicts, why, items_of)
+                why = why and _store_decides("purchase_order_no", nb, sos, ship_to, verdicts, why)
                 if why and v:
                     v["why"] = f"{v.get('why') or 'not backed by print'}; {why}"
     if doc_type == "TTG" and not _ok(verdicts.get("purchase_order_no")) and not mine("purchase_order_no"):
@@ -701,16 +876,15 @@ def settle(doc_type, fields, verdicts, sos, confirmed=None, items_of=None, ship_
     if doc_type == "TTG":
         ref, v = (fields.get("no_ref") or {}).get("value"), verdicts.get("no_ref")
         if ref and not _ok(v) and not mine("no_ref"):
-            index = _cached_index(sos, "sor_no")
             f = flat(ref)
-            sor, why = unique_match(f if f.startswith("SOR") else "SOR" + f, index)
+            nb = neighbours(sos, "sor_no", f if f.startswith("SOR") else "SOR" + f)
+            sor, why = _unique(*nb)
             if sor:
                 verdicts["no_ref"] = {"verdict": "ok", "by": "satellite",
                                       "why": "is an SO in Satellite; no other SO is one character away"}
             elif why and not _ok(verdicts.get("purchase_order_no")):
-                key = f if f.startswith("SOR") else "SOR" + f
-                why = _rows_decide("no_ref", key, index, doc_type, fields, verdicts, why, items_of)
-                why = why and _store_decides("no_ref", key, index, sos, ship_to, verdicts, why)
+                why = _rows_decide("no_ref", nb, doc_type, fields, verdicts, why, items_of)
+                why = why and _store_decides("no_ref", nb, sos, ship_to, verdicts, why)
                 if why and v:
                     v["why"] = f"{v.get('why') or 'not backed by print'}; {why}"
         so = _so_of_customer_doc(fields, verdicts, sos)       # 4. the receipt date vs Satellite's CGR date (7b)

@@ -103,9 +103,13 @@ def plan(pages, sos):
             doc(p, {"PEL": "later_stage"}.get(t, "not_grouped"))
 
     cpo = {}                                              # Nomor CPO → SORs: Satellite's record ...
-    for rec in sos.values():
-        if rec.get("cpo_no"):
-            cpo.setdefault(satellite.flat(rec["cpo_no"]), set()).add(sor_key(rec["sor_no"]))
+    if isinstance(sos, satellite.DbLookup):               # only the PO numbers this batch read, every SO carrying one
+        read = [x for d in docs for x in (d["read"].get("po_no"), (d["keys"].get("po_no") or {}).get("value")) if x]
+        cpo.update({f: {sor_key(x) for x in sors} for f, sors in sos.by_cpo_many(read).items()})
+    else:                                                 # a plain dict (the tests): every SO in it
+        for rec in sos.values():
+            if rec.get("cpo_no"):
+                cpo.setdefault(satellite.flat(rec["cpo_no"]), set()).add(sor_key(rec["sor_no"]))
     fps = {}
     for d in docs:                                        # the FPs: each is its SOR's hub
         if d["type"] != "FP" or d["hold"]:

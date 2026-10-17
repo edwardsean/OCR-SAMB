@@ -70,10 +70,9 @@ def labels(sos):
     HARI, BOOTS, STOCK POINT INDOGROSIR), else the store it orders for most (Hero's DC)."""
     import collections
     names = {}
-    for s in sos.values():
-        ch = satellite.chain_of(s)
-        if ch and s.get("customer_name"):
-            names.setdefault(ch, collections.Counter())[" ".join(s["customer_name"].upper().split())] += 1
+    for name, ch, orders in satellite.name_rows(sos if isinstance(sos, dict) else None):
+        if ch and name:
+            names.setdefault(ch, collections.Counter())[" ".join(name.upper().split())] += orders
     out = {}
     for ch, ns in names.items():
         ws = [[w for w in x.replace(".", " ").split() if w not in customer.LEGAL] for x in ns]

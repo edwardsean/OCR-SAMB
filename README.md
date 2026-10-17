@@ -255,6 +255,21 @@ On a server, once this is merged:
      PDF" or "Ikut saat order dikirim", or "Menunggu data Satellite" while Satellite doesn't have its billing number
      yet.
 
+### Satellite's orders without a copy in memory (2026-10-17)
+
+Every check now asks the database for the orders it needs instead of loading them all into each process. On a
+server, once this is merged:
+
+1. **Get the code:** `git pull` on `main`.
+2. **Apply the new migration** (indexes only; about a minute on 418K orders; safe to run twice). Run it while no batch
+   is reading:
+   ```bash
+   docker exec -i samb-ocr-postgres-1 sh -c 'psql -U "$POSTGRES_USER" -d ocr_rtm -v ON_ERROR_STOP=1' < schema/034-satellite-lookups.sql
+   ```
+3. **Restart:** `docker compose up -d --build`.
+4. **Check:** while a batch reads, `docker stats` shows each page worker and the grouper at a few hundred MB, however
+   many orders Satellite holds.
+
 ## Everyday commands
 
 ```bash
@@ -286,14 +301,12 @@ of workers is `WORKER_REPLICAS` in `.env` (`docker compose up -d` after changing
 | 8 GB (the mentor's server) | 2 | 2 | 4 |
 | 16 GB | 4 | 3 | 12 |
 
-- **Memory:** a worker needs its pages (about 0.5 GB each) plus its copy of Satellite's recent orders, about 12 KB an
-  order, so 0.8 GB for the default 60 days (~70K orders). The grouper and the API keep a copy too. Run out and the
-  machine kills a worker; its pages are read again (nothing is lost, but the AI is paid twice). Watch `docker stats`
-  and `journalctl -k | grep "Out of memory"` on the first big batch. On 2026-10-17 the 8 GB server, with 3 workers ×
-  4 pages and a year of orders (418K, ~4.8 GB a copy) in memory, was killed 13 times in a morning.
-- **Satellite orders in memory** is set on the same screen (default 60 days, counted back from Satellite's newest
-  order). Older orders stay in the database: a document whose order a bundle already names, and a lookup by its own
-  SOR, still find it; only matching a number against every order is limited to the window.
+- **Memory:** a worker needs about 0.5 GB per page it is reading. Satellite's orders are never kept in memory: each
+  check asks the database (`common/satellite.py` DbLookup, indexes in `schema/034-satellite-lookups.sql`), so the
+  number of orders in Satellite doesn't change a process's size. (Until 2026-10-17 every page worker, the grouper and
+  the API kept its own copy of every order, ~12 KB each: with a year of orders, 418K, the 8 GB server's workers were
+  killed 13 times in a morning.) Run out and the machine kills a worker; its pages are read again (nothing is lost,
+  but the AI is paid twice). Watch `docker stats` and `journalctl -k | grep "Out of memory"` on the first big batch.
 - **The provider:** more pages at once also means more requests per minute at the AI provider; its rate limits (per
   model, in Model Studio) are the next ceiling. The text model answered in ~26 s instead of ~13 s with 22 requests at
   once.
