@@ -29,7 +29,7 @@ import time
 import re
 from datetime import date
 
-from common import confusions, gates, tables
+from common import config, confusions, gates, tables
 from common.tables import Sor, SorItem
 
 PRINTED = ("text", "qr", "zoom", "second_look", "adds_up")    # verdicts backed by print
@@ -80,17 +80,28 @@ def _record(r):
     return r
 
 
+# The orders load() keeps: the last SATELLITE_WINDOW_DAYS days, counted back from Satellite's newest order (not from
+# today: an export loaded weeks ago still fills the window), plus every order a bundle names (an old document whose
+# order is already known keeps it), plus orders with no date.
+RECENT = """(tgl_so IS NULL OR sor_no IN (SELECT sor_no FROM staging.bundle)
+              OR tgl_so >= (SELECT max(tgl_so) FROM satellite.sor WHERE tgl_so <= current_date) - %s::int)"""
+
+
 def load(conn, sors=None) -> dict[str, Sor]:
-    """{flat SOR: record}. With `sors`: only those SOs, read now. Without: every SO (~40K a month), kept for ten
-    minutes per process: grouping and the near-neighbour rule need the whole CPO list. Each record carries `paper`:
-    the amounts its FP printed."""
+    """{flat SOR: record}. With `sors`: only those SOs, read now. Without: the recent SOs (RECENT, ~40K a month),
+    kept for ten minutes per process: grouping and the near-neighbour rule need the whole CPO list of the orders a
+    page can be about. Each process keeps its own copy, so the window is what bounds the memory (2026-10-17: a year
+    of orders, 418K, in every worker ran an 8 GB server out of memory). Each record carries `paper`: the amounts its
+    FP printed."""
     if sors is not None:
         return {flat(r["sor_no"]): _record(r) for r in conn.execute(      # l.* first: an SO with no lines has a
             f"SELECT l.*, {SO_COLS} FROM satellite.sor {LINE_SUMS} WHERE sor_no = ANY(%s)", (list(sors),))}   # NULL l.sor_no
-    if _cache["sos"] is None or time.time() - _cache["at"] > TTL:
-        _cache.update(sos={flat(r["sor_no"]): _record(r) for r in conn.execute(
-            f"SELECT l.*, {SO_COLS} FROM satellite.sor {LINE_SUMS}")}, at=time.time())
+    days = config.SATELLITE_WINDOW_DAYS
+    if _cache["sos"] is None or time.time() - _cache["at"] > TTL or _cache.get("days") != days:
+        _cache.update(sos=None)                       # the old copy goes before the new one is built: one at a time
         _index.clear()
+        _cache.update(sos={flat(r["sor_no"]): _record(r) for r in conn.execute(
+            f"SELECT l.*, {SO_COLS} FROM satellite.sor {LINE_SUMS} WHERE {RECENT}", (days,))}, at=time.time(), days=days)
     return _cache["sos"]
 
 

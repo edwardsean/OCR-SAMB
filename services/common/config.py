@@ -99,6 +99,11 @@ VF_AI_MAP_DAILY_CAP = _int("VF_AI_MAP_DAILY_CAP", 40_000)
 WORKER_CONCURRENCY = _int("WORKER_CONCURRENCY", 4)
 WORKER_CONCURRENCY_DEFAULT = WORKER_CONCURRENCY
 WORKER_CONCURRENCY_MAX = 16
+# Satellite's orders each process keeps in memory (common/satellite.py load): the last N days of orders, counted
+# back from the newest order, plus every order a bundle names. The database keeps them all. (2026-10-17: the server
+# held a year, 418K orders; every worker kept its own copy and was killed for memory.) Set on Teknis.
+SATELLITE_WINDOW_DAYS = _int("SATELLITE_WINDOW_DAYS", 60)       # ~12 KB an order: 60 days ≈ 70K orders ≈ 0.8 GB
+SATELLITE_WINDOW_DAYS_DEFAULT = SATELLITE_WINDOW_DAYS
 # pages Tesseract reads at once per worker: it is the CPU-heavy part (~11 s, a few hundred MB on an enlarged copy of
 # the page); 2026-10-08's load test ran 4 at once per worker and saturated 8 CPUs and 2.5 GB, delaying the AI calls
 TESSERACT_AT_ONCE = _int("TESSERACT_AT_ONCE", 1)

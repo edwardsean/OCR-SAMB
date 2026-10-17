@@ -283,11 +283,17 @@ of workers is `WORKER_REPLICAS` in `.env` (`docker compose up -d` after changing
 | Docker memory | Workers (`WORKER_REPLICAS`) | Pages per worker (Teknis) | Pages in progress |
 |---|---|---|---|
 | 4 GB (this laptop) | 3 | 2 | 6 |
-| 8 GB | 4 | 4 | 16 |
-| 16 GB | 8 | 4 | 32 |
+| 8 GB (the mentor's server) | 2 | 2 | 4 |
+| 16 GB | 4 | 3 | 12 |
 
-- **Memory:** a worker needs about 1 GB at 4 pages. Run out and the machine kills a worker; its pages are read again
-  (nothing is lost, but the AI is paid twice). Watch `docker stats` on the first big batch.
+- **Memory:** a worker needs its pages (about 0.5 GB each) plus its copy of Satellite's recent orders, about 12 KB an
+  order, so 0.8 GB for the default 60 days (~70K orders). The grouper and the API keep a copy too. Run out and the
+  machine kills a worker; its pages are read again (nothing is lost, but the AI is paid twice). Watch `docker stats`
+  and `journalctl -k | grep "Out of memory"` on the first big batch. On 2026-10-17 the 8 GB server, with 3 workers ×
+  4 pages and a year of orders (418K, ~4.8 GB a copy) in memory, was killed 13 times in a morning.
+- **Satellite orders in memory** is set on the same screen (default 60 days, counted back from Satellite's newest
+  order). Older orders stay in the database: a document whose order a bundle already names, and a lookup by its own
+  SOR, still find it; only matching a number against every order is limited to the window.
 - **The provider:** more pages at once also means more requests per minute at the AI provider; its rate limits (per
   model, in Model Studio) are the next ceiling. The text model answered in ~26 s instead of ~13 s with 22 requests at
   once.
