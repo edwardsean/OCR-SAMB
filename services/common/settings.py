@@ -64,13 +64,7 @@ ALIBABA = ("aliyuncs.com", "dashscope")
 # numbers set on the same screen (the user, 2026-10-08: "make this a setting in the teknis side that we can modify
 # without touching the code"): name -> (title, what it does, lowest, highest); until saved, config's own value
 NUMBERS = {"WORKER_CONCURRENCY": ("Pages per worker", "Pages each worker reads at once. More is faster; each page needs "
-                                  "about 0.5 GB of memory while it is read (an 8 GB server: 2 workers × 2).", 1, 16),
-           # 2026-10-17: a year of orders (418K) in every process ran the 8 GB server out of memory
-           "SATELLITE_WINDOW_DAYS": ("Satellite orders in memory (days)", "Each worker keeps the orders of the last "
-                                     "this many days (counted back from Satellite's newest order) in memory to match "
-                                     "numbers against, plus every order a document here already names. Older orders "
-                                     "stay in the database. Fewer days, less memory; a document older than this "
-                                     "won't find its order by itself.", 14, 1100)}
+                                  "about 0.5 GB of memory while it is read (an 8 GB server: 2 workers × 2).", 1, 16)}
 NAMES = {n for f in FIELDS.values() for n in f} | set(THINKING.values()) | set(NUMBERS)
 
 # models the system has been measured with, best first: the screen pre-selects the first one an endpoint lists
@@ -166,12 +160,11 @@ def _apply(got):
     config.VF_AI_MAP = config.WIKI_TEACHER_MODEL = config.MATCH_MODEL = text   # every call that sends only text
     config.CLASSIFY_MODEL = rows["classify"]["ident"]        # each page's type
     config.WORKER_CONCURRENCY = number(got, "WORKER_CONCURRENCY")
-    config.SATELLITE_WINDOW_DAYS = number(got, "SATELLITE_WINDOW_DAYS")
     EFFECTIVE.clear()
     EFFECTIVE.update(rows)
     _state["saved"] = dict(got)
     now = sorted((k, r["url"], r["key"], r["model"], r["no_thinking"]) for k, r in rows.items()) + \
-        [("pages", config.WORKER_CONCURRENCY), ("window", config.SATELLITE_WINDOW_DAYS)]
+        [("pages", config.WORKER_CONCURRENCY)]
     changed = now != _state["effective"]
     _state["effective"] = now
     return changed

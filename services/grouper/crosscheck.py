@@ -786,10 +786,9 @@ def inputs(c, bid):
         chain = satellite.chain_of(so)
         profile = c.execute("""SELECT expected_docs::text[] AS e, rounding_allowance, receipt_shows
                                  FROM satellite.customer_profile WHERE customer_code=%s""", (chain,)).fetchone()
-        stores = sorted({s["customer_name"] for s in satellite.load(c).values()
-                         if s.get("customer_name") and chain and satellite.chain_of(s) == chain})
+        stores = satellite.chain_stores(chain)        # Satellite's store names (the whole table, kept per process)
         out.append({"id": b["id"], "sor": b["sor_no"], "status": b["status"], "fingerprint": b["fingerprint"],
-                    "stores": stores, "df": satellite.store_df(satellite.load(c)),
+                    "stores": stores, "df": satellite.store_df(),
                     "stored": b["checks"] or {}, "docs": docs, "pages": pages, "so": so, "where": where,
                     "spans": {to_key[(d["batch_id"], d["page_from"])]:
                               [to_key[(d["batch_id"], n)] for n in range(d["page_from"], d["page_to"] + 1)]

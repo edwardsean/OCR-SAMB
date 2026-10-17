@@ -2075,12 +2075,12 @@ def held_closest(batch, page):
                                 JOIN staging.document d ON d.id = bd.document_id
                                WHERE b.sor_no = ANY(%s) GROUP BY b.sor_no""", (sors,)):
             has[r["sor_no"]] = set(r["types"])
-    index = satellite._cached_index(sos, "cpo_no")
+    carrying = sos.by_cpo_many([s.get("cpo_no") for s, _, _ in found if s.get("cpo_no")])   # every SO, each CPO
     out = []
     for s, how, span in found:
         cpo = s.get("cpo_no") or ""
-        shared = sorted(sor for cc, sor in index.get(satellite.flat(cpo), ()) if cc == satellite.flat(cpo)
-                        and satellite.flat(sor) != satellite.flat(s["sor_no"])) if cpo else []
+        shared = sorted(sor for sor in carrying.get(satellite.flat(cpo), ())
+                        if satellite.flat(sor) != satellite.flat(s["sor_no"])) if cpo else []
         pf = PICK_FIELD[d["type"]]
         value = s["sor_no"] if pf in ("sor", "no_ref") else (cpo if cpo and not shared else None)
         out.append({"sor": s["sor_no"], "cpo": cpo, "mark": span if key == "cpo_no" else None,
@@ -2107,7 +2107,9 @@ def bundles_view(batch):
         pages = {r["page_no"]: r for r in c.execute("""SELECT page_no, doc_type::text AS doc_type, type_status,
                                                               outcome, keys, fields, thumb_upright_path, thumb_path
                                                          FROM staging.page WHERE batch_id=%s""", (batch,))}
-        sos = {r["sor_no"]: r for r in c.execute("SELECT * FROM satellite.sor")}
+        sos = {r["sor_no"]: r for r in c.execute(            # only this batch's orders (was the whole table)
+            "SELECT sor_no, customer_name FROM satellite.sor WHERE sor_no = ANY(%s)",
+            (sorted({d["sor_no"] for d in docs if d["sor_no"]}),))}
         confirmed = {(r["page_no"], r["field"]): r for r in c.execute(
             "SELECT * FROM staging.field_confirmation WHERE batch_id=%s", (batch,))}
     def thumb(n):

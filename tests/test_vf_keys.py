@@ -165,11 +165,10 @@ def test_on_satellites_real_export():
     from common import db
     with db.connect() as c:
         sos = satellite.load(c)
-    if not sos:
+    exact, near = satellite.neighbours(sos, "cpo_no", "4505832724")
+    if not exact:
         pytest.skip("Satellite's export isn't loaded")
-    index = satellite._cached_index(sos, "cpo_no")
-    exact, near = satellite.near_keys("4505832724", index)
-    names = {s["customer_name"] for s in sos.values() if s.get("customer_name")}
+    names = {n for n, _, _ in satellite.name_rows()}
     assert [n for n in names if satellite.by_store(store(n), exact[0], near, sos)[0]] == ["BOOTS HARAPAN INDAH AVENUE"]
     assert satellite.by_store(store("BOOTS HARAPAN INDAH BEKASI"), exact[0], near, sos)[0]
 

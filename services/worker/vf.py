@@ -381,7 +381,7 @@ def page_verdicts(doc_type, fields_all, rd, qr_text, up, ctx, sos, confirmed, se
     res = noted(doc_type, res, second)
     fields, res = settled(doc_type, fields_all, res, sos, confirmed, ship_to, qr_text)
     res = gates.apply(doc_type, fields, res, scan_day)
-    fields, res = satellite.settle_record(doc_type, fields, res, sos, satellite.items_for)   # 7b: the FP's record
+    fields, res = satellite.settle_record(doc_type, fields, res, sos, satellite.lines_of(sos))   # 7b: the FP's record
     return fields, res, zev
 
 
@@ -497,7 +497,8 @@ def settled(doc_type, fields_all, res, sos, confirmed, ship_to=None, qr_text=Non
     fields = project(fields_all, doc_type) if fields_all is not None and doc_type in DOCS else {}
     if not res:
         return fields, res
-    f, h = satellite.settle(doc_type, fields, res["header"], sos, confirmed, satellite.items_for, ship_to, qr_text)
+    f, h = satellite.settle(doc_type, fields, res["header"], sos, confirmed, satellite.lines_of(sos), ship_to,
+                            qr_text)
     f, ls = satellite.person_lines(doc_type, f, res["lines"], confirmed)   # line cells a person confirmed (7d)
     return f, {**res, "header": h, "lines": ls}
 

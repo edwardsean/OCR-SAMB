@@ -47,18 +47,15 @@ def norm(name):
 
 
 def chain_names(sos):
-    """{normalised store name: {chains}} from Satellite; cached with the process-wide SO list."""
-    def build():
+    """{normalised store name: {chains}} from Satellite's store names (satellite.name_rows: the whole table, kept
+    per process; a plain dict of SOs in the tests)."""
+    def build(rows):
         out = collections.defaultdict(set)
-        for s in sos.values():
-            if s.get("customer_name") and norm(s["customer_name"]):
-                out[norm(s["customer_name"])].add(satellite.chain_of(s))
+        for name, chain, _ in rows:
+            if norm(name):
+                out[norm(name)].add(chain)
         return dict(out)
-    if sos is not satellite._cache["sos"]:
-        return build()
-    if "chain_names" not in satellite._index:
-        satellite._index["chain_names"] = build()
-    return satellite._index["chain_names"]
+    return satellite._derived(sos, "chain_names", build)
 
 
 def learned(c, sos, skip_bundles=()):
@@ -112,7 +109,7 @@ def key_signals(fields_all, qr, sos):
     for col, v, what in keys:
         if len(v) < KEY_MIN:
             continue
-        exact, near = satellite.near_keys(v, satellite._cached_index(sos, col))
+        exact, near = satellite.neighbours(sos, col, v)
         ex, nr = _chains_of(exact, sos), _chains_of(near, sos)
         if what.startswith("the QR") and len(ex) == 1:
             out.append((next(iter(ex)), "strong", f"{what} {v} is its order"))
@@ -156,8 +153,8 @@ _best = {}                                           # (name, when the SO list w
 
 def _satellite_best(n, sos):
     """{chain: (ratio, 'strong', why)} for Satellite's store names within reach of NAME_MATCH (4,198 names: kept per
-    name while the process-wide SO list is the same)."""
-    key = (n, satellite._cache["at"]) if sos is satellite._cache["sos"] else None
+    name while the store names are the same)."""
+    key = (n, satellite._names["at"]) if not isinstance(sos, dict) else None
     if key in _best:
         return _best[key]
     best = {}

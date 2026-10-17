@@ -119,7 +119,8 @@ def test_the_test_button_proves_the_vision_model_reads_an_image(lay, monkeypatch
         sent.append((url, json))
         return Answer(200, {"choices": [{"message": {"content": reply[0]}}]})
     monkeypatch.setattr(httpx, "post", post)
-    assert settings.test_row("vision") == (True, "qwen3-vl-plus works and reads images")
+    ok, said = settings.test_row("vision")
+    assert ok and said.startswith("qwen3-vl-plus works and reads images")    # then the mode and the time
     url, body = sent[0]
     assert url == DS + "/chat/completions" and body["model"] == "qwen3-vl-plus"
     assert body["messages"][0]["content"][1]["image_url"]["url"].startswith("data:image/png;base64,")
